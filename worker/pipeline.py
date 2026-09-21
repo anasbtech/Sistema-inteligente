@@ -16,7 +16,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Sequence
 
 import cv2
 import httpx
@@ -123,10 +123,11 @@ class SeletorMelhorQuadro:
     mesma pessoa é um problema muito mais fácil.
     """
 
-    def __init__(self, similaridade_minima: float = 0.60,
+    def __init__(self, similaridade_minima: float = 0.45, iou_minimo: float = 0.25,
                  espera_minima_s: float = 1.5, fator_espera: float = 2.5,
-                 janela_maxima_s: float = 10.0) -> None:
+                 janela_maxima_s: float = 60.0) -> None:
         self.similaridade_minima = similaridade_minima
+        self.iou_minimo = iou_minimo
         self.espera_minima_s = espera_minima_s
         self.fator_espera = fator_espera
         self.janela_maxima_s = janela_maxima_s
@@ -163,6 +164,17 @@ class SeletorMelhorQuadro:
                 alvo, melhor_sim = cand, sim
 
         if alvo is None:
+            # Rosto pequeno dá embedding instável: a 30px de largura, duas
+            # capturas da mesma pessoa podem não se reconhecer. Sobra a
+            # posição — quem estava ali segundos atrás é, quase sempre, quem
+            # está ali agora.
+            caixa = cantos_para_caixa(face.bbox)
+            for cand in self._candidatos:
+                if iou(cantos_para_caixa(cand.melhor.bbox), caixa) >= self.iou_minimo:
+                    alvo = cand
+                    break
+
+        if alvo is None:
             self._candidatos.append(_Candidato(
                 embedding=vetor, melhor=face, melhor_quadro=quadro.copy(),
                 quando=quando, primeiro=agora, ultimo=agora,
@@ -197,33 +209,76 @@ class SeletorMelhorQuadro:
         return saindo
 
 
+def iou(a: Sequence[float], b: Sequence[float]) -> float:
+    """Interseção sobre união de duas caixas [x, y, largura, altura]."""
+    ax2, ay2 = a[0] + a[2], a[1] + a[3]
+    bx2, by2 = b[0] + b[2], b[1] + b[3]
+    largura = max(0.0, min(ax2, bx2) - max(a[0], b[0]))
+    altura = max(0.0, min(ay2, by2) - max(a[1], b[1]))
+    intersecao = largura * altura
+    uniao = a[2] * a[3] + b[2] * b[3] - intersecao
+    return intersecao / uniao if uniao > 0 else 0.0
+
+
+def cantos_para_caixa(bbox: Sequence[float]) -> list[float]:
+    """(x1, y1, x2, y2) -> [x, y, largura, altura]."""
+    x1, y1, x2, y2 = bbox
+    return [x1, y1, x2 - x1, y2 - y1]
+
+
 class RegistroUnicoPorObjeto:
     """Um registro por objeto que passa, não um por quadro analisado.
 
-    O YOLO com ByteTrack mantém o mesmo `track_id` enquanto o objeto está em
-    cena, então basta lembrar quais trilhas já foram registradas. O registro
-    sai na primeira aparição, e não quando o objeto some: é o que permite a
-    caixa aparecer no vídeo enquanto o carro ainda está passando.
+    Dois sinais, porque nenhum basta sozinho nesta cadência:
 
-    A trilha é esquecida depois de sumir, para que o mesmo carro voltando meia
-    hora depois conte como passagem nova — que é o que ela é.
+    * `track_id` — estável enquanto o rastreador acompanha o objeto;
+    * sobreposição das caixas — um carro estacionado ocupa o mesmo lugar em
+      toda análise, mesmo que a trilha se perca e ele ganhe um id novo.
+
+    A memória expira a partir do ritmo medido, não de um prazo fixo. Era esse
+    o defeito: dez segundos de memória com análises a cada doze fazia tudo ser
+    esquecido entre uma e outra, e o mesmo carro parado era registrado de novo
+    a cada passada do laço.
+
+    O registro sai na primeira aparição, e não quando o objeto some — é o que
+    permite a caixa aparecer no vídeo enquanto ele ainda está em cena.
     """
 
-    def __init__(self, esquecer_s: float = 10.0) -> None:
-        self.esquecer_s = esquecer_s
-        self._vistas: dict[int, float] = {}
+    def __init__(self, fator_memoria: float = 5.0,
+                 memoria_minima_s: float = 60.0, iou_minimo: float = 0.45) -> None:
+        self.fator_memoria = fator_memoria
+        self.memoria_minima_s = memoria_minima_s
+        self.iou_minimo = iou_minimo
+        self._vistos: list[dict] = []
+        self._ultimo_ciclo: Optional[float] = None
+        self._intervalo = 1.0
 
-    def e_passagem_nova(self, track_id: Optional[int]) -> bool:
+    @property
+    def memoria_s(self) -> float:
+        return max(self.memoria_minima_s, self._intervalo * self.fator_memoria)
+
+    def marcar_ciclo(self) -> None:
         agora = time.monotonic()
-        for tid in [t for t, visto in self._vistas.items()
-                    if agora - visto > self.esquecer_s]:
-            del self._vistas[tid]
+        if self._ultimo_ciclo is not None:
+            self._intervalo = self._intervalo * 0.7 + (agora - self._ultimo_ciclo) * 0.3
+        self._ultimo_ciclo = agora
+        limite = agora - self.memoria_s
+        self._vistos = [v for v in self._vistos if v["quando"] >= limite]
 
-        if track_id is None:
-            return True        # sem rastreamento não há como deduplicar
-        nova = track_id not in self._vistas
-        self._vistas[track_id] = agora
-        return nova
+    def e_passagem_nova(self, classe: str, track_id: Optional[int],
+                        caixa: Sequence[float]) -> bool:
+        agora = time.monotonic()
+        for visto in self._vistos:
+            if visto["classe"] != classe:
+                continue
+            mesma_trilha = track_id is not None and visto["track_id"] == track_id
+            if mesma_trilha or iou(visto["caixa"], caixa) >= self.iou_minimo:
+                visto.update(quando=agora, caixa=list(caixa), track_id=track_id)
+                return False
+
+        self._vistos.append({"classe": classe, "track_id": track_id,
+                             "caixa": list(caixa), "quando": agora})
+        return True
 
 
 class PipelineCamera:
@@ -260,7 +315,9 @@ class PipelineCamera:
             "embedding": face.embedding.tolist(),
             "qualidade_face": face.qualidade,
             "bbox": face.bbox_normalizado(largura, altura),
-            "snapshot_jpeg": self._recorte(cand.melhor_quadro, face.bbox),
+            # Folga maior no rosto: cabeça e ombros dão contexto a quem revisa,
+            # e o recorte sai com mais pixels que o rosto sozinho.
+            "snapshot_jpeg": self._recorte(cand.melhor_quadro, face.bbox, margem=0.6),
             "hash_evidencia": hash_evidencia(cand.melhor_quadro.tobytes()),
         })
         log.info("%s: rosto enviado (qualidade %.2f, melhor de %d capturas)",
@@ -339,10 +396,12 @@ class PipelineCamera:
                 objetos = await asyncio.to_thread(
                     detectar_objetos, quadro, self.cfg.limiar_objeto, True
                 )
+                self.objetos.marcar_ciclo()
                 for obj in objetos:
+                    caixa = obj.bbox_normalizado(largura, altura)
                     # Toda classe vira registro; o que evita o ruído não é
                     # filtrar classe, é registrar cada objeto uma vez só.
-                    if not self.objetos.e_passagem_nova(obj.track_id):
+                    if not self.objetos.e_passagem_nova(obj.classe, obj.track_id, caixa):
                         continue
                     await self._enviar({
                         "tipo": "OBJETO",
@@ -350,7 +409,7 @@ class PipelineCamera:
                         "ocorrido_em": agora.isoformat(),
                         "classe": obj.classe,
                         "confianca": round(obj.confianca, 4),
-                        "bbox": obj.bbox_normalizado(largura, altura),
+                        "bbox": caixa,
                         "track_id": obj.track_id,
                         "zona_nome": self._zona_do_ponto(
                             (obj.centro()[0] / largura, obj.centro()[1] / altura)
@@ -389,14 +448,14 @@ class PipelineCamera:
             await self._heartbeat(int((time.perf_counter() - t0) * 1000))
             await asyncio.sleep(0)
 
-    def _recorte(self, quadro: np.ndarray, bbox) -> Optional[str]:
+    def _recorte(self, quadro: np.ndarray, bbox, margem: float = 0.25) -> Optional[str]:
         """Recorte da captura em JPEG base64, para a API gravar.
 
         Quem grava é a API, não o worker: em produção eles rodam em máquinas
         diferentes, e mandar um caminho em vez da imagem só funcionaria com
         disco compartilhado.
         """
-        recorte = recortar(quadro, bbox)
+        recorte = recortar(quadro, bbox, margem)
         if recorte.size == 0:
             return None
         ok, buffer = cv2.imencode(".jpg", recorte, [int(cv2.IMWRITE_JPEG_QUALITY), 85])

@@ -414,7 +414,8 @@ function pintarCaixasReais(ctx,lista,W,H){
   lista.forEach(c=>{
     const b=c.bbox;
     if(!b||b.length<4)return;
-    const x=b[0]*W,y=b[1]*H,w=(b[2]-b[0])*W,h=(b[3]-b[1])*H;
+    // bbox normalizado é [x, y, largura, altura] — não [x1, y1, x2, y2].
+    const x=b[0]*W,y=b[1]*H,w=b[2]*W,h=b[3]*H;
     const cor=COR_CLASSE[c.classe]||COR_CLASSE.FACIAL;
     ctx.strokeStyle=cor;
     ctx.strokeRect(x,y,w,h);
@@ -427,6 +428,18 @@ function pintarCaixasReais(ctx,lista,W,H){
     ctx.fillText(rot,x+pad,Math.max(0,y-alt)+alt/2);
   });
   ctx.restore();
+}
+
+/* Recorte guardado da captura: cabe inteiro e não é ampliado além do que a
+   resolução aguenta. Esticar um recorte de 49x85 até 500px não cria detalhe
+   nenhum — só vira um borrão que parece defeito do sistema. */
+function pintarRecorte(ctx,img,W,H){
+  const MAX_AMPLIACAO=3;
+  const esc=Math.min(W/img.naturalWidth,H/img.naturalHeight,MAX_AMPLIACAO);
+  const w=img.naturalWidth*esc,h=img.naturalHeight*esc;
+  ctx.fillStyle='#0A1218';
+  ctx.fillRect(0,0,W,H);
+  ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
 }
 
 /* Quadro ao vivo cobrindo o tile, sem distorcer: recorta o excedente. */

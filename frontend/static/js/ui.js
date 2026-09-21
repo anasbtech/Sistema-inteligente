@@ -275,7 +275,7 @@ function pintarFaces(raiz){
 function carregarRecorte(canvas, codigo){
   if(!codigo || !API.access) return;
   const img = new Image();
-  img.onload  = () => pintarAoVivo(canvas.getContext('2d', {alpha:false}), img, canvas.width, canvas.height);
+  img.onload  = () => pintarRecorte(canvas.getContext('2d', {alpha:false}), img, canvas.width, canvas.height);
   img.onerror = () => {};
   img.src = `${API.base}/deteccoes/${encodeURIComponent(codigo)}/snapshot`
           + `?token=${encodeURIComponent(API.access)}`;

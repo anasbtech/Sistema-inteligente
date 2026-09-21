@@ -300,6 +300,8 @@ async function abrirDeteccao(codigo){
     <div class="modal-ft">
       <button class="btn btn-ghost" data-close>Fechar</button>
       ${p && API.pode('biometrics') ? `<button class="btn btn-soft" id="detPessoa">${ico('db',14)} Abrir ficha</button>` : ''}
+      ${naoIdentificada && API.pode('biometrics') && API.pode('edit')
+        ? `<button class="btn btn-soft" id="detCadastrar">${ico('db',14)} Cadastrar na base</button>` : ''}
       ${d.camera ? `<button class="btn btn-soft" id="detCam">${ico('live',14)} Ver câmera</button>` : ''}
       ${podeRevisar ? `<button class="btn btn-danger" id="detFalso">Falso positivo</button>
                        <button class="btn btn-primary" id="detConf">${ico('check',14)} Confirmar</button>` : ''}
@@ -322,6 +324,8 @@ async function abrirDeteccao(codigo){
   if(bp) bp.onclick = () => { fecharModal(); abrirPessoa(d.pessoa.id_biometrico); };
   const bc = $('#detCam');
   if(bc) bc.onclick = () => { fecharModal(); abrirCamera(d.camera.codigo); };
+  const bcad = $('#detCadastrar');
+  if(bcad) bcad.onclick = () => { fecharModal(); editarPessoa(null, {deteccao: d.codigo}); };
 
   if(podeRevisar){
     const revisar = async veredito => {
@@ -515,8 +519,21 @@ function enviarFoto(idBio){
   input.click();
 }
 
-async function editarPessoa(idBio){
+/* Anexa o recorte guardado de uma captura como amostra biométrica.
+
+   O template sai do rosto que a câmera realmente viu, não de uma foto posada
+   — é por isso que a pessoa passa a ser reconhecida nas próximas passagens. */
+async function anexarCaptura(idBio, codigoDeteccao){
+  const r = await fetch(`${API.base}/deteccoes/${encodeURIComponent(codigoDeteccao)}/snapshot`
+                      + `?token=${encodeURIComponent(API.access)}`);
+  if(!r.ok) throw new Error('o recorte desta captura não está guardado');
+  const blob = await r.blob();
+  return API.enviarAmostra(idBio, new File([blob], `${codigoDeteccao}.jpg`, {type:'image/jpeg'}));
+}
+
+async function editarPessoa(idBio, opcoes){
   const novo = !idBio;
+  const deCaptura = (opcoes || {}).deteccao || null;
   let p = null;
   if(!novo){
     try{ p = await API.pessoa(idBio); }
@@ -631,8 +648,20 @@ async function editarPessoa(idBio){
     try{
       if(novo){
         const criado = await API.criarPessoa(dados);
+        let extra = '';
+        if(deCaptura){
+          // O cadastro já existe e vale por si; se o rosto não anexar, a
+          // pessoa fica sem template — dizer isso é melhor que silenciar.
+          try{
+            const r = await anexarCaptura(criado.id_biometrico, deCaptura);
+            extra = ` Rosto de ${deCaptura} anexado (qualidade ${pct100(r.qualidade_amostra)}).`;
+          }catch(e){
+            extra = ` Atenção: o rosto não pôde ser anexado — ${e.message}. Envie uma foto na ficha.`;
+          }
+        }
         fecharModal();
-        toast('Identificador emitido', `${criado.id_biometrico} — ${criado.nome}`, 'ok', 5500);
+        toast('Identificador emitido',
+          `${criado.id_biometrico} — ${criado.nome}.${extra}`, 'ok', 7000);
         irPara('biometrics');
         setTimeout(() => abrirPessoa(criado.id_biometrico), 400);
       }else{
