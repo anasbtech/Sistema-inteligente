@@ -336,6 +336,11 @@ async function montarApp(usuario){
 
   FEED.watermark = true;
   FEED.aoMedirFps = fps => { const e = $('#mFps'); if(e) e.textContent = fps; };
+  // O token vai na URL porque <img> não envia cabeçalho. Se a câmera não
+  // responder, o onerror do próprio <img> devolve o tile à cena sintética.
+  FEED.fonteAoVivo = cam => cam.status === 'ONLINE'
+    ? `${API.base}/stream/${encodeURIComponent(cam.codigo)}/mjpeg?token=${encodeURIComponent(API.access)}`
+    : null;
 
   await carregarCatalogoCameras();
   iniciarRelogio();

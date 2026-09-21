@@ -397,6 +397,13 @@ function drawFx(ctx,sc,W,H,noise){
   }
 }
 
+/* Quadro ao vivo cobrindo o tile, sem distorcer: recorta o excedente. */
+function pintarAoVivo(ctx,img,W,H){
+  const esc=Math.max(W/img.naturalWidth,H/img.naturalHeight);
+  const w=img.naturalWidth*esc,h=img.naturalHeight*esc;
+  ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
+}
+
 /* ---------- Motor ---------- */
 const FEED={
   scenes:new Map(),
@@ -411,15 +418,29 @@ const FEED={
   watermark:true,
   mostrarZonas:true,
   mostrarCaixas:true,
+  fonteAoVivo:null,   // (cam) => URL do MJPEG, ou null para a cena sintética
 
   scene(cam){
     if(!this.scenes.has(cam.codigo))this.scenes.set(cam.codigo,new Scene(cam));
     return this.scenes.get(cam.codigo);
   },
   register(canvas,cam,opts){
-    this.tiles.push({canvas,ctx:canvas.getContext('2d',{alpha:false}),cam,opts:opts||{}});
+    const t={canvas,ctx:canvas.getContext('2d',{alpha:false}),cam,opts:opts||{},img:null};
+    const url=this.fonteAoVivo?this.fonteAoVivo(cam):null;
+    if(url){
+      const img=new Image();
+      img.onerror=()=>{t.img=null};   // câmera muda: volta para a cena sintética
+      img.src=url;
+      t.img=img;
+    }
+    this.tiles.push(t);
   },
-  clear(){this.tiles=[]},
+  clear(){
+    // Soltar o src encerra a conexão MJPEG. Sem isto cada troca de tela
+    // deixaria um leitor RTSP pendurado no servidor.
+    this.tiles.forEach(t=>{if(t.img){t.img.onerror=null;t.img.src='';t.img=null}});
+    this.tiles=[];
+  },
   resize(t){
     const r=t.canvas.getBoundingClientRect();
     if(!r.width||!r.height)return false;
@@ -444,10 +465,14 @@ const FEED={
       const sc=FEED.scene(t.cam);
       if(!seen.has(t.cam.codigo)){sc.step(dt);seen.add(t.cam.codigo)}
       const ctx=t.ctx,W=t.canvas.width,H=t.canvas.height;
-      const agents=drawScene(ctx,sc,W,H,{noite:FEED.noite});
+      const vivo=t.img&&t.img.naturalWidth>0;
+      // Sem cena sintética não há agentes, e sem agentes não há caixas: as
+      // caixas sobre vídeo real têm de vir do worker de inferência.
+      const agents=vivo?null:drawScene(ctx,sc,W,H,{noite:FEED.noite});
+      if(vivo)pintarAoVivo(ctx,t.img,W,H);
       if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,sc,W,H);
-      if(t.opts.boxes!==false&&FEED.mostrarCaixas)drawBoxes(ctx,sc,agents,W,H,W/640);
-      drawFx(ctx,sc,W,H,t.opts.noise!==false);
+      if(agents&&t.opts.boxes!==false&&FEED.mostrarCaixas)drawBoxes(ctx,sc,agents,W,H,W/640);
+      if(!vivo)drawFx(ctx,sc,W,H,t.opts.noise!==false);
       if(t.opts.osd!==false)drawOSD(ctx,t.cam,W,H);
     });
   },

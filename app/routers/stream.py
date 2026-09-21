@@ -6,6 +6,7 @@ assinada que o mosaico usa no `<video>`.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ from typing import Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,7 @@ from app.database import get_db
 from app.deps import exige
 from app.models import Camera, StatusCamera, Usuario
 from app.security import decodificar_token
+from app.services import video
 from app.services.events import gerenciador
 
 log = logging.getLogger("vigia.stream")
@@ -97,6 +100,73 @@ async def stream(codigo: str, db: AsyncSession = Depends(get_db),
         "fps": cam.fps,
         "codec": cam.codec,
     }
+
+
+async def _espectador(token: str, db: AsyncSession) -> Usuario:
+    """Valida o token que veio na query string.
+
+    `<img>` e `<video>` não enviam cabeçalho Authorization, então o token
+    viaja na URL — a mesma concessão já feita no WebSocket de eventos, e a
+    razão de o access token ser curto e revogável.
+    """
+    try:
+        payload = decodificar_token(token, "access")
+        usuario_id = uuid.UUID(payload["sub"])
+    except (jwt.PyJWTError, ValueError, KeyError):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida ou expirada.")
+
+    usuario = await db.get(Usuario, usuario_id)
+    if usuario is None or not usuario.ativo:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada.")
+    if not usuario.pode("live"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            f"Seu perfil ({usuario.perfil.value}) não permite ver o vídeo ao vivo.")
+    return usuario
+
+
+async def _quadros(leitor: video.Leitor):
+    anterior = None
+    espera = 1.0 / (video.FPS_SAIDA * 2)
+    while leitor.vivo and not leitor.erro:
+        leitor.tocar()
+        atual = leitor.quadro
+        if atual is not None and atual is not anterior:
+            anterior = atual
+            yield (b"--quadro\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                   + str(len(atual)).encode() + b"\r\n\r\n" + atual + b"\r\n")
+        await asyncio.sleep(espera)
+
+
+@router.get("/stream/{codigo}/mjpeg", summary="Vídeo ao vivo (MJPEG, desenvolvimento)")
+async def mjpeg(codigo: str, token: str = Query(..., description="Access token JWT"),
+                db: AsyncSession = Depends(get_db)):
+    """Fluxo MJPEG para o mosaico enquanto não há gateway WebRTC no ar."""
+    await _espectador(token, db)
+
+    cam = (
+        await db.execute(select(Camera).where(Camera.codigo == codigo))
+    ).scalar_one_or_none()
+    if cam is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Câmera não encontrada.")
+    if not cam.rtsp_url:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Câmera sem endereço RTSP cadastrado.")
+
+    try:
+        leitor = video.obter(cam.codigo, cam.rtsp_url)
+    except video.LeitorIndisponivel as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    # O primeiro quadro só chega depois do handshake RTSP; esperar aqui deixa
+    # o erro visível como status HTTP, em vez de um fluxo que nunca começa.
+    await asyncio.get_running_loop().run_in_executor(None, leitor.pronto.wait, 12.0)
+    if leitor.erro:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"{cam.codigo}: {leitor.erro}")
+
+    return StreamingResponse(
+        _quadros(leitor),
+        media_type="multipart/x-mixed-replace; boundary=quadro",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/stream", summary="Endereços de todas as câmeras on-line")
