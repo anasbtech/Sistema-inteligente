@@ -1,0 +1,24 @@
+# Gateway de mídia: as câmeras publicam RTSP, o navegador consome WebRTC.
+# Cada caminho corresponde ao código da câmera em minúsculas.
+logLevel: info
+readTimeout: 10s
+writeTimeout: 10s
+
+webrtc: yes
+webrtcAddress: :8889
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsPartDuration: 200ms
+
+paths:
+  cam-001:
+    source: rtsp://10.30.1.10:554/stream1
+    sourceOnDemand: yes
+  cam-002:
+    source: rtsp://10.30.2.10:554/stream1
+    sourceOnDemand: yes
+  cam-003:
+    source: rtsp://10.30.3.10:554/stream1
+    sourceOnDemand: yes
+  # ... uma entrada por câmera, ou gere este arquivo a partir do banco.

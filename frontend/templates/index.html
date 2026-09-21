@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Centro Integrado de Videomonitoramento — reconhecimento facial, detecção de objetos e análise de ações.">
+<meta name="color-scheme" content="dark">
+<title>VIGIA — Centro Integrado de Videomonitoramento</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/static/css/vigia.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+<symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/><path d="m13.4 10.6 4.6-4.6"/><path d="M3.3 19a9 9 0 1 1 17.4 0"/></symbol>
+<symbol id="i-live" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m16 8 4.6-2.3A1 1 0 0 1 22 6.6v10.8a1 1 0 0 1-1.4.9L16 16"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+<symbol id="i-cam" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.2"/></symbol>
+<symbol id="i-face" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9.5 15a3.5 3.5 0 0 0 5 0"/></symbol>
+<symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+<symbol id="i-run" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15" cy="4.5" r="2"/><path d="m8.5 21 2.3-5.4L8 13l-1 4"/><path d="m5 10 2.5-3.5L12 8l2.5 3 3 1"/><path d="m11 15 3 2 1 4"/></symbol>
+<symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 21a2 2 0 0 0 3.4 0"/><path d="M4 17h16l-1.4-2.3A6 6 0 0 1 18 11.6V10a6 6 0 1 0-12 0v1.6a6 6 0 0 1-.6 3.1L4 17z"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+<symbol id="i-log" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></symbol>
+<symbol id="i-cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.4 0 10 7 10 7a18 18 0 0 1-2.16 3.19M6.6 6.6A18 18 0 0 0 2 11s3.6 7 10 7a9 9 0 0 0 5.4-1.6"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="m2 2 20 20"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></symbol>
+<symbol id="i-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+<symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></symbol>
+<symbol id="i-dn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-lt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></symbol>
+<symbol id="i-zin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></symbol>
+<symbol id="i-zout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3M8 11h6"/></symbol>
+<symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.8-8.8M17 6l2.5 2.5M14.5 8.5 17 11"/></symbol>
+<symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.5V19l4 2v-8.5z"/></symbol>
+<symbol id="i-rec" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></symbol>
+<symbol id="i-snap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h1.5l1.2-2h6.6l1.2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+</defs>
+</svg>
+<!-- ===================== AUTENTICAÇÃO ===================== -->
+<div id="authScreen">
+  <div class="auth-brand">
+    <canvas id="authCanvas"></canvas>
+    <div class="auth-brand-in">
+      <div class="auth-mark">
+        <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
+          <path d="M21 1.8 3.5 8.2v14.2C3.5 34 11 42 21 46.2 31 42 38.5 34 38.5 22.4V8.2L21 1.8z" fill="#0F1821" stroke="#35A7DE" stroke-width="1.6"/>
+          <circle cx="21" cy="21" r="7.6" fill="none" stroke="#35A7DE" stroke-width="1.5"/>
+          <circle cx="21" cy="21" r="3" fill="#35A7DE"/>
+          <path d="M21 8.5v4M21 29.5v4M8.5 21h4M29.5 21h4" stroke="#F0A02A" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <div class="auth-mark-txt">
+          <b>VIGIA</b>
+          <span>Centro Integrado de Videomonitoramento</span>
+        </div>
+      </div>
+
+      <h1 class="auth-head">Vigilância inteligente com<br><em>rastro auditável</em>.</h1>
+      <p class="auth-sub">Plataforma unificada de videomonitoramento com reconhecimento facial, detecção de objetos e análise de ações. Cada identificação gera registro imutável vinculado a um identificador biométrico permanente.</p>
+
+      <div class="auth-stats">
+        <div class="auth-stat"><b id="statCams">—</b><span>Câmeras cadastradas</span></div>
+        <div class="auth-stat"><b id="statFaces">—</b><span>Registros biométricos</span></div>
+        <div class="auth-stat"><b id="statUptime">—</b><span>Disponibilidade</span></div>
+      </div>
+    </div>
+    <div class="auth-foot">
+      <span>ACESSO RESTRITO E AUDITADO</span>
+      <span>Argon2id · JWT · TLS</span>
+      <span>Trilha encadeada por SHA-256</span>
+    </div>
+  </div>
+
+  <div class="auth-pane">
+    <!-- LOGIN -->
+    <div class="auth-card" id="viewLogin">
+      <div>
+        <div class="eyebrow" style="margin-bottom:8px">Acesso restrito</div>
+        <h2>Identificação do operador</h2>
+      </div>
+      <p class="lede">Use suas credenciais funcionais. Tentativas são registradas na trilha de auditoria.</p>
+
+      <div id="loginAlert"></div>
+
+      <div class="field">
+        <label for="loginUser">E-mail funcional ou matrícula</label>
+        <input class="inp" id="loginUser" type="text" autocomplete="username" placeholder="nome@pm.gov.br">
+      </div>
+      <div class="field">
+        <label for="loginPass">Senha</label>
+        <div class="pw-wrap">
+          <input class="inp" id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••••">
+          <button class="pw-eye" type="button" data-pwtoggle="loginPass" aria-label="Mostrar senha"><svg width="17" height="17"><use href="#i-eye"/></svg></button>
+        </div>
+      </div>
+      <div class="auth-row">
+        <label class="chk" for="loginRemember"><input type="checkbox" id="loginRemember"> Manter sessão neste terminal</label>
+        <button class="link-q" id="goRecover">Esqueci minha senha</button>
+      </div>
+      <button class="btn btn-primary btn-block" id="btnLogin"><svg width="16" height="16"><use href="#i-lock"/></svg> Entrar no sistema</button>
+
+      <div class="demo-box" id="demoBox" hidden>
+        <div class="eyebrow">Credenciais de demonstração</div>
+        <div class="demo-lista"></div>
+      </div>
+    </div>
+
+    <!-- RECUPERAÇÃO DE SENHA -->
+    <div class="auth-card" id="viewRecover" hidden>
+      <div class="stepper" id="recStepper">
+        <div class="step active" data-step="1"><span class="step-dot">1</span><span class="step-lbl">Identificação</span></div>
+        <div class="step-bar"></div>
+        <div class="step" data-step="2"><span class="step-dot">2</span><span class="step-lbl">Código</span></div>
+        <div class="step-bar"></div>
+        <div class="step" data-step="3"><span class="step-dot">3</span><span class="step-lbl">Nova senha</span></div>
+      </div>
+
+      <div id="recAlert"></div>
+
+      <div id="recStep1">
+        <h2>Recuperar acesso</h2>
+        <p class="lede" style="margin:6px 0 16px">Informe o e-mail funcional cadastrado. Enviaremos um código de verificação válido por 10 minutos.</p>
+        <div class="field">
+          <label for="recEmail">E-mail funcional</label>
+          <input class="inp" id="recEmail" type="email" autocomplete="email" placeholder="nome@pm.gov.br">
+        </div>
+        <button class="btn btn-primary btn-block" id="btnRecSend" style="margin-top:16px"><svg width="16" height="16"><use href="#i-mail"/></svg> Enviar código</button>
+        <button class="btn btn-ghost btn-block" id="btnRecBack1" style="margin-top:9px"><svg width="15" height="15"><use href="#i-lt"/></svg> Voltar ao login</button>
+      </div>
+
+      <div id="recStep2" hidden>
+        <h2>Código de verificação</h2>
+        <p class="lede" style="margin:6px 0 16px">Digite os 6 dígitos enviados para <b id="recMailEcho" style="color:var(--txt-1)"></b>.</p>
+        <div class="otp-row" id="otpRow">
+          <input class="otp" inputmode="numeric" maxlength="1" id="otp0" aria-label="Dígito 1">
+          <input class="otp" inputmode="numeric" maxlength="1" id="otp1" aria-label="Dígito 2">
+          <input class="otp" inputmode="numeric" maxlength="1" id="otp2" aria-label="Dígito 3">
+          <input class="otp" inputmode="numeric" maxlength="1" id="otp3" aria-label="Dígito 4">
+          <input class="otp" inputmode="numeric" maxlength="1" id="otp4" aria-label="Dígito 5">
+          <input class="otp" inputmode="numeric" maxlength="1" id="otp5" aria-label="Dígito 6">
+        </div>
+        <div class="auth-row" style="margin-top:13px">
+          <span class="mono" style="font-size:11.5px;color:var(--txt-3)">Expira em <b id="otpTimer" style="color:var(--amber)">10:00</b></span>
+          <button class="link-q" id="btnResend">Reenviar código</button>
+        </div>
+        <button class="btn btn-primary btn-block" id="btnRecVerify" style="margin-top:16px"><svg width="16" height="16"><use href="#i-check"/></svg> Verificar código</button>
+        <button class="btn btn-ghost btn-block" id="btnRecBack2" style="margin-top:9px"><svg width="15" height="15"><use href="#i-lt"/></svg> Corrigir e-mail</button>
+      </div>
+
+      <div id="recStep3" hidden>
+        <h2>Definir nova senha</h2>
+        <p class="lede" style="margin:6px 0 16px">A senha expira em 90 dias e não pode repetir as 5 últimas utilizadas.</p>
+        <div class="field">
+          <label for="recPass">Nova senha</label>
+          <div class="pw-wrap">
+            <input class="inp" id="recPass" type="password" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
+            <button class="pw-eye" type="button" data-pwtoggle="recPass" aria-label="Mostrar senha"><svg width="17" height="17"><use href="#i-eye"/></svg></button>
+          </div>
+          <div class="meter" id="pwMeter"><i></i><i></i><i></i><i></i></div>
+          <div class="pw-rules" id="pwRules">
+            <div class="pw-rule" data-rule="len"><i>&#10003;</i> Mínimo de 10 caracteres</div>
+            <div class="pw-rule" data-rule="upper"><i>&#10003;</i> Ao menos 1 letra maiúscula</div>
+            <div class="pw-rule" data-rule="lower"><i>&#10003;</i> Ao menos 1 letra minúscula</div>
+            <div class="pw-rule" data-rule="num"><i>&#10003;</i> Ao menos 1 número</div>
+            <div class="pw-rule" data-rule="sym"><i>&#10003;</i> Ao menos 1 caractere especial</div>
+          </div>
+        </div>
+        <div class="field" style="margin-top:13px">
+          <label for="recPass2">Confirmar nova senha</label>
+          <div class="pw-wrap">
+            <input class="inp" id="recPass2" type="password" autocomplete="new-password" placeholder="Repita a senha">
+            <button class="pw-eye" type="button" data-pwtoggle="recPass2" aria-label="Mostrar senha"><svg width="17" height="17"><use href="#i-eye"/></svg></button>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block" id="btnRecSave" style="margin-top:16px"><svg width="16" height="16"><use href="#i-key"/></svg> Salvar e entrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== APLICAÇÃO ===================== -->
+<div id="app" hidden>
+  <div class="brand-cell">
+    <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
+      <path d="M21 1.8 3.5 8.2v14.2C3.5 34 11 42 21 46.2 31 42 38.5 34 38.5 22.4V8.2L21 1.8z" fill="#0F1821" stroke="#35A7DE" stroke-width="2"/>
+      <circle cx="21" cy="21" r="7.6" fill="none" stroke="#35A7DE" stroke-width="2"/>
+      <circle cx="21" cy="21" r="3.2" fill="#F0A02A"/>
+    </svg>
+    <div><b>VIGIA</b><span>Comando</span></div>
+  </div>
+
+  <header class="topbar">
+    <button class="nav-toggle" id="navToggle" aria-label="Menu"><svg width="19" height="19"><use href="#i-menu"/></svg></button>
+    <div class="tb-title"><b id="tbTitle">Painel operacional</b><span id="tbSub">Visão geral em tempo real</span></div>
+    <div class="tb-metrics">
+      <span class="tb-metric"><i class="dot g pulse"></i> <b id="mCams">0</b>/<span id="mCamsTot">0</span> câmeras</span>
+      <span class="tb-metric"><i class="dot a"></i> <b id="mAlerts">0</b> alertas</span>
+      <span class="tb-metric">FPS <b id="mFps">0</b></span>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-clock"><span id="tbTime">--:--:--</span><small id="tbDate">—</small></div>
+    <div class="tb-sep"></div>
+    <button class="bell" id="bellBtn" aria-label="Alertas"><svg width="18" height="18"><use href="#i-bell"/></svg><span class="badge" id="bellBadge" style="display:none">0</span></button>
+    <button class="usr" id="usrBtn">
+      <span class="avatar" id="usrAvatar">–</span>
+      <span class="usr-meta"><b id="usrName">—</b><span id="usrRole">—</span></span>
+      <svg width="14" height="14" style="color:var(--txt-3)"><use href="#i-dn"/></svg>
+    </button>
+  </header>
+
+  <nav class="nav" id="nav">
+    <div class="nav-grp">Operação</div>
+    <button class="nav-item on" data-view="dash"><svg width="17" height="17"><use href="#i-gauge"/></svg> Painel</button>
+    <button class="nav-item" data-view="live"><svg width="17" height="17"><use href="#i-live"/></svg> Monitoramento ao vivo <span class="cnt" id="navLive">0</span></button>
+    <button class="nav-item" data-view="cams"><svg width="17" height="17"><use href="#i-cam"/></svg> Câmeras <span class="cnt" id="navCams">0</span></button>
+
+    <div class="nav-grp">Inteligência</div>
+    <button class="nav-item" data-view="facial"><svg width="17" height="17"><use href="#i-face"/></svg> Reconhecimento facial <span class="cnt" id="navFacial">0</span></button>
+    <button class="nav-item" data-view="objects"><svg width="17" height="17"><use href="#i-box"/></svg> Detecção de objetos <span class="cnt" id="navObj">0</span></button>
+    <button class="nav-item" data-view="actions"><svg width="17" height="17"><use href="#i-run"/></svg> Análise de ações <span class="cnt" id="navAct">0</span></button>
+    <button class="nav-item" data-view="biometrics"><svg width="17" height="17"><use href="#i-db"/></svg> Base biométrica <span class="cnt" id="navBio">0</span></button>
+
+    <div class="nav-grp">Controle</div>
+    <button class="nav-item" data-view="alerts"><svg width="17" height="17"><use href="#i-bell"/></svg> Alertas <span class="cnt alert" id="navAlerts">0</span></button>
+    <button class="nav-item" data-view="users"><svg width="17" height="17"><use href="#i-users"/></svg> Usuários e perfis</button>
+    <button class="nav-item" data-view="audit"><svg width="17" height="17"><use href="#i-log"/></svg> Trilha de auditoria</button>
+    <button class="nav-item" data-view="settings"><svg width="17" height="17"><use href="#i-cog"/></svg> Configurações</button>
+
+    <div class="nav-foot">
+      <div class="eyebrow">Estado do sistema</div>
+      <div class="sys-health">
+        <div class="sys-row"><span>Servidor</span><b><i class="dot g" id="sysDot"></i></b></div>
+        <div class="sys-row"><span>Banco</span><b id="sysBanco">—</b></div>
+        <div class="sys-row"><span>Barramento</span><b id="sysEventos">—</b></div>
+        <div class="sys-row"><span>Conexões</span><b id="sysWs">0</b></div>
+        <div class="sys-row"><span>Modo</span><b id="sysModo">—</b></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btnLogout" style="width:100%;margin-top:4px"><svg width="14" height="14"><use href="#i-logout"/></svg> Encerrar sessão</button>
+    </div>
+  </nav>
+  <div class="nav-scrim" id="navScrim"></div>
+
+  <main class="main" id="main">
+    <section class="view on" id="v-dash"></section>
+    <section class="view flush" id="v-live"></section>
+    <section class="view" id="v-cams"></section>
+    <section class="view" id="v-facial"></section>
+    <section class="view" id="v-objects"></section>
+    <section class="view" id="v-actions"></section>
+    <section class="view" id="v-biometrics"></section>
+    <section class="view" id="v-alerts"></section>
+    <section class="view" id="v-users"></section>
+    <section class="view" id="v-audit"></section>
+    <section class="view" id="v-settings"></section>
+  </main>
+</div>
+
+<div class="modal-scrim" id="modalScrim" hidden><div class="modal" id="modalBox"></div></div>
+<div id="toasts"></div>
+
+<script src="/static/js/feeds.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/ui.js"></script>
+<script src="/static/js/views_op.js"></script>
+<script src="/static/js/views_reg.js"></script>
+<script src="/static/js/views_adm.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

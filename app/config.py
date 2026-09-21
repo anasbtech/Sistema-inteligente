@@ -1,0 +1,126 @@
+"""Configuração central do VIGIA.
+
+Dois modos de operação, decididos pelas variáveis de ambiente:
+
+* **Demonstração** (padrão) — SQLite, eventos em memória, simulador de câmeras.
+  `python run.py` e o sistema sobe inteiro, sem instalar nada além do pip.
+* **Produção** — PostgreSQL + pgvector, Redis, workers de inferência lendo RTSP.
+  Basta apontar `DATABASE_URL` e `REDIS_URL`; nenhuma linha de código muda.
+"""
+from __future__ import annotations
+
+import secrets
+from functools import lru_cache
+from pathlib import Path
+from typing import List
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+RAIZ = Path(__file__).resolve().parent.parent
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # --- Aplicação -------------------------------------------------------
+    APP_NAME: str = "VIGIA — Centro Integrado de Videomonitoramento"
+    APP_VERSION: str = "4.0.0"
+    ENV: str = "development"
+    DEBUG: bool = False
+    HOST: str = "127.0.0.1"
+    PORT: int = 8000
+
+    # --- Banco -----------------------------------------------------------
+    # SQLite por padrão. Para produção:
+    #   postgresql+asyncpg://vigia:vigia@localhost:5432/vigia
+    DATABASE_URL: str = f"sqlite+aiosqlite:///{RAIZ / 'vigia.db'}"
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+
+    # --- Eventos ---------------------------------------------------------
+    # Vazio = barramento em memória (um processo). Com Redis, vários processos
+    # e workers compartilham o mesmo fluxo de eventos.
+    REDIS_URL: str = ""
+    EVENT_CHANNEL: str = "deteccoes.v1"
+
+    # --- Simulador -------------------------------------------------------
+    # Gera detecções sem câmeras reais, pela mesma rota que o worker usa.
+    SIMULADOR: bool = True
+    SIMULADOR_INTERVALO: float = 2.5
+
+    # --- Segurança -------------------------------------------------------
+    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(48))
+    ACCESS_TOKEN_MINUTES: int = 60
+    REFRESH_TOKEN_DAYS: int = 7
+    JWT_ALGORITHM: str = "HS256"
+    MAX_LOGIN_ATTEMPTS: int = 5
+    LOCKOUT_MINUTES: int = 15
+    PASSWORD_EXPIRE_DAYS: int = 90
+    PASSWORD_HISTORY: int = 5
+    OTP_TTL_SECONDS: int = 600
+    OTP_MAX_ATTEMPTS: int = 3
+
+    # --- CORS ------------------------------------------------------------
+    # O front-end é servido pela própria API, então CORS só importa se você
+    # hospedar a interface em outro domínio.
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+
+    # --- Biometria -------------------------------------------------------
+    EMBEDDING_DIM: int = 512
+    FACE_MODEL: str = "buffalo_l"
+    FACE_THRESHOLD: float = 0.88
+    FACE_DET_SIZE: int = 640
+    MIN_FACE_QUALITY: float = 0.55
+    OBJECT_MODEL: str = "yolov8l.pt"
+    OBJECT_THRESHOLD: float = 0.65
+    DEVICE: str = "cpu"
+
+    # --- Retenção / privacidade -----------------------------------------
+    RETENTION_DAYS_UNMATCHED: int = 90
+    MASK_PII_FOR_ROLES: str = "OPERADOR,ANALISTA"
+    WATERMARK_EVIDENCE: bool = True
+
+    # --- Evidências (S3 compatível) --------------------------------------
+    S3_ENDPOINT: str = ""
+    S3_BUCKET: str = "vigia-evidencias"
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+
+    # --- Gateway de mídia -------------------------------------------------
+    MEDIA_GATEWAY: str = "http://localhost:8889"
+
+    @field_validator("SECRET_KEY")
+    @classmethod
+    def _chave_forte(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError("SECRET_KEY precisa de pelo menos 32 caracteres")
+        return v
+
+    @property
+    def cors_list(self) -> List[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def mask_roles(self) -> List[str]:
+        return [r.strip() for r in self.MASK_PII_FOR_ROLES.split(",") if r.strip()]
+
+    @property
+    def usa_sqlite(self) -> bool:
+        return self.DATABASE_URL.startswith("sqlite")
+
+    @property
+    def usa_redis(self) -> bool:
+        return bool(self.REDIS_URL.strip())
+
+    @property
+    def modo(self) -> str:
+        return "demonstração (SQLite)" if self.usa_sqlite else "produção (PostgreSQL)"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

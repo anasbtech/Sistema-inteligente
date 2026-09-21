@@ -1,0 +1,123 @@
+# ======================================================================
+# OPCIONAL — só para produção.
+# Para experimentar o sistema: `python run.py` (SQLite, sem Docker).
+#
+#   docker compose up -d postgres redis      # só a infraestrutura
+#   docker compose up --build                # tudo, incluindo a aplicação
+# ======================================================================
+services:
+  # ------------------------------------------------------------------
+  # PostgreSQL com pgvector — base de vetores e registros
+  # ------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: vigia-postgres
+    environment:
+      POSTGRES_USER: vigia
+      POSTGRES_PASSWORD: vigia
+      POSTGRES_DB: vigia
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vigia"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ------------------------------------------------------------------
+  # Redis — barramento de eventos, rate limit e revogação de token
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: vigia-redis
+    command: redis-server --appendonly yes
+    ports: ["6379:6379"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ------------------------------------------------------------------
+  # MinIO — armazenamento de evidências (S3 compatível)
+  # ------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: vigia-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+
+  # ------------------------------------------------------------------
+  # MediaMTX — RTSP das câmeras -> WebRTC/HLS para o mosaico
+  # ------------------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: vigia-mediamtx
+    environment:
+      MTX_PROTOCOLS: tcp
+      MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
+    ports:
+      - "8554:8554"   # RTSP
+      - "8889:8889"   # WebRTC (WHEP)
+      - "8888:8888"   # HLS
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+  # ------------------------------------------------------------------
+  # API
+  # ------------------------------------------------------------------
+  app:
+    build: .
+    container_name: vigia-app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vigia:vigia@postgres:5432/vigia
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      DEVICE: cpu
+      SIMULADOR: "false"
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - ./app:/srv/app:ro
+      - ./frontend:/srv/frontend:ro
+      - modelos:/root/.insightface
+
+  # ------------------------------------------------------------------
+  # Worker de inferência — um por câmera em produção
+  # ------------------------------------------------------------------
+  worker:
+    build: .
+    container_name: vigia-worker
+    command: python -m worker.run --todas
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vigia:vigia@postgres:5432/vigia
+      REDIS_URL: redis://redis:6379/0
+      DEVICE: cpu
+    depends_on:
+      app: {condition: service_started}
+    volumes:
+      - modelos:/root/.insightface
+    # Para GPU, descomente:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  modelos:

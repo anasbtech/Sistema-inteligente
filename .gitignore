@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+*.pt
+*.onnx
+.pytest_cache/
+.ruff_cache/
+.secret_key
+vigia.db
+vigia.db-wal
+vigia.db-shm
