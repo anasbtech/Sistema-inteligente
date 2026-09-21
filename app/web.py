@@ -23,7 +23,7 @@ router = APIRouter(tags=["Interface"])
 # Contas criadas pelo seed. Só aparecem em modo de demonstração — nunca em
 # produção, onde `SIMULADOR=false` e `ENV=production`.
 CREDENCIAIS_DEMO = [
-    {"email": "admin@pm.gov.br",      "senha": "Admin@2026", "perfil": "Administrador"},
+    {"email": "admin@pa.com.br",      "senha": "Admin@2026", "perfil": "Administrador"},
     {"email": "supervisor@pm.gov.br", "senha": "Super@2026", "perfil": "Supervisor"},
     {"email": "operador@pm.gov.br",   "senha": "Oper@2026",  "perfil": "Operador"},
     {"email": "analista@pm.gov.br",   "senha": "Anal@2026",  "perfil": "Analista"},

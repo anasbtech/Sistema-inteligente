@@ -24,8 +24,10 @@ from app.services import biometrics
 
 log = logging.getLogger("seed")
 
+EMAIL_ADMIN = "admin@pa.com.br"
+
 USUARIOS = [
-    ("Ana Caroline",            "admin@pm.gov.br",      "Admin@2026", "PA-000001", Perfil.ADMIN,    "Comando Geral"),
+    ("Ana Caroline",            EMAIL_ADMIN,            "Admin@2026", "PA-000001", Perfil.ADMIN,    "Comando Geral"),
     ("Ten. Rafael Bittencourt", "supervisor@pm.gov.br", "Super@2026", "PM-118203", Perfil.SUPER,    "1º BPM"),
     ("Sgt. Priscila Tavares",   "operador@pm.gov.br",   "Oper@2026",  "PM-220741", Perfil.OPERADOR, "COPOM"),
     ("Dra. Helena Nakamura",    "analista@pm.gov.br",   "Anal@2026",  "CV-009317", Perfil.ANALISTA, "Inteligência"),
@@ -73,7 +75,7 @@ async def semear(silencioso: bool = False) -> None:
         p(f"  {len(USUARIOS)} usuários criados.")
 
         admin = (await db.execute(
-            select(Usuario).where(Usuario.email == "admin@pm.gov.br")
+            select(Usuario).where(Usuario.email == EMAIL_ADMIN)
         )).scalar_one()
 
         # --- registro biométrico inicial ---

@@ -14,7 +14,7 @@ Redis, sem npm.
 
 | E-mail | Senha | Perfil |
 |---|---|---|
-| `admin@pm.gov.br` | `Admin@2026` | Administrador |
+| `admin@pa.com.br` | `Admin@2026` | Administrador |
 | `supervisor@pm.gov.br` | `Super@2026` | Supervisor |
 | `operador@pm.gov.br` | `Oper@2026` | Operador |
 | `analista@pm.gov.br` | `Anal@2026` | Analista |

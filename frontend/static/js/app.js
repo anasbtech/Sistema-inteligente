@@ -340,7 +340,6 @@ async function montarApp(usuario){
   await carregarCatalogoCameras();
   iniciarRelogio();
   EventosAoVivo.conectar();
-  ligarBarraDeStatus();
 
   const inicial = API.pode('live') ? 'dash' : (API.pode('audit') ? 'audit' : 'alerts');
   await irPara(inicial);
@@ -431,26 +430,6 @@ async function atualizarContadores(){
       $('#navAct').textContent = fmtNum(t.ACAO || 0);
     }
   }catch(e){ /* contadores são informativos: falha não interrompe a operação */ }
-}
-
-/* ---------- Saúde do sistema ---------- */
-function ligarBarraDeStatus(){
-  const pintar = async () => {
-    try{
-      const s = await API.saude();
-      const ok = s.saudavel;
-      $('#sysBanco').textContent = s.componentes.banco === 'ok' ? 'ok' : 'falha';
-      $('#sysBanco').style.color = s.componentes.banco === 'ok' ? 'var(--green)' : 'var(--red)';
-      $('#sysEventos').textContent = s.componentes.eventos || '—';
-      $('#sysWs').textContent = s.websockets_ativos;
-      $('#sysDot').className = 'dot ' + (ok ? 'g' : 'r');
-      $('#sysModo').textContent = (APP.cfg.modo || '').split(' ')[0] || '—';
-    }catch(e){
-      $('#sysDot').className = 'dot r';
-    }
-  };
-  pintar();
-  setInterval(pintar, 20000);
 }
 
 /* ---------- Eventos ao vivo ---------- */

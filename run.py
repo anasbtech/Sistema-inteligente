@@ -162,7 +162,7 @@ def main() -> None:
     if semeou or settings.ENV == "development":
         print(f"  {NEGRITO}Credenciais de demonstração{FIM}")
         for email, senha, perfil in [
-            ("admin@pm.gov.br", "Admin@2026", "Administrador"),
+            ("admin@pa.com.br", "Admin@2026", "Administrador"),
             ("operador@pm.gov.br", "Oper@2026", "Operador"),
             ("analista@pm.gov.br", "Anal@2026", "Analista"),
         ]:
