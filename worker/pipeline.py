@@ -105,56 +105,55 @@ class _Candidato:
     melhor_quadro: np.ndarray
     quando: datetime
     primeiro: float                # time.monotonic()
-    ultimo: float
+    ciclo: int                     # última análise em que este rosto apareceu
     amostras: int = 1
 
 
 class SeletorMelhorQuadro:
-    """Agrupa capturas consecutivas do mesmo rosto e entrega só a melhor.
+    """Uma presença, um registro — o do melhor enquadramento.
 
-    Sem isto, quem fica dez segundos na recepção vira dezenas de detecções
+    Sem isto, quem passa um minuto na recepção vira dezenas de capturas
     idênticas: ruído que afoga a revisão humana e infla a trilha de auditoria
     sem acrescentar informação.
 
-    O agrupamento compara o próprio embedding, não a posição na imagem — quem
-    vira o rosto ou passa atrás de alguém por um instante continua sendo a
-    mesma pessoa. O limiar aqui é frouxo de propósito: identificar exige 0,88
-    contra a base inteira, mas reconhecer que dois quadros seguidos mostram a
-    mesma pessoa é um problema muito mais fácil.
+    A espera é contada em **ciclos de análise**, não em segundos. Um prazo em
+    segundos precisa ser maior que o intervalo entre análises para funcionar,
+    e esse intervalo varia com a carga da máquina — de quatro a doze segundos
+    nesta instalação. Toda tentativa de estimá-lo liberava a captura antes de
+    a seguinte existir, e tudo saía como "melhor de 1".
     """
 
     def __init__(self, similaridade_minima: float = 0.45, iou_minimo: float = 0.25,
-                 espera_minima_s: float = 1.5, fator_espera: float = 2.5,
-                 janela_maxima_s: float = 60.0) -> None:
+                 ciclos_de_espera: int = 3, janela_maxima_s: float = 300.0) -> None:
         self.similaridade_minima = similaridade_minima
         self.iou_minimo = iou_minimo
-        self.espera_minima_s = espera_minima_s
-        self.fator_espera = fator_espera
+        self.ciclos_de_espera = ciclos_de_espera
         self.janela_maxima_s = janela_maxima_s
         self._candidatos: list[_Candidato] = []
-        self._ultimo_ciclo: Optional[float] = None
-        self._intervalo = espera_minima_s
+        self._ciclo = 0
 
-    @property
-    def espera_s(self) -> float:
-        """Quanto esperar antes de dar o rosto por encerrado.
+    def adicionar_quadro(self, faces: list, quadro: np.ndarray, quando: datetime) -> None:
+        """Processa de uma vez todas as faces do quadro.
 
-        Precisa ser maior que o intervalo entre análises, senão cada captura é
-        liberada antes de a seguinte existir e o agrupamento nunca acontece —
-        toda captura sairia como "melhor de 1". Como o ritmo depende da carga
-        da máquina, ele é medido em vez de presumido.
+        Rostos no MESMO quadro são pessoas diferentes — isso o detector sabe,
+        e são candidatos distintos. Entre quadros é outra história: nesta
+        resolução o embedding não distingue nada (medido nesta instalação,
+        capturas da mesma pessoa a seis segundos deram 0,004 de similaridade,
+        quando o esperado seria acima de 0,5).
+
+        Por isso, havendo um rosto em cena e um candidato aberto, os dois são
+        a mesma presença. Abrir um segundo registro fingiria uma distinção que
+        o sistema não fez — e é o que enchia a lista com a mesma pessoa.
         """
-        return max(self.espera_minima_s, self._intervalo * self.fator_espera)
-
-    def _marcar_ciclo(self) -> None:
-        agora = time.monotonic()
-        if self._ultimo_ciclo is not None:
-            medido = agora - self._ultimo_ciclo
-            self._intervalo = self._intervalo * 0.7 + medido * 0.3   # média móvel
-        self._ultimo_ciclo = agora
+        if not faces:
+            return
+        if len(faces) == 1 and len(self._candidatos) == 1:
+            self._absorver(self._candidatos[0], faces[0], quadro, quando)
+            return
+        for face in faces:
+            self.adicionar(face, quadro, quando)
 
     def adicionar(self, face, quadro: np.ndarray, quando: datetime) -> None:
-        agora = time.monotonic()
         vetor = np.asarray(face.embedding, dtype=np.float32)
 
         alvo, melhor_sim = None, self.similaridade_minima
@@ -164,10 +163,6 @@ class SeletorMelhorQuadro:
                 alvo, melhor_sim = cand, sim
 
         if alvo is None:
-            # Rosto pequeno dá embedding instável: a 30px de largura, duas
-            # capturas da mesma pessoa podem não se reconhecer. Sobra a
-            # posição — quem estava ali segundos atrás é, quase sempre, quem
-            # está ali agora.
             caixa = cantos_para_caixa(face.bbox)
             for cand in self._candidatos:
                 if iou(cantos_para_caixa(cand.melhor.bbox), caixa) >= self.iou_minimo:
@@ -177,16 +172,20 @@ class SeletorMelhorQuadro:
         if alvo is None:
             self._candidatos.append(_Candidato(
                 embedding=vetor, melhor=face, melhor_quadro=quadro.copy(),
-                quando=quando, primeiro=agora, ultimo=agora,
+                quando=quando, primeiro=time.monotonic(), ciclo=self._ciclo,
             ))
             return
 
-        alvo.ultimo = agora
-        alvo.amostras += 1
-        if face.qualidade > alvo.melhor.qualidade:
+        self._absorver(alvo, face, quadro, quando)
+
+    def _absorver(self, cand: _Candidato, face, quadro: np.ndarray,
+                  quando: datetime) -> None:
+        cand.ciclo = self._ciclo
+        cand.amostras += 1
+        if face.qualidade > cand.melhor.qualidade:
             # `copy` porque o OpenCV reaproveita o buffer do quadro seguinte.
-            alvo.melhor, alvo.melhor_quadro, alvo.quando = face, quadro.copy(), quando
-            alvo.embedding = vetor
+            cand.melhor, cand.melhor_quadro, cand.quando = face, quadro.copy(), quando
+            cand.embedding = np.asarray(face.embedding, dtype=np.float32)
 
     def prontos(self) -> list[_Candidato]:
         """Candidatos cuja janela fechou — o rosto sumiu ou demorou demais.
@@ -196,14 +195,12 @@ class SeletorMelhorQuadro:
         cada um com o seu melhor quadro. Assim quem espera meia hora na
         recepção aparece na linha do tempo, em vez de uma vez só.
         """
-        self._marcar_ciclo()
+        self._ciclo += 1
         agora = time.monotonic()
-        espera = self.espera_s
-        janela = max(self.janela_maxima_s, espera * 2)
         saindo, ficando = [], []
         for cand in self._candidatos:
-            sumiu = agora - cand.ultimo >= espera
-            demorou = agora - cand.primeiro >= janela
+            sumiu = self._ciclo - cand.ciclo >= self.ciclos_de_espera
+            demorou = agora - cand.primeiro >= self.janela_maxima_s
             (saindo if sumiu or demorou else ficando).append(cand)
         self._candidatos = ficando
         return saindo
@@ -421,8 +418,7 @@ class PipelineCamera:
             faces = []
             if self.cfg.analitico_facial:
                 faces = await asyncio.to_thread(face_engine.extrair_faces, quadro)
-                for face in faces:
-                    self.seletor.adicionar(face, quadro, agora)
+                self.seletor.adicionar_quadro(faces, quadro, agora)
                 for cand in self.seletor.prontos():
                     await self._enviar_face(cand, largura, altura)
 
