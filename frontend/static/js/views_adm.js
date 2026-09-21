@@ -211,7 +211,7 @@ function editarUsuario(id, usuarios, perfis){
         <div class="field full"><label for="uNome">Nome e posto/graduação</label>
           <input class="inp" id="uNome" value="${u?esc(u.nome):''}" placeholder="Ex.: Sgt. Priscila Tavares"></div>
         <div class="field"><label for="uMat">Matrícula</label>
-          <input class="inp mono" id="uMat" value="${u?esc(u.matricula):''}" placeholder="PM-000000"></div>
+          <input class="inp mono" id="uMat" value="${u?esc(u.matricula):''}" placeholder="PA-000000"></div>
         <div class="field"><label for="uMail">E-mail funcional</label>
           <input class="inp mono" id="uMail" value="${u?esc(u.email):''}" placeholder="nome@pm.gov.br"></div>
         <div class="field"><label for="uPerfil">Perfil de acesso</label>

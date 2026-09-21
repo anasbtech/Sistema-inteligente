@@ -46,7 +46,9 @@ class Settings(BaseSettings):
 
     # --- Simulador -------------------------------------------------------
     # Gera detecções sem câmeras reais, pela mesma rota que o worker usa.
-    SIMULADOR: bool = True
+    # Desligado: o parque é de câmeras reais, e detecções sintéticas sobre
+    # elas contaminariam os registros e a trilha de auditoria.
+    SIMULADOR: bool = False
     SIMULADOR_INTERVALO: float = 2.5
 
     # --- Segurança -------------------------------------------------------
