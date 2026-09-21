@@ -341,6 +341,9 @@ async function montarApp(usuario){
   FEED.fonteAoVivo = cam => cam.status === 'ONLINE'
     ? `${API.base}/stream/${encodeURIComponent(cam.codigo)}/mjpeg?token=${encodeURIComponent(API.access)}`
     : null;
+  FEED.fonteSnapshot = cam => cam.status === 'ONLINE'
+    ? `${API.base}/stream/${encodeURIComponent(cam.codigo)}/snapshot?token=${encodeURIComponent(API.access)}`
+    : null;
 
   await carregarCatalogoCameras();
   iniciarRelogio();

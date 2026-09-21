@@ -418,7 +418,8 @@ const FEED={
   watermark:true,
   mostrarZonas:true,
   mostrarCaixas:true,
-  fonteAoVivo:null,   // (cam) => URL do MJPEG, ou null para a cena sintética
+  fonteAoVivo:null,    // (cam) => URL do MJPEG, ou null para a cena sintética
+  fonteSnapshot:null,  // (cam) => URL de um quadro único, para pré-visualização
 
   scene(cam){
     if(!this.scenes.has(cam.codigo))this.scenes.set(cam.codigo,new Scene(cam));

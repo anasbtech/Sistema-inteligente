@@ -17,7 +17,7 @@ from typing import Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,10 @@ log = logging.getLogger("vigia.stream")
 router = APIRouter(tags=["Tempo real"])
 
 GATEWAY = "http://localhost:8889"  # MediaMTX WebRTC (WHEP)
+
+# Idade tolerada num quadro de pré-visualização. Acima disso vale reabrir o
+# fluxo; abaixo, a miniatura reaproveita o que já foi capturado.
+IDADE_MAXIMA_SNAPSHOT_S = 15.0
 
 
 @router.websocket("/ws/eventos")
@@ -137,12 +141,8 @@ async def _quadros(leitor: video.Leitor):
         await asyncio.sleep(espera)
 
 
-@router.get("/stream/{codigo}/mjpeg", summary="Vídeo ao vivo (MJPEG, desenvolvimento)")
-async def mjpeg(codigo: str, token: str = Query(..., description="Access token JWT"),
-                db: AsyncSession = Depends(get_db)):
-    """Fluxo MJPEG para o mosaico enquanto não há gateway WebRTC no ar."""
-    await _espectador(token, db)
-
+async def _leitor_da_camera(codigo: str, db: AsyncSession) -> video.Leitor:
+    """Leitor pronto, ou o erro correspondente como status HTTP."""
     cam = (
         await db.execute(select(Camera).where(Camera.codigo == codigo))
     ).scalar_one_or_none()
@@ -160,13 +160,43 @@ async def mjpeg(codigo: str, token: str = Query(..., description="Access token J
     # o erro visível como status HTTP, em vez de um fluxo que nunca começa.
     await asyncio.get_running_loop().run_in_executor(None, leitor.pronto.wait, 12.0)
     if leitor.erro:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"{cam.codigo}: {leitor.erro}")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"{codigo}: {leitor.erro}")
+    return leitor
 
+
+@router.get("/stream/{codigo}/mjpeg", summary="Vídeo ao vivo (MJPEG, desenvolvimento)")
+async def mjpeg(codigo: str, token: str = Query(..., description="Access token JWT"),
+                db: AsyncSession = Depends(get_db)):
+    """Fluxo MJPEG para o mosaico enquanto não há gateway WebRTC no ar."""
+    await _espectador(token, db)
+    leitor = await _leitor_da_camera(codigo, db)
     return StreamingResponse(
         _quadros(leitor),
         media_type="multipart/x-mixed-replace; boundary=quadro",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.get("/stream/{codigo}/snapshot", summary="Quadro único da câmera (JPEG)")
+async def snapshot(codigo: str, token: str = Query(..., description="Access token JWT"),
+                   db: AsyncSession = Depends(get_db)):
+    """Um quadro só, para a pré-visualização da lista de câmeras.
+
+    Uma lista com muitas linhas não pode abrir um fluxo por linha: o navegador
+    limita as conexões simultâneas por servidor e travaria as chamadas da API.
+    """
+    await _espectador(token, db)
+
+    # Um quadro de alguns segundos atrás serve para uma miniatura, e evita
+    # reabrir o RTSP — que custa segundos — cada vez que a lista é aberta.
+    quadro = video.ultimo_quadro(codigo, IDADE_MAXIMA_SNAPSHOT_S)
+    if quadro is None:
+        quadro = (await _leitor_da_camera(codigo, db)).quadro
+    if quadro is None:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"{codigo}: nenhum quadro disponível.")
+
+    return Response(content=quadro, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @router.get("/stream", summary="Endereços de todas as câmeras on-line")

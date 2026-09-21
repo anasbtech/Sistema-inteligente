@@ -535,7 +535,14 @@ async function renderCameras(alvo){
 
     requestAnimationFrame(() => $$('#camTbl [data-prev]').forEach(cv => {
       const cam = camPorCodigo(cv.dataset.prev);
-      if(cam) renderOnce(cv, cam);
+      if(!cam) return;
+      renderOnce(cv, cam);                       // algo visível enquanto o quadro real não chega
+      const url = FEED.fonteSnapshot ? FEED.fonteSnapshot(cam) : null;
+      if(!url) return;
+      const img = new Image();
+      img.onload = () => pintarAoVivo(cv.getContext('2d', {alpha: false}), img, cv.width, cv.height);
+      img.onerror = () => {};                    // câmera muda: fica a cena sintética
+      img.src = url;
     }));
     $$('#camTbl [data-ver]').forEach(b => b.onclick = e => { e.stopPropagation(); abrirCamera(b.dataset.ver); });
     $$('#camTbl [data-edit]').forEach(b => b.onclick = e => { e.stopPropagation(); editarCamera(b.dataset.edit); });

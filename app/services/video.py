@@ -87,8 +87,7 @@ class Leitor:
                 log.info("[%s] sem espectadores, encerrando leitor", self.codigo)
                 break
 
-            ok, quadro = cap.read()
-            if not ok or quadro is None:
+            if not cap.grab():
                 falhas += 1
                 if falhas > FALHAS_ATE_DESISTIR:
                     self.erro = "fluxo interrompido"
@@ -100,10 +99,15 @@ class Leitor:
 
             agora = time.monotonic()
             if agora < proximo:
-                # Descartado de propósito: ler sem codificar mantém o buffer do
-                # RTSP vazio, que é o que evita o vídeo atrasar com o tempo.
+                # `grab` tira o quadro do buffer sem decodificar. É isso que
+                # permite acompanhar os 30fps da câmera gastando CPU só nos 10
+                # que realmente saem — decodificar todos saturava a máquina.
                 continue
             proximo = agora + intervalo
+
+            ok, quadro = cap.retrieve()
+            if not ok or quadro is None:
+                continue
 
             altura, largura = quadro.shape[:2]
             if largura > LARGURA_SAIDA:
@@ -117,6 +121,7 @@ class Leitor:
             )
             if codificou:
                 self.quadro = buffer.tobytes()
+                _ultimos[self.codigo] = (time.monotonic(), self.quadro)
                 self.pronto.set()
 
         cap.release()
@@ -126,6 +131,20 @@ class Leitor:
 
 _leitores: Dict[str, Leitor] = {}
 _trava = threading.Lock()
+
+# Último quadro de cada câmera, que sobrevive ao fim do leitor. Miniatura de
+# lista não justifica manter um fluxo RTSP aberto — e abrir um a cada visita
+# custava segundos. Atribuição de dict é atômica sob o GIL: dispensa trava.
+_ultimos: Dict[str, tuple] = {}
+
+
+def ultimo_quadro(codigo: str, idade_maxima_s: float) -> Optional[bytes]:
+    """Quadro já capturado, se ainda for recente o bastante."""
+    registro = _ultimos.get(codigo)
+    if registro is None:
+        return None
+    instante, quadro = registro
+    return quadro if (time.monotonic() - instante) <= idade_maxima_s else None
 
 
 def _descartar(leitor: Leitor) -> None:
