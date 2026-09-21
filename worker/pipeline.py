@@ -96,6 +96,81 @@ class LeitorRTSP:
             self.cap.release()
 
 
+@dataclass
+class _Candidato:
+    """Um rosto acompanhado entre quadros, à espera do melhor ângulo."""
+    embedding: np.ndarray
+    melhor: object                 # FaceDetectada de maior qualidade até agora
+    melhor_quadro: np.ndarray
+    quando: datetime
+    primeiro: float                # time.monotonic()
+    ultimo: float
+    amostras: int = 1
+
+
+class SeletorMelhorQuadro:
+    """Agrupa capturas consecutivas do mesmo rosto e entrega só a melhor.
+
+    Sem isto, quem fica dez segundos na recepção vira dezenas de detecções
+    idênticas: ruído que afoga a revisão humana e infla a trilha de auditoria
+    sem acrescentar informação.
+
+    O agrupamento compara o próprio embedding, não a posição na imagem — quem
+    vira o rosto ou passa atrás de alguém por um instante continua sendo a
+    mesma pessoa. O limiar aqui é frouxo de propósito: identificar exige 0,88
+    contra a base inteira, mas reconhecer que dois quadros seguidos mostram a
+    mesma pessoa é um problema muito mais fácil.
+    """
+
+    def __init__(self, similaridade_minima: float = 0.60,
+                 espera_s: float = 1.5, janela_maxima_s: float = 10.0) -> None:
+        self.similaridade_minima = similaridade_minima
+        self.espera_s = espera_s
+        self.janela_maxima_s = janela_maxima_s
+        self._candidatos: list[_Candidato] = []
+
+    def adicionar(self, face, quadro: np.ndarray, quando: datetime) -> None:
+        agora = time.monotonic()
+        vetor = np.asarray(face.embedding, dtype=np.float32)
+
+        alvo, melhor_sim = None, self.similaridade_minima
+        for cand in self._candidatos:
+            sim = float(np.dot(cand.embedding, vetor))   # ambos L2-normalizados
+            if sim >= melhor_sim:
+                alvo, melhor_sim = cand, sim
+
+        if alvo is None:
+            self._candidatos.append(_Candidato(
+                embedding=vetor, melhor=face, melhor_quadro=quadro.copy(),
+                quando=quando, primeiro=agora, ultimo=agora,
+            ))
+            return
+
+        alvo.ultimo = agora
+        alvo.amostras += 1
+        if face.qualidade > alvo.melhor.qualidade:
+            # `copy` porque o OpenCV reaproveita o buffer do quadro seguinte.
+            alvo.melhor, alvo.melhor_quadro, alvo.quando = face, quadro.copy(), quando
+            alvo.embedding = vetor
+
+    def prontos(self) -> list[_Candidato]:
+        """Candidatos cuja janela fechou — o rosto sumiu ou demorou demais.
+
+        Quem fica parado além da janela é encerrado do mesmo jeito: o próximo
+        quadro abre um candidato novo, e o resultado é um registro por janela,
+        cada um com o seu melhor quadro. Assim quem espera meia hora na
+        recepção aparece na linha do tempo, em vez de uma vez só.
+        """
+        agora = time.monotonic()
+        saindo, ficando = [], []
+        for cand in self._candidatos:
+            sumiu = agora - cand.ultimo >= self.espera_s
+            demorou = agora - cand.primeiro >= self.janela_maxima_s
+            (saindo if sumiu or demorou else ficando).append(cand)
+        self._candidatos = ficando
+        return saindo
+
+
 class PipelineCamera:
     """Laço de análise de uma câmera."""
 
@@ -104,8 +179,8 @@ class PipelineCamera:
         self.cliente = cliente
         self.leitor = LeitorRTSP(cfg.rtsp_url)
         self.acoes = AnalisadorAcoes()
+        self.seletor = SeletorMelhorQuadro()
         self.ultimo_heartbeat = 0.0
-        self.ultima_face_por_track: dict[int, float] = {}
         self.quadros = 0
 
     # -- envio ---------------------------------------------------------
@@ -116,6 +191,23 @@ class PipelineCamera:
                 log.error("Ingest recusado (%s): %s", r.status_code, r.text[:200])
         except httpx.HTTPError as exc:
             log.error("Falha ao enviar detecção: %s", exc)
+
+    async def _enviar_face(self, cand: _Candidato, largura: int, altura: int) -> None:
+        face = cand.melhor
+        await self._enviar({
+            "tipo": "FACIAL",
+            "camera_codigo": self.cfg.codigo,
+            # O instante é o da melhor captura, não o do fim da janela.
+            "ocorrido_em": cand.quando.isoformat(),
+            # O worker manda o vetor; quem identifica é a API.
+            "embedding": face.embedding.tolist(),
+            "qualidade_face": face.qualidade,
+            "bbox": face.bbox_normalizado(largura, altura),
+            "snapshot_key": await self._guardar(cand.melhor_quadro, face.bbox, cand.quando),
+            "hash_evidencia": hash_evidencia(cand.melhor_quadro.tobytes()),
+        })
+        log.info("%s: rosto enviado (qualidade %.2f, melhor de %d capturas)",
+                 self.cfg.codigo, face.qualidade, cand.amostras)
 
     async def _heartbeat(self, latencia_ms: int) -> None:
         agora = time.time()
@@ -184,17 +276,9 @@ class PipelineCamera:
             if self.cfg.analitico_facial:
                 faces = await asyncio.to_thread(face_engine.extrair_faces, quadro)
                 for face in faces:
-                    await self._enviar({
-                        "tipo": "FACIAL",
-                        "camera_codigo": self.cfg.codigo,
-                        "ocorrido_em": agora.isoformat(),
-                        # O worker manda o vetor; quem identifica é a API.
-                        "embedding": face.embedding.tolist(),
-                        "qualidade_face": face.qualidade,
-                        "bbox": face.bbox_normalizado(largura, altura),
-                        "snapshot_key": await self._guardar(quadro, face.bbox, agora),
-                        "hash_evidencia": hash_evidencia(quadro.tobytes()),
-                    })
+                    self.seletor.adicionar(face, quadro, agora)
+                for cand in self.seletor.prontos():
+                    await self._enviar_face(cand, largura, altura)
 
             if self.cfg.analitico_acao and objetos:
                 eventos = self.acoes.atualizar(objetos, largura, altura, self.cfg.zonas)
