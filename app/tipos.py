@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import timezone
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import CHAR, JSON, Text, TypeDecorator
+from sqlalchemy import CHAR, JSON, DateTime, Text, TypeDecorator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
@@ -96,6 +97,39 @@ class JSONPortatil(TypeDecorator):
         return dialect.type_descriptor(JSON())
 
 
+class DataHora(TypeDecorator):
+    """Instante sempre em UTC e sempre com fuso declarado.
+
+    O SQLite não guarda fuso: grava o texto e devolve naive. Serializado
+    assim, `2026-09-21T12:08:25` chega ao navegador sem o `Z` e é lido como
+    hora local — o carimbo aparece 3h adiantado em Brasília. Como a trilha
+    de auditoria depende do instante exato, a conversão fica aqui, na
+    fronteira do banco, e não espalhada pelas rotas.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(DateTime(timezone=True))
+
+    def process_bind_param(self, value: Any, dialect) -> Any:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        value = value.astimezone(timezone.utc)
+        # O SQLite ignora tzinfo ao formatar; gravamos o relógio UTC já nu.
+        return value if dialect.name == "postgresql" else value.replace(tzinfo=None)
+
+    def process_result_value(self, value: Any, dialect) -> Any:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
 def dialeto_suporta_vetor(bind) -> bool:
     """True quando dá para usar o operador `<=>` do pgvector."""
     try:
@@ -120,7 +154,6 @@ def como_utc(valor):
     if valor is None:
         return None
     if valor.tzinfo is None:
-        from datetime import timezone
         return valor.replace(tzinfo=timezone.utc)
     return valor
 

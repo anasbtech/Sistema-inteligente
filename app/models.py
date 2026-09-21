@@ -17,13 +17,13 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, Float,
+    BigInteger, Boolean, CheckConstraint, Date, Enum, Float,
     ForeignKey, Index, Integer, String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.config import settings
-from app.tipos import GUID, JSONPortatil, Vetor
+from app.tipos import GUID, DataHora, JSONPortatil, Vetor
 
 
 class Base(DeclarativeBase):
@@ -123,12 +123,12 @@ class Usuario(Base):
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     tentativas_falhas: Mapped[int] = mapped_column(Integer, default=0)
-    bloqueado_ate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    senha_alterada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    bloqueado_ate: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
+    senha_alterada_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
     forcar_troca_senha: Mapped[bool] = mapped_column(Boolean, default=False)
-    ultimo_acesso: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ultimo_acesso: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
 
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
     senhas_antigas: Mapped[List["SenhaHistorico"]] = relationship(
         back_populates="usuario", cascade="all, delete-orphan", lazy="selectin"
@@ -149,7 +149,7 @@ class SenhaHistorico(Base):
     id: Mapped[int] = mapped_column(PK_SERIAL, primary_key=True, autoincrement=True)
     usuario_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), index=True)
     senha_hash: Mapped[str] = mapped_column(String(255))
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
     usuario: Mapped[Usuario] = relationship(back_populates="senhas_antigas")
 
@@ -161,11 +161,11 @@ class TokenRecuperacao(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
     usuario_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), index=True)
     codigo_hash: Mapped[str] = mapped_column(String(128))
-    expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    expira_em: Mapped[datetime] = mapped_column(DataHora(), index=True)
     tentativas: Mapped[int] = mapped_column(Integer, default=0)
     usado: Mapped[bool] = mapped_column(Boolean, default=False)
     ip_solicitante: Mapped[str] = mapped_column(String(64), default="")
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
 
 # ======================================================================
@@ -208,9 +208,9 @@ class Camera(Base):
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     latencia_ms: Mapped[int] = mapped_column(Integer, default=0)
-    ultimo_heartbeat: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ultimo_heartbeat: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
     instalada_em: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
     zonas: Mapped[List["Zona"]] = relationship(
         back_populates="camera", cascade="all, delete-orphan", lazy="selectin"
@@ -285,16 +285,16 @@ class Pessoa(Base):
     observacoes: Mapped[str] = mapped_column(Text, default="")
 
     total_deteccoes: Mapped[int] = mapped_column(BigInteger, default=0)
-    ultima_deteccao: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ultima_deteccao: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
     ultima_camera: Mapped[str] = mapped_column(String(200), default="")
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     cadastrado_por: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True
     )
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
     atualizado_em: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DataHora(), server_default=func.now(), onupdate=func.now()
     )
 
     amostras_rel: Mapped[List["AmostraFacial"]] = relationship(
@@ -318,7 +318,7 @@ class AmostraFacial(Base):
     embedding: Mapped[list] = mapped_column(Vetor(settings.EMBEDDING_DIM))
     qualidade: Mapped[float] = mapped_column(Float, default=0.0)
     origem: Mapped[str] = mapped_column(String(32), default="cadastro")  # cadastro | captura
-    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
     pessoa: Mapped[Pessoa] = relationship(back_populates="amostras_rel")
 
@@ -332,7 +332,7 @@ class Deteccao(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
     codigo: Mapped[str] = mapped_column(String(24), unique=True, index=True)  # FR-2026000001
     tipo: Mapped[TipoDeteccao] = mapped_column(Enum(TipoDeteccao, name="tipo_deteccao_enum"), index=True)
-    ocorrido_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ocorrido_em: Mapped[datetime] = mapped_column(DataHora(), index=True)
 
     camera_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), index=True)
 
@@ -366,10 +366,10 @@ class Deteccao(Base):
     revisado_por: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True
     )
-    revisado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revisado_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
 
     hash_evidencia: Mapped[str] = mapped_column(String(64), default="")      # SHA-256 do quadro
-    expurgo_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    expurgo_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True, index=True)
 
     camera: Mapped[Camera] = relationship(lazy="joined")
     pessoa: Mapped[Optional[Pessoa]] = relationship(lazy="joined")
@@ -406,8 +406,8 @@ class Alerta(Base):
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True
     )
     resolucao: Mapped[str] = mapped_column(Text, default="")
-    disparado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    fechado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    disparado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now(), index=True)
+    fechado_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
 
     camera: Mapped[Camera] = relationship(lazy="joined")
     pessoa: Mapped[Optional[Pessoa]] = relationship(lazy="joined")
@@ -425,7 +425,7 @@ class Auditoria(Base):
     __tablename__ = "auditoria"
 
     id: Mapped[int] = mapped_column(PK_SERIAL, primary_key=True, autoincrement=True)
-    ocorrido_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    ocorrido_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now(), index=True)
 
     acao: Mapped[str] = mapped_column(String(48), index=True)
     descricao: Mapped[str] = mapped_column(String(300))

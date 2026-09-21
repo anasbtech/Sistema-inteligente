@@ -202,8 +202,7 @@ textarea.inp{resize:vertical;min-height:70px}
   background:var(--ink-850);
 }
 .brand-cell .shield{width:24px;height:28px}
-.brand-cell b{font-family:var(--f-disp);font-size:19px;font-weight:700;letter-spacing:.17em;line-height:1}
-.brand-cell span{font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--acc);font-weight:600;display:block;margin-top:2px}
+.brand-cell b{font-family:var(--f-disp);font-size:16px;font-weight:700;letter-spacing:.12em;line-height:1;white-space:nowrap}
 
 .topbar{
   grid-area:top;display:flex;align-items:center;gap:14px;padding:0 16px;
