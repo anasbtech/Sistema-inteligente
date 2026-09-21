@@ -267,6 +267,20 @@ function pintarFaces(raiz){
     c.dataset.pintado = '1';
   });
 }
+/* Busca o recorte guardado da captura e o desenha sobre o canvas.
+
+   O desenho sintético continua por baixo: quando não há imagem — detecção
+   antiga, ou vinda do simulador — fica o esquema, que não finge ser uma
+   fotografia de alguém. */
+function carregarRecorte(canvas, codigo){
+  if(!codigo || !API.access) return;
+  const img = new Image();
+  img.onload  = () => pintarAoVivo(canvas.getContext('2d', {alpha:false}), img, canvas.width, canvas.height);
+  img.onerror = () => {};
+  img.src = `${API.base}/deteccoes/${encodeURIComponent(codigo)}/snapshot`
+          + `?token=${encodeURIComponent(API.access)}`;
+}
+
 function pintarSnaps(raiz){
   $$('[data-snap]', raiz || document).forEach(c => {
     if(c.dataset.pintado) return;
@@ -274,6 +288,7 @@ function pintarSnaps(raiz){
     try{ d = JSON.parse(c.dataset.snap); }catch(e){ return; }
     drawSnapshot(c, d, +(c.getAttribute('width') || 56));
     c.dataset.pintado = '1';
+    carregarRecorte(c, d.codigo);
   });
 }
 /* Serializa só o que a miniatura precisa — evita jogar o objeto inteiro no DOM */

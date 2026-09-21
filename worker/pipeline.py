@@ -11,6 +11,7 @@ num lugar só.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import time
 from dataclasses import dataclass
@@ -259,7 +260,7 @@ class PipelineCamera:
             "embedding": face.embedding.tolist(),
             "qualidade_face": face.qualidade,
             "bbox": face.bbox_normalizado(largura, altura),
-            "snapshot_key": await self._guardar(cand.melhor_quadro, face.bbox, cand.quando),
+            "snapshot_jpeg": self._recorte(cand.melhor_quadro, face.bbox),
             "hash_evidencia": hash_evidencia(cand.melhor_quadro.tobytes()),
         })
         log.info("%s: rosto enviado (qualidade %.2f, melhor de %d capturas)",
@@ -354,7 +355,7 @@ class PipelineCamera:
                         "zona_nome": self._zona_do_ponto(
                             (obj.centro()[0] / largura, obj.centro()[1] / altura)
                         ),
-                        "snapshot_key": await self._guardar(quadro, obj.bbox, agora),
+                        "snapshot_jpeg": self._recorte(quadro, obj.bbox),
                         "hash_evidencia": hash_evidencia(quadro.tobytes()),
                     })
 
@@ -381,25 +382,25 @@ class PipelineCamera:
                         "envolvidos": ev.envolvidos,
                         "bbox": (list(ev.bbox) if ev.bbox else None),
                         "track_id": ev.track_id,
-                        "snapshot_key": await self._guardar(quadro, ev.bbox, agora),
+                        "snapshot_jpeg": self._recorte(quadro, ev.bbox),
                         "hash_evidencia": hash_evidencia(quadro.tobytes()),
                     })
 
             await self._heartbeat(int((time.perf_counter() - t0) * 1000))
             await asyncio.sleep(0)
 
-    async def _guardar(self, quadro: np.ndarray, bbox, quando: datetime) -> str:
-        """Grava o recorte no armazenamento de evidências e devolve a chave.
+    def _recorte(self, quadro: np.ndarray, bbox) -> Optional[str]:
+        """Recorte da captura em JPEG base64, para a API gravar.
 
-        Substitua por upload real (boto3/aioboto3) para S3/MinIO. Aqui só
-        montamos a chave determinística.
+        Quem grava é a API, não o worker: em produção eles rodam em máquinas
+        diferentes, e mandar um caminho em vez da imagem só funcionaria com
+        disco compartilhado.
         """
-        chave = f"{self.cfg.codigo}/{quando:%Y/%m/%d}/{quando:%H%M%S%f}.jpg"
-        # Exemplo de upload:
-        # recorte = recortar(quadro, bbox)
-        # ok, buf = cv2.imencode(".jpg", recorte, [cv2.IMWRITE_JPEG_QUALITY, 88])
-        # await s3.put_object(Bucket=settings.S3_BUCKET, Key=chave, Body=buf.tobytes())
-        return chave
+        recorte = recortar(quadro, bbox)
+        if recorte.size == 0:
+            return None
+        ok, buffer = cv2.imencode(".jpg", recorte, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        return base64.b64encode(buffer.tobytes()).decode() if ok else None
 
     def fechar(self) -> None:
         self.leitor.fechar()

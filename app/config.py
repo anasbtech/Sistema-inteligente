@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     MASK_PII_FOR_ROLES: str = "OPERADOR,ANALISTA"
     WATERMARK_EVIDENCE: bool = True
 
+    # --- Evidências -------------------------------------------------------
+    # Recortes das capturas, quando não há S3 configurado. Em produção use
+    # volume dedicado: o expurgo apaga daqui junto com o registro, e é isso
+    # que mantém a retenção honesta.
+    SNAPSHOT_DIR: str = "evidencias"
+
     # --- Evidências (S3 compatível) --------------------------------------
     S3_ENDPOINT: str = ""
     S3_BUCKET: str = "vigia-evidencias"

@@ -66,6 +66,32 @@ def exige(*permissoes: str) -> Callable:
     return _checar
 
 
+async def usuario_de_query(token: str, db: AsyncSession, *permissoes: str) -> Usuario:
+    """Autentica pelo token vindo na query string.
+
+    `<img>` e `<video>` não enviam cabeçalho Authorization, então o token
+    viaja na URL — a mesma concessão já feita no WebSocket de eventos, e a
+    razão de o access token ser curto e revogável.
+    """
+    try:
+        payload = decodificar_token(token, "access")
+        usuario_id = uuid.UUID(payload["sub"])
+    except (jwt.PyJWTError, ValueError, KeyError):
+        raise CREDENCIAIS_INVALIDAS
+
+    usuario = await db.get(Usuario, usuario_id)
+    if usuario is None or not usuario.ativo:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada.")
+
+    faltando = [p for p in permissoes if not usuario.pode(p)]
+    if faltando:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"Seu perfil ({usuario.perfil.value}) não possui a permissão: {', '.join(faltando)}.",
+        )
+    return usuario
+
+
 async def limitar_taxa(chave: str, limite: int, janela_s: int) -> None:
     """Contador simples em Redis. Levanta 429 ao estourar a janela."""
     redis = get_redis()

@@ -314,6 +314,7 @@ async function abrirDeteccao(codigo){
       big.style.height = Math.round(w * .6) + 'px';
       drawSnapshot(big, {codigo:d.codigo, tipo:d.tipo, classe:d.classe, bbox:d.bbox,
                          cena:(d.camera&&d.camera.cena)||'rua'}, w);
+      carregarRecorte(big, d.codigo);
     }
   });
 

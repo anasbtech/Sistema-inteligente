@@ -183,7 +183,6 @@ class Simulador:
             qualidade_face=round(rng.uniform(0.38, 0.72) if ruim
                                  else rng.uniform(0.72, 0.99), 4),
             bbox=_bbox(),
-            snapshot_key=f"{cam.codigo}/{agora:%Y/%m/%d}/{agora:%H%M%S%f}.jpg",
         )
 
     def _objeto(self, cam: Camera, agora: datetime) -> DeteccaoIn:
@@ -199,7 +198,6 @@ class Simulador:
             zona_nome=zona,
             bbox=_bbox(),
             track_id=rng.randint(1, 900),
-            snapshot_key=f"{cam.codigo}/{agora:%Y/%m/%d}/{agora:%H%M%S%f}.jpg",
         )
 
     def _acao(self, cam: Camera, agora: datetime) -> DeteccaoIn:
@@ -218,7 +216,6 @@ class Simulador:
             zona_nome=rng.choice(cam.zonas).nome if cam.zonas else "",
             bbox=_bbox(),
             track_id=rng.randint(1, 900),
-            snapshot_key=f"{cam.codigo}/{agora:%Y/%m/%d}/{agora:%H%M%S%f}.jpg",
         )
 
 

@@ -351,7 +351,9 @@ class DeteccaoIn(BaseModel):
     zona_nome: str = ""
     bbox: Optional[List[float]] = None
     track_id: Optional[int] = None
-    snapshot_key: str = ""
+    # Recorte da captura em base64. A API é quem decide onde gravar: aceitar
+    # um caminho vindo pela rede seria aceitar travessia de diretório.
+    snapshot_jpeg: Optional[str] = None
     hash_evidencia: str = ""
 
 

@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.deps import exige
+from app.deps import exige, usuario_de_query
 from app.models import Camera, StatusCamera, Usuario
 from app.security import decodificar_token
 from app.services import video
@@ -106,28 +106,6 @@ async def stream(codigo: str, db: AsyncSession = Depends(get_db),
     }
 
 
-async def _espectador(token: str, db: AsyncSession) -> Usuario:
-    """Valida o token que veio na query string.
-
-    `<img>` e `<video>` não enviam cabeçalho Authorization, então o token
-    viaja na URL — a mesma concessão já feita no WebSocket de eventos, e a
-    razão de o access token ser curto e revogável.
-    """
-    try:
-        payload = decodificar_token(token, "access")
-        usuario_id = uuid.UUID(payload["sub"])
-    except (jwt.PyJWTError, ValueError, KeyError):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessão inválida ou expirada.")
-
-    usuario = await db.get(Usuario, usuario_id)
-    if usuario is None or not usuario.ativo:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada.")
-    if not usuario.pode("live"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            f"Seu perfil ({usuario.perfil.value}) não permite ver o vídeo ao vivo.")
-    return usuario
-
-
 async def _quadros(leitor: video.Leitor):
     anterior = None
     espera = 1.0 / (video.FPS_SAIDA * 2)
@@ -168,7 +146,7 @@ async def _leitor_da_camera(codigo: str, db: AsyncSession) -> video.Leitor:
 async def mjpeg(codigo: str, token: str = Query(..., description="Access token JWT"),
                 db: AsyncSession = Depends(get_db)):
     """Fluxo MJPEG para o mosaico enquanto não há gateway WebRTC no ar."""
-    await _espectador(token, db)
+    await usuario_de_query(token, db, "live")
     leitor = await _leitor_da_camera(codigo, db)
     return StreamingResponse(
         _quadros(leitor),
@@ -185,7 +163,7 @@ async def snapshot(codigo: str, token: str = Query(..., description="Access toke
     Uma lista com muitas linhas não pode abrir um fluxo por linha: o navegador
     limita as conexões simultâneas por servidor e travaria as chamadas da API.
     """
-    await _espectador(token, db)
+    await usuario_de_query(token, db, "live")
 
     # Um quadro de alguns segundos atrás serve para uma miniatura, e evita
     # reabrir o RTSP — que custa segundos — cada vez que a lista é aberta.

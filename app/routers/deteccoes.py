@@ -6,29 +6,33 @@ de alerta fiquem num lugar só.
 """
 from __future__ import annotations
 
+import base64
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
 from app.config import settings
 from app.database import get_db
-from app.deps import exige
+from app.deps import exige, usuario_de_query
 from app.models import (
     Alerta, Camera, Deteccao, Pessoa, StatusAlerta, StatusPessoa,
     TipoDeteccao, Usuario, Zona,
 )
 from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn
-from app.services import face_engine
+from app.services import evidencias, face_engine
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
 from app.services.vision import ROTULO_ACAO, SEVERIDADE_ACAO, severidade_objeto
 from app.tipos import como_utc
 
+log = logging.getLogger("vigia.deteccoes")
 router = APIRouter(prefix="/deteccoes", tags=["Detecções"])
 
 PREFIXO_CODIGO = {
@@ -181,8 +185,22 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     if dados.tipo == TipoDeteccao.FACIAL and pessoa is None:
         expurgo = dados.ocorrido_em + timedelta(days=settings.RETENTION_DAYS_UNMATCHED)
 
+    codigo = await _proximo_codigo(db, dados.tipo)
+
+    # O recorte é gravado sob o código da própria detecção. A chave que o
+    # worker sugere não vira caminho — ela chega pela rede.
+    chave = ""
+    if dados.snapshot_jpeg:
+        try:
+            chave = evidencias.gravar(
+                codigo, dados.ocorrido_em,
+                base64.b64decode(dados.snapshot_jpeg, validate=True),
+            )
+        except (ValueError, OSError) as exc:
+            log.warning("Recorte de %s descartado: %s", codigo, exc)
+
     det = Deteccao(
-        codigo=await _proximo_codigo(db, dados.tipo),
+        codigo=codigo,
         tipo=dados.tipo,
         ocorrido_em=dados.ocorrido_em,
         camera_id=cam.id,
@@ -199,7 +217,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         bbox=dados.bbox,
         track_id=dados.track_id,
         severidade=severidade,
-        snapshot_key=dados.snapshot_key,
+        snapshot_key=chave,
         hash_evidencia=dados.hash_evidencia,
         expurgo_em=expurgo,
     )
@@ -387,6 +405,31 @@ async def resumo(horas: int = Query(24, ge=1, le=168), db: AsyncSession = Depend
     }
 
 
+@router.get("/{codigo}/snapshot", summary="Recorte da captura (JPEG)")
+async def snapshot(codigo: str, token: str = Query(..., description="Access token JWT"),
+                   db: AsyncSession = Depends(get_db)):
+    """A imagem que a revisão humana olha antes de confirmar uma identificação.
+
+    Não gera linha de auditoria: a lista carrega uma miniatura por registro, e
+    auditar cada uma encheria a trilha de ruído paralelo. O acesso que importa
+    — abrir a ficha da captura — já é registrado em `obter`.
+    """
+    await usuario_de_query(token, db, "facial")
+
+    det = (
+        await db.execute(select(Deteccao).where(Deteccao.codigo == codigo))
+    ).scalars().unique().one_or_none()
+    if det is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Detecção não encontrada.")
+
+    imagem = evidencias.ler(det.snapshot_key)
+    if imagem is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "Sem recorte guardado para esta captura.")
+    return Response(content=imagem, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=300"})
+
+
 @router.get("/{codigo}", response_model=DeteccaoOut, summary="Detalhe da detecção")
 async def obter(codigo: str, request: Request, db: AsyncSession = Depends(get_db),
                 usuario: Usuario = Depends(exige("facial"))):
@@ -453,12 +496,19 @@ async def expurgo(db: AsyncSession = Depends(get_db),
         )
     ).scalars().unique().all()
 
+    imagens = 0
     for d in alvos:
+        # Apagar o registro e deixar o recorte no disco transformaria a
+        # retenção em promessa vazia.
+        if evidencias.apagar(d.snapshot_key):
+            imagens += 1
         await db.delete(d)
 
     await audit.registrar(
         db, acao="EXPURGO", descricao="Expurgo de capturas não identificadas vencidas",
-        severidade="warn", usuario=usuario, alvo=f"{len(alvos)} registro(s)",
+        severidade="warn", usuario=usuario,
+        alvo=f"{len(alvos)} registro(s), {imagens} recorte(s)",
         finalidade=f"Retenção de {settings.RETENTION_DAYS_UNMATCHED} dias",
     )
-    return {"removidos": len(alvos), "prazo_dias": settings.RETENTION_DAYS_UNMATCHED}
+    return {"removidos": len(alvos), "imagens_removidas": imagens,
+            "prazo_dias": settings.RETENTION_DAYS_UNMATCHED}
