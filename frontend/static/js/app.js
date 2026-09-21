@@ -456,6 +456,10 @@ EventosAoVivo.ao(msg => {
     if(APP.view === 'dash')  painelNovoEvento(d);
     atualizarContadoresDebounced();
   }
+  if(msg.tipo === 'quadro_ao_vivo'){
+    // Sobreposição do mosaico: a cena atual, que não vira registro.
+    FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas);
+  }
   if(msg.tipo === 'alerta_atualizado'){
     atualizarContadoresDebounced();
     if(APP.view === 'alerts') irPara('alerts');

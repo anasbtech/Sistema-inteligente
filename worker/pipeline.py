@@ -123,11 +123,33 @@ class SeletorMelhorQuadro:
     """
 
     def __init__(self, similaridade_minima: float = 0.60,
-                 espera_s: float = 1.5, janela_maxima_s: float = 10.0) -> None:
+                 espera_minima_s: float = 1.5, fator_espera: float = 2.5,
+                 janela_maxima_s: float = 10.0) -> None:
         self.similaridade_minima = similaridade_minima
-        self.espera_s = espera_s
+        self.espera_minima_s = espera_minima_s
+        self.fator_espera = fator_espera
         self.janela_maxima_s = janela_maxima_s
         self._candidatos: list[_Candidato] = []
+        self._ultimo_ciclo: Optional[float] = None
+        self._intervalo = espera_minima_s
+
+    @property
+    def espera_s(self) -> float:
+        """Quanto esperar antes de dar o rosto por encerrado.
+
+        Precisa ser maior que o intervalo entre análises, senão cada captura é
+        liberada antes de a seguinte existir e o agrupamento nunca acontece —
+        toda captura sairia como "melhor de 1". Como o ritmo depende da carga
+        da máquina, ele é medido em vez de presumido.
+        """
+        return max(self.espera_minima_s, self._intervalo * self.fator_espera)
+
+    def _marcar_ciclo(self) -> None:
+        agora = time.monotonic()
+        if self._ultimo_ciclo is not None:
+            medido = agora - self._ultimo_ciclo
+            self._intervalo = self._intervalo * 0.7 + medido * 0.3   # média móvel
+        self._ultimo_ciclo = agora
 
     def adicionar(self, face, quadro: np.ndarray, quando: datetime) -> None:
         agora = time.monotonic()
@@ -161,14 +183,46 @@ class SeletorMelhorQuadro:
         cada um com o seu melhor quadro. Assim quem espera meia hora na
         recepção aparece na linha do tempo, em vez de uma vez só.
         """
+        self._marcar_ciclo()
         agora = time.monotonic()
+        espera = self.espera_s
+        janela = max(self.janela_maxima_s, espera * 2)
         saindo, ficando = [], []
         for cand in self._candidatos:
-            sumiu = agora - cand.ultimo >= self.espera_s
-            demorou = agora - cand.primeiro >= self.janela_maxima_s
+            sumiu = agora - cand.ultimo >= espera
+            demorou = agora - cand.primeiro >= janela
             (saindo if sumiu or demorou else ficando).append(cand)
         self._candidatos = ficando
         return saindo
+
+
+class RegistroUnicoPorObjeto:
+    """Um registro por objeto que passa, não um por quadro analisado.
+
+    O YOLO com ByteTrack mantém o mesmo `track_id` enquanto o objeto está em
+    cena, então basta lembrar quais trilhas já foram registradas. O registro
+    sai na primeira aparição, e não quando o objeto some: é o que permite a
+    caixa aparecer no vídeo enquanto o carro ainda está passando.
+
+    A trilha é esquecida depois de sumir, para que o mesmo carro voltando meia
+    hora depois conte como passagem nova — que é o que ela é.
+    """
+
+    def __init__(self, esquecer_s: float = 10.0) -> None:
+        self.esquecer_s = esquecer_s
+        self._vistas: dict[int, float] = {}
+
+    def e_passagem_nova(self, track_id: Optional[int]) -> bool:
+        agora = time.monotonic()
+        for tid in [t for t, visto in self._vistas.items()
+                    if agora - visto > self.esquecer_s]:
+            del self._vistas[tid]
+
+        if track_id is None:
+            return True        # sem rastreamento não há como deduplicar
+        nova = track_id not in self._vistas
+        self._vistas[track_id] = agora
+        return nova
 
 
 class PipelineCamera:
@@ -180,6 +234,8 @@ class PipelineCamera:
         self.leitor = LeitorRTSP(cfg.rtsp_url)
         self.acoes = AnalisadorAcoes()
         self.seletor = SeletorMelhorQuadro()
+        self.objetos = RegistroUnicoPorObjeto()
+        self._tinha_caixas = False
         self.ultimo_heartbeat = 0.0
         self.quadros = 0
 
@@ -208,6 +264,35 @@ class PipelineCamera:
         })
         log.info("%s: rosto enviado (qualidade %.2f, melhor de %d capturas)",
                  self.cfg.codigo, face.qualidade, cand.amostras)
+
+    async def _publicar_caixas(self, objetos, faces, largura: int, altura: int) -> None:
+        """Sobreposição do mosaico: o que está em cena agora, sem persistir.
+
+        A caixa acompanha o objeto enquanto ele estiver diante da câmera; o
+        registro durável já saiu, uma vez só, quando ele apareceu.
+        """
+        caixas = [
+            {"classe": o.classe, "confianca": round(o.confianca, 3),
+             "bbox": o.bbox_normalizado(largura, altura), "track_id": o.track_id}
+            for o in objetos
+        ] + [
+            {"classe": "", "confianca": f.qualidade,
+             "bbox": f.bbox_normalizado(largura, altura)}
+            for f in faces
+        ]
+        # Cena vazia só precisa ser anunciada uma vez, para apagar o que ficou.
+        if not caixas and not self._tinha_caixas:
+            return
+        self._tinha_caixas = bool(caixas)
+
+        try:
+            await self.cliente.post(
+                f"{API}/deteccoes/ao-vivo",
+                json={"camera_codigo": self.cfg.codigo, "caixas": caixas},
+                timeout=5.0,
+            )
+        except httpx.HTTPError:
+            pass   # sobreposição é cosmética: perder um quadro não custa nada
 
     async def _heartbeat(self, latencia_ms: int) -> None:
         agora = time.time()
@@ -254,9 +339,9 @@ class PipelineCamera:
                     detectar_objetos, quadro, self.cfg.limiar_objeto, True
                 )
                 for obj in objetos:
-                    # Só classes de severidade real viram registro — pessoa e
-                    # veículo em fluxo normal gerariam ruído sem informação.
-                    if obj.classe in ("pessoa", "veiculo", "bicicleta"):
+                    # Toda classe vira registro; o que evita o ruído não é
+                    # filtrar classe, é registrar cada objeto uma vez só.
+                    if not self.objetos.e_passagem_nova(obj.track_id):
                         continue
                     await self._enviar({
                         "tipo": "OBJETO",
@@ -273,12 +358,15 @@ class PipelineCamera:
                         "hash_evidencia": hash_evidencia(quadro.tobytes()),
                     })
 
+            faces = []
             if self.cfg.analitico_facial:
                 faces = await asyncio.to_thread(face_engine.extrair_faces, quadro)
                 for face in faces:
                     self.seletor.adicionar(face, quadro, agora)
                 for cand in self.seletor.prontos():
                     await self._enviar_face(cand, largura, altura)
+
+            await self._publicar_caixas(objetos, faces, largura, altura)
 
             if self.cfg.analitico_acao and objetos:
                 eventos = self.acoes.atualizar(objetos, largura, altura, self.cfg.zonas)

@@ -74,7 +74,10 @@ class Settings(BaseSettings):
     FACE_THRESHOLD: float = 0.88
     FACE_DET_SIZE: int = 640
     MIN_FACE_QUALITY: float = 0.55
-    OBJECT_MODEL: str = "yolov8l.pt"
+    # Medido em CPU num quadro 1080p real: o nano leva 3,2s e o large 5,1s,
+    # achando os mesmos objetos. Com GPU, troque por yolov8l.pt — aí o modelo
+    # maior sai quase de graça e ganha nos objetos pequenos e distantes.
+    OBJECT_MODEL: str = "yolov8n.pt"
     OBJECT_THRESHOLD: float = 0.65
     DEVICE: str = "cpu"
 

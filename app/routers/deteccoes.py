@@ -22,7 +22,7 @@ from app.models import (
     Alerta, Camera, Deteccao, Pessoa, StatusAlerta, StatusPessoa,
     TipoDeteccao, Usuario, Zona,
 )
-from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, RevisaoIn
+from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn
 from app.services import face_engine
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
@@ -250,6 +250,22 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
 async def ingest(dados: DeteccaoIn, db: AsyncSession = Depends(get_db)):
     """Endpoint de serviço: exponha só na rede interna, ou exija mTLS no gateway."""
     return await processar_deteccao(db, dados, origem="worker")
+
+
+@router.post("/ao-vivo", status_code=status.HTTP_204_NO_CONTENT,
+             summary="Caixas do quadro atual, para a sobreposição do mosaico")
+async def ao_vivo(dados: QuadroAoVivoIn) -> None:
+    """Publica as caixas do quadro atual sem gravar nada.
+
+    Detectar e registrar são coisas diferentes: a caixa acompanha o objeto
+    enquanto ele estiver diante da câmera, mas o registro nasce uma vez por
+    passagem. Misturar os dois encheria a base de linhas repetidas, ou faria a
+    caixa sumir com o carro ainda parado ali.
+    """
+    await publicar("quadro_ao_vivo", {
+        "camera_codigo": dados.camera_codigo,
+        "caixas": [c.model_dump() for c in dados.caixas],
+    })
 
 
 # ======================================================================

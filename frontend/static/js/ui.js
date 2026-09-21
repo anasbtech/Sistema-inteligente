@@ -56,9 +56,11 @@ const STATUS_ALERTA = {
   RESOLVIDO:    {lbl:'Resolvido',cls:'c-green'}
 };
 const ROTULO_OBJ = {
-  pessoa:'Pessoa', veiculo:'Veículo', motocicleta:'Motocicleta', bicicleta:'Bicicleta',
+  pessoa:'Pessoa', carro:'Carro', caminhao:'Caminhão', onibus:'Ônibus',
+  motocicleta:'Motocicleta', bicicleta:'Bicicleta', animal:'Animal',
   mochila:'Mochila', volume:'Volume abandonado', capacete:'Capacete',
-  placa:'Placa veicular', arma:'Objeto tipo arma'
+  placa:'Placa veicular', arma:'Objeto tipo arma',
+  veiculo:'Veículo'   // registros anteriores à separação por tipo
 };
 const ROTULO_ACAO_UI = {
   corrida:'Corrida súbita', queda:'Queda de pessoa', aglomeracao:'Aglomeração',

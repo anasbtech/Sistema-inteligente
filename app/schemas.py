@@ -355,6 +355,24 @@ class DeteccaoIn(BaseModel):
     hash_evidencia: str = ""
 
 
+class CaixaAoVivo(BaseModel):
+    classe: str = ""
+    confianca: Optional[float] = None
+    bbox: List[float]
+    track_id: Optional[int] = None
+
+
+class QuadroAoVivoIn(BaseModel):
+    """Caixas do quadro que o worker acabou de analisar.
+
+    Nada aqui é persistido: serve para a sobreposição do mosaico acompanhar o
+    objeto enquanto ele está em cena. O registro durável é o `DeteccaoIn`, e
+    nasce uma vez só por passagem.
+    """
+    camera_codigo: str
+    caixas: List[CaixaAoVivo] = []
+
+
 class DeteccaoOut(ORMModel):
     id: uuid.UUID
     codigo: str

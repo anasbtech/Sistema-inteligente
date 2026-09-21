@@ -37,9 +37,13 @@ const SEXOS={
 };
 
 const COR_CLASSE={
-  pessoa:'#35A7DE', veiculo:'#2FB67C', motocicleta:'#F0A02A', bicicleta:'#8C6FE0',
-  mochila:'#E05F9E', volume:'#E8474D', capacete:'#5FC4F0', placa:'#2FB67C', arma:'#E8474D'
+  pessoa:'#35A7DE', carro:'#2FB67C', caminhao:'#E8712C', onibus:'#D9C13A',
+  motocicleta:'#F0A02A', bicicleta:'#8C6FE0', animal:'#4ED1C5',
+  mochila:'#E05F9E', volume:'#E8474D', capacete:'#5FC4F0', placa:'#2FB67C', arma:'#E8474D',
+  veiculo:'#2FB67C',   // vocabulário da cena sintética, que não distingue o tipo
+  FACIAL:'#E05F9E'
 };
+const CAIXA_VIDA_MS=3000;
 
 
 const SCENE_CFG={
@@ -397,6 +401,34 @@ function drawFx(ctx,sc,W,H,noise){
   }
 }
 
+/* Caixas vindas do worker pelo WebSocket — cor por classe.
+   Diferente de `drawBoxes`, que desenha os agentes inventados pela cena
+   sintética, estas representam o que o modelo realmente detectou. */
+function pintarCaixasReais(ctx,lista,W,H){
+  if(!lista.length)return;
+  const s=W/640;
+  ctx.save();
+  ctx.lineWidth=Math.max(1.4,2*s);
+  ctx.font=`600 ${Math.max(8,9.5*s)}px "IBM Plex Sans",system-ui,sans-serif`;
+  ctx.textBaseline='middle';
+  lista.forEach(c=>{
+    const b=c.bbox;
+    if(!b||b.length<4)return;
+    const x=b[0]*W,y=b[1]*H,w=(b[2]-b[0])*W,h=(b[3]-b[1])*H;
+    const cor=COR_CLASSE[c.classe]||COR_CLASSE.FACIAL;
+    ctx.strokeStyle=cor;
+    ctx.strokeRect(x,y,w,h);
+
+    const rot=(c.classe?(ROTULO_OBJ[c.classe]||c.classe):'Rosto').toUpperCase();
+    const pad=3*s, alt=13*s, larg=ctx.measureText(rot).width+pad*2;
+    ctx.fillStyle=cor;
+    ctx.fillRect(x,Math.max(0,y-alt),larg,alt);
+    ctx.fillStyle='#08121A';
+    ctx.fillText(rot,x+pad,Math.max(0,y-alt)+alt/2);
+  });
+  ctx.restore();
+}
+
 /* Quadro ao vivo cobrindo o tile, sem distorcer: recorta o excedente. */
 function pintarAoVivo(ctx,img,W,H){
   const esc=Math.max(W/img.naturalWidth,H/img.naturalHeight);
@@ -420,6 +452,18 @@ const FEED={
   mostrarCaixas:true,
   fonteAoVivo:null,    // (cam) => URL do MJPEG, ou null para a cena sintética
   fonteSnapshot:null,  // (cam) => URL de um quadro único, para pré-visualização
+  caixas:new Map(),    // código da câmera => caixas reais ainda vivas
+
+  definirCaixas(codigo,lista){
+    // Substitui o conjunto inteiro: é a cena atual, não um acúmulo.
+    this.caixas.set(codigo,{ate:Date.now()+CAIXA_VIDA_MS,lista:lista||[]});
+  },
+  caixasDe(codigo){
+    const reg=this.caixas.get(codigo);
+    // Se o worker parar de publicar, as caixas somem. Melhor nenhuma caixa
+    // que uma caixa parada sobre um objeto que já saiu de cena.
+    return (reg&&reg.ate>Date.now())?reg.lista:[];
+  },
 
   scene(cam){
     if(!this.scenes.has(cam.codigo))this.scenes.set(cam.codigo,new Scene(cam));
@@ -467,12 +511,15 @@ const FEED={
       if(!seen.has(t.cam.codigo)){sc.step(dt);seen.add(t.cam.codigo)}
       const ctx=t.ctx,W=t.canvas.width,H=t.canvas.height;
       const vivo=t.img&&t.img.naturalWidth>0;
-      // Sem cena sintética não há agentes, e sem agentes não há caixas: as
-      // caixas sobre vídeo real têm de vir do worker de inferência.
+      // Sobre vídeo real não há agentes sintéticos: a caixa ali representa o
+      // que o modelo detectou de verdade, e vem do worker pelo WebSocket.
       const agents=vivo?null:drawScene(ctx,sc,W,H,{noite:FEED.noite});
       if(vivo)pintarAoVivo(ctx,t.img,W,H);
       if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,sc,W,H);
-      if(agents&&t.opts.boxes!==false&&FEED.mostrarCaixas)drawBoxes(ctx,sc,agents,W,H,W/640);
+      if(t.opts.boxes!==false&&FEED.mostrarCaixas){
+        if(agents)drawBoxes(ctx,sc,agents,W,H,W/640);
+        else pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
+      }
       if(!vivo)drawFx(ctx,sc,W,H,t.opts.noise!==false);
       if(t.opts.osd!==false)drawOSD(ctx,t.cam,W,H);
     });

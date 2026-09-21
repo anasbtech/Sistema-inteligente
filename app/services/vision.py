@@ -23,20 +23,27 @@ _yolo = None
 # COCO -> classes operacionais do VIGIA
 MAPA_CLASSES: Dict[str, str] = {
     "person": "pessoa",
-    "car": "veiculo",
-    "truck": "veiculo",
-    "bus": "veiculo",
+    # Carro, caminhão e ônibus separados: para quem lê o registro depois, "um
+    # caminhão às 3h" e "um carro às 3h" não são a mesma ocorrência.
+    "car": "carro",
+    "truck": "caminhao",
+    "bus": "onibus",
     "motorcycle": "motocicleta",
     "bicycle": "bicicleta",
     "backpack": "mochila",
     "handbag": "mochila",
     "suitcase": "volume",
     "knife": "arma",
+    # Animais que o COCO distingue. Solto em via pública é ocorrência
+    # operacional, e a espécie não muda a conduta — por isso uma classe só.
+    "dog": "animal", "cat": "animal", "horse": "animal", "cow": "animal",
+    "sheep": "animal", "bird": "animal", "bear": "animal",
+    "elephant": "animal", "zebra": "animal", "giraffe": "animal",
 }
 
 SEVERIDADE_OBJETO: Dict[str, int] = {
-    "pessoa": 1, "veiculo": 1, "bicicleta": 1,
-    "motocicleta": 2, "mochila": 2, "capacete": 2, "placa": 2,
+    "pessoa": 1, "carro": 1, "caminhao": 1, "onibus": 1, "bicicleta": 1,
+    "motocicleta": 2, "animal": 2, "mochila": 2, "capacete": 2, "placa": 2,
     "volume": 4, "arma": 4,
 }
 
