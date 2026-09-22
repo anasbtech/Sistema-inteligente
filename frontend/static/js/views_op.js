@@ -301,7 +301,6 @@ function montarMosaico(){
           ${off ? '' : `<div class="osd-rec"><span class="dot pulse"></span>REC</div>`}
         </div>
         <div class="osd-bot">
-          <div class="osd-ts osd-ts-live">—</div>
           <div class="osd-tags">
             ${c.analitico_facial ? '<span class="osd-tag" style="color:#F0A02A;border-color:rgba(240,160,42,.5)">FACIAL</span>' : ''}
             ${c.analitico_objeto ? '<span class="osd-tag" style="color:#2FB67C;border-color:rgba(47,182,124,.5)">OBJ</span>' : ''}
@@ -577,7 +576,7 @@ async function abrirCamera(codigo){
         <canvas id="camModalFeed" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
         <div class="tile-osd"><div class="osd-top"><div class="osd-name">${esc(c.codigo)}<small>${esc(c.nome)}</small></div>
         ${c.status === 'ONLINE' ? '<div class="osd-rec"><span class="dot pulse"></span>REC</div>' : ''}</div>
-        <div class="osd-bot"><div class="osd-ts osd-ts-live">—</div></div></div>
+        <div class="osd-bot"></div></div>
       </div>
       <div class="split" style="gap:16px">
         <dl class="kv">

@@ -402,7 +402,6 @@ function iniciarRelogio(){
     $('#tbTime').textContent = fmtTime(d);
     $('#tbDate').textContent = d.toLocaleDateString('pt-BR',
       {weekday:'short', day:'2-digit', month:'short'}).replace('.', '');
-    $$('.osd-ts-live').forEach(e => e.textContent = fmtDate(d) + ' ' + fmtTime(d));
   };
   tick();
   clearInterval(APP.relogio);

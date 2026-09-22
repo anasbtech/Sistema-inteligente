@@ -547,7 +547,7 @@ function drawOSD(ctx,cam,W,H){
   ctx.font=`500 ${Math.max(8,9*s)}px "IBM Plex Mono",monospace`;
   ctx.fillStyle='rgba(255,255,255,.55)';
   ctx.textAlign='right';
-  if(FEED.watermark)ctx.fillText('VIGIA · '+cam.codigo,W-7,H-7);
+  // Overlay de câmera removido
   ctx.restore();
 }
 
