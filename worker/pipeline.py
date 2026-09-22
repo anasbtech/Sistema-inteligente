@@ -126,7 +126,7 @@ class SeletorMelhorQuadro:
     """
 
     def __init__(self, similaridade_minima: float = 0.45, iou_minimo: float = 0.25,
-                 ciclos_de_espera: int = 3, janela_maxima_s: float = 300.0) -> None:
+                 ciclos_de_espera: int = 3, janela_maxima_s: float = 1800.0) -> None:
         self.similaridade_minima = similaridade_minima
         self.iou_minimo = iou_minimo
         self.ciclos_de_espera = ciclos_de_espera
@@ -149,11 +149,47 @@ class SeletorMelhorQuadro:
         """
         if not faces:
             return
-        if len(faces) == 1 and len(self._candidatos) == 1:
-            self._absorver(self._candidatos[0], faces[0], quadro, quando)
+        # Cabendo nos candidatos já abertos, é gente que continua em cena:
+        # cada rosto vai para o mais próximo em vez de abrir presença nova.
+        if self._candidatos and len(faces) <= len(self._candidatos):
+            self._casar(faces, quadro, quando)
             return
         for face in faces:
             self.adicionar(face, quadro, quando)
+
+    def _casar(self, faces: list, quadro: np.ndarray, quando: datetime) -> None:
+        """Distribui os rostos do quadro entre os candidatos abertos.
+
+        Um candidato recebe no máximo um rosto por quadro: dois rostos ao
+        mesmo tempo são pessoas diferentes, e isso o detector sabe.
+        """
+        livres = list(self._candidatos)
+        for face in faces:
+            if not livres:
+                self.adicionar(face, quadro, quando)
+                continue
+            caixa = cantos_para_caixa(face.bbox)
+            # Por posição, e não por `remove`: o candidato carrega o embedding
+            # num array, e comparar dataclasses compararia array com array —
+            # que não resolve para verdadeiro ou falso.
+            i = min(range(len(livres)), key=lambda k: self._afastamento(livres[k], caixa))
+            self._absorver(livres.pop(i), face, quadro, quando)
+
+    @staticmethod
+    def _afastamento(cand: _Candidato, caixa: Sequence[float]) -> float:
+        """Quanto o rosto destoa do candidato — menor é mais perto.
+
+        Vale a sobreposição quando existe; na falta dela, a distância entre os
+        centros. Quem sobrepõe sempre ganha de quem não sobrepõe, porque a
+        sobreposição entra negativa e a distância, positiva.
+        """
+        ref = cantos_para_caixa(cand.melhor.bbox)
+        sobreposicao = iou(ref, caixa)
+        if sobreposicao > 0:
+            return -sobreposicao
+        cx, cy = ref[0] + ref[2] / 2, ref[1] + ref[3] / 2
+        fx, fy = caixa[0] + caixa[2] / 2, caixa[1] + caixa[3] / 2
+        return float(np.hypot(cx - fx, cy - fy))
 
     def adicionar(self, face, quadro: np.ndarray, quando: datetime) -> None:
         vetor = np.asarray(face.embedding, dtype=np.float32)
@@ -194,8 +230,9 @@ class SeletorMelhorQuadro:
 
         Quem fica parado além da janela é encerrado do mesmo jeito: o próximo
         quadro abre um candidato novo, e o resultado é um registro por janela,
-        cada um com o seu melhor quadro. Assim quem espera meia hora na
-        recepção aparece na linha do tempo, em vez de uma vez só.
+        cada um com o seu melhor quadro. A janela é longa de propósito — quem
+        atende na recepção a manhã inteira não precisa de uma linha a cada
+        cinco minutos para que se saiba que esteve lá.
         """
         self._ciclo += 1
         agora = time.monotonic()
@@ -243,65 +280,121 @@ def suprimir_sobrepostas(objetos: Sequence, iou_maximo: float = 0.7) -> list:
     return mantidos
 
 
-class RegistroUnicoPorObjeto:
-    """Um registro por objeto que passa, não um por quadro analisado.
+@dataclass
+class _ObjetoEmCena:
+    """Um objeto acompanhado entre quadros, à espera da melhor leitura."""
+    melhor: object                 # ObjetoDetectado de maior confiança
+    recorte: Optional[str]         # JPEG base64 do melhor instante
+    hash_evidencia: str
+    quando: datetime
+    bbox: list                     # normalizada, do melhor instante
+    familia: str
+    track_id: Optional[int]
+    caixa_atual: list              # última posição vista, para casar por IoU
+    zona_nome: str
+    primeiro: float
+    ciclo: int
+    amostras: int = 1
 
-    Dois sinais, porque nenhum basta sozinho nesta cadência:
+
+class SeletorMelhorObjeto:
+    """Uma passagem, um registro — o da leitura mais confiante.
+
+    Antes o registro saía na primeira aparição, quando o objeto mal entrou no
+    quadro: longe, cortado pela borda, e com a confiança mais baixa de toda a
+    passagem. Agora o objeto é acompanhado enquanto está em cena e só vira
+    registro ao sair, com o quadro em que o modelo mais teve certeza.
+
+    Isso não atrasa a caixa no vídeo: a sobreposição do mosaico é publicada
+    à parte, a cada análise, com tudo que está em cena.
+
+    Dois sinais para reconhecer quem já está sendo acompanhado, porque nenhum
+    basta sozinho nesta cadência:
 
     * `track_id` — estável enquanto o rastreador acompanha o objeto;
     * sobreposição das caixas — um carro estacionado ocupa o mesmo lugar em
       toda análise, mesmo que a trilha se perca e ele ganhe um id novo.
 
-    A comparação é por *família* de classe, não pela classe exata: o modelo
-    troca caminhão por ônibus conforme o ângulo, e comparar o rótulo cru fazia
-    cada oscilação parecer um objeto novo chegando ao mesmo ponto.
+    A comparação é por *família* de classe, não pelo rótulo cru: o modelo
+    troca caminhão por ônibus conforme o ângulo, e comparar a classe exata
+    fazia cada oscilação parecer um objeto novo chegando ao mesmo ponto.
 
-    A memória expira a partir do ritmo medido, não de um prazo fixo. Era esse
-    o defeito: dez segundos de memória com análises a cada doze fazia tudo ser
-    esquecido entre uma e outra, e o mesmo carro parado era registrado de novo
-    a cada passada do laço. Enquanto o objeto continua em cena o prazo é
-    renovado, então quem fica parado não volta a ser registrado.
-
-    O registro sai na primeira aparição, e não quando o objeto some — é o que
-    permite a caixa aparecer no vídeo enquanto ele ainda está em cena.
+    A espera é contada em ciclos de análise, não em segundos — o intervalo
+    entre análises varia com a carga da máquina, e todo prazo em segundos
+    liberava a captura antes de a seguinte existir.
     """
 
-    def __init__(self, fator_memoria: float = 5.0,
-                 memoria_minima_s: float = 60.0, iou_minimo: float = 0.45) -> None:
-        self.fator_memoria = fator_memoria
-        self.memoria_minima_s = memoria_minima_s
+    def __init__(self, iou_minimo: float = 0.35, ciclos_de_espera: int = 3,
+                 janela_maxima_s: float = 1800.0) -> None:
         self.iou_minimo = iou_minimo
-        self._vistos: list[dict] = []
-        self._ultimo_ciclo: Optional[float] = None
-        self._intervalo = 1.0
+        self.ciclos_de_espera = ciclos_de_espera
+        self.janela_maxima_s = janela_maxima_s
+        self._emcena: list[_ObjetoEmCena] = []
+        self._ciclo = 0
 
-    @property
-    def memoria_s(self) -> float:
-        return max(self.memoria_minima_s, self._intervalo * self.fator_memoria)
-
-    def marcar_ciclo(self) -> None:
-        agora = time.monotonic()
-        if self._ultimo_ciclo is not None:
-            self._intervalo = self._intervalo * 0.7 + (agora - self._ultimo_ciclo) * 0.3
-        self._ultimo_ciclo = agora
-        limite = agora - self.memoria_s
-        self._vistos = [v for v in self._vistos if v["quando"] >= limite]
-
-    def e_passagem_nova(self, classe: str, track_id: Optional[int],
-                        caixa: Sequence[float]) -> bool:
-        agora = time.monotonic()
-        familia = familia_de(classe)
-        for visto in self._vistos:
-            if visto["familia"] != familia:
+    def _alvo(self, familia: str, track_id: Optional[int],
+              caixa: Sequence[float]) -> Optional[_ObjetoEmCena]:
+        for item in self._emcena:
+            if item.familia != familia:
                 continue
-            mesma_trilha = track_id is not None and visto["track_id"] == track_id
-            if mesma_trilha or iou(visto["caixa"], caixa) >= self.iou_minimo:
-                visto.update(quando=agora, caixa=list(caixa), track_id=track_id)
-                return False
+            if track_id is not None and item.track_id == track_id:
+                return item
+        melhor, melhor_iou = None, self.iou_minimo
+        for item in self._emcena:
+            if item.familia != familia:
+                continue
+            sobreposicao = iou(item.caixa_atual, caixa)
+            if sobreposicao >= melhor_iou:
+                melhor, melhor_iou = item, sobreposicao
+        return melhor
 
-        self._vistos.append({"familia": familia, "track_id": track_id,
-                             "caixa": list(caixa), "quando": agora})
-        return True
+    def adicionar(self, obj, caixa: Sequence[float], zona_nome: str,
+                  capturar, quando: datetime) -> None:
+        """Registra a aparição do objeto nesta análise.
+
+        `capturar() -> (recorte_jpeg, hash)` só é chamado quando esta leitura
+        é a melhor da passagem até agora. Codificar um JPEG e o hash de todo
+        objeto em todo ciclo custaria CPU para depois jogar quase tudo fora.
+        """
+        familia = familia_de(obj.classe)
+        alvo = self._alvo(familia, obj.track_id, caixa)
+
+        if alvo is None:
+            recorte, hash_ev = capturar()
+            self._emcena.append(_ObjetoEmCena(
+                melhor=obj, recorte=recorte, hash_evidencia=hash_ev,
+                quando=quando, bbox=list(caixa), familia=familia,
+                track_id=obj.track_id, caixa_atual=list(caixa),
+                zona_nome=zona_nome, primeiro=time.monotonic(), ciclo=self._ciclo,
+            ))
+            return
+
+        alvo.ciclo = self._ciclo
+        alvo.amostras += 1
+        alvo.caixa_atual = list(caixa)
+        if obj.track_id is not None:
+            alvo.track_id = obj.track_id
+        if obj.confianca > alvo.melhor.confianca:
+            alvo.recorte, alvo.hash_evidencia = capturar()
+            alvo.melhor, alvo.bbox = obj, list(caixa)
+            alvo.zona_nome, alvo.quando = zona_nome, quando
+
+    def prontos(self) -> list[_ObjetoEmCena]:
+        """Objetos cuja passagem terminou — saíram de cena ou demoraram demais.
+
+        Quem fica parado além da janela é encerrado do mesmo jeito: a análise
+        seguinte abre uma passagem nova, e um veículo estacionado rende um
+        registro por janela em vez de um por ciclo.
+        """
+        self._ciclo += 1
+        agora = time.monotonic()
+        saindo, ficando = [], []
+        for item in self._emcena:
+            sumiu = self._ciclo - item.ciclo >= self.ciclos_de_espera
+            demorou = agora - item.primeiro >= self.janela_maxima_s
+            (saindo if sumiu or demorou else ficando).append(item)
+        self._emcena = ficando
+        return saindo
 
 
 class PipelineCamera:
@@ -313,7 +406,7 @@ class PipelineCamera:
         self.leitor = LeitorRTSP(cfg.rtsp_url)
         self.acoes = AnalisadorAcoes()
         self.seletor = SeletorMelhorQuadro()
-        self.objetos = RegistroUnicoPorObjeto()
+        self.objetos = SeletorMelhorObjeto()
         self._tinha_caixas = False
         self.ultimo_heartbeat = 0.0
         self.quadros = 0
@@ -345,6 +438,24 @@ class PipelineCamera:
         })
         log.info("%s: rosto enviado (qualidade %.2f, melhor de %d capturas)",
                  self.cfg.codigo, face.qualidade, cand.amostras)
+
+    async def _enviar_objeto(self, item: "_ObjetoEmCena") -> None:
+        obj = item.melhor
+        await self._enviar({
+            "tipo": "OBJETO",
+            "camera_codigo": self.cfg.codigo,
+            # O instante é o da melhor leitura, não o do fim da passagem.
+            "ocorrido_em": item.quando.isoformat(),
+            "classe": obj.classe,
+            "confianca": round(obj.confianca, 4),
+            "bbox": item.bbox,
+            "track_id": item.track_id,
+            "zona_nome": item.zona_nome,
+            "snapshot_jpeg": item.recorte,
+            "hash_evidencia": item.hash_evidencia,
+        })
+        log.info("%s: %s enviado (confiança %.2f, melhor de %d leituras)",
+                 self.cfg.codigo, obj.classe, obj.confianca, item.amostras)
 
     async def _publicar_caixas(self, objetos, faces, largura: int, altura: int) -> None:
         """Sobreposição do mosaico: o que está em cena agora, sem persistir.
@@ -420,27 +531,22 @@ class PipelineCamera:
                     detectar_objetos, quadro, self.cfg.limiar_objeto, True
                 )
                 objetos = suprimir_sobrepostas(objetos)
-                self.objetos.marcar_ciclo()
                 for obj in objetos:
                     caixa = obj.bbox_normalizado(largura, altura)
-                    # Toda classe vira registro; o que evita o ruído não é
-                    # filtrar classe, é registrar cada objeto uma vez só.
-                    if not self.objetos.e_passagem_nova(obj.classe, obj.track_id, caixa):
-                        continue
-                    await self._enviar({
-                        "tipo": "OBJETO",
-                        "camera_codigo": self.cfg.codigo,
-                        "ocorrido_em": agora.isoformat(),
-                        "classe": obj.classe,
-                        "confianca": round(obj.confianca, 4),
-                        "bbox": caixa,
-                        "track_id": obj.track_id,
-                        "zona_nome": self._zona_do_ponto(
+                    # Toda classe é acompanhada; o que evita o ruído não é
+                    # filtrar classe, é registrar cada passagem uma vez só.
+                    self.objetos.adicionar(
+                        obj, caixa,
+                        self._zona_do_ponto(
                             (obj.centro()[0] / largura, obj.centro()[1] / altura)
                         ),
-                        "snapshot_jpeg": self._recorte(quadro, obj.bbox),
-                        "hash_evidencia": hash_evidencia(quadro.tobytes()),
-                    })
+                        lambda q=quadro, b=obj.bbox: (
+                            self._recorte(q, b), hash_evidencia(q.tobytes())
+                        ),
+                        agora,
+                    )
+                for item in self.objetos.prontos():
+                    await self._enviar_objeto(item)
 
             faces = []
             if self.cfg.analitico_facial:
