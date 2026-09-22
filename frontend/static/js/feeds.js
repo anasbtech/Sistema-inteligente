@@ -430,6 +430,28 @@ function pintarCaixasReais(ctx,lista,W,H){
   ctx.restore();
 }
 
+/* Renderiza nomes de pessoas identificadas sobre a câmera */
+function pintarIdentificacoes(ctx,lista,W,H){
+  if(!lista.length)return;
+  const s=W/640;
+  ctx.save();
+  ctx.font=`700 ${Math.max(11,12*s)}px "IBM Plex Sans",system-ui,sans-serif`;
+  ctx.textBaseline='middle';
+  lista.forEach(id=>{
+    const b=id.bbox;
+    if(!b||b.length<4)return;
+    const x=b[0]*W,y=b[1]*H,w=b[2]*W,h=b[3]*H;
+    const nome=id.pessoa_nome.toUpperCase();
+    const pad=4*s, alt=16*s, larg=ctx.measureText(nome).width+pad*2;
+    // Renderiza acima da caixa com cor destaque
+    ctx.fillStyle='rgba(240,160,42,0.9)';  // Laranja VIGIA
+    ctx.fillRect(x,Math.max(0,y-alt-2),larg,alt);
+    ctx.fillStyle='#08121A';
+    ctx.fillText(nome,x+pad,Math.max(0,y-alt/2-1));
+  });
+  ctx.restore();
+}
+
 /* Recorte guardado da captura: cabe inteiro e não é ampliado além do que a
    resolução aguenta. Esticar um recorte de 49x85 até 500px não cria detalhe
    nenhum — só vira um borrão que parece defeito do sistema. */
@@ -466,6 +488,7 @@ const FEED={
   fonteAoVivo:null,    // (cam) => URL do MJPEG, ou null para a cena sintética
   fonteSnapshot:null,  // (cam) => URL de um quadro único, para pré-visualização
   caixas:new Map(),    // código da câmera => caixas reais ainda vivas
+  identificacoes:new Map(),  // código da câmera => pessoas identificadas
 
   definirCaixas(codigo,lista){
     // Substitui o conjunto inteiro: é a cena atual, não um acúmulo.
@@ -476,6 +499,14 @@ const FEED={
     // Se o worker parar de publicar, as caixas somem. Melhor nenhuma caixa
     // que uma caixa parada sobre um objeto que já saiu de cena.
     return (reg&&reg.ate>Date.now())?reg.lista:[];
+  },
+  adicionarIdentificacao(codigo,dados){
+    // Armazena identificação por 3 segundos
+    this.identificacoes.set(codigo,{ate:Date.now()+3000,dados:dados});
+  },
+  identificacoesDe(codigo){
+    const reg=this.identificacoes.get(codigo);
+    return (reg&&reg.ate>Date.now())?[reg.dados]:[];
   },
 
   scene(cam){
@@ -533,6 +564,8 @@ const FEED={
         if(agents)drawBoxes(ctx,sc,agents,W,H,W/640);
         else pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
       }
+      // Renderizar nomes das pessoas identificadas
+      pintarIdentificacoes(ctx,FEED.identificacoesDe(t.cam.codigo),W,H);
       if(!vivo)drawFx(ctx,sc,W,H,t.opts.noise!==false);
       if(t.opts.osd!==false)drawOSD(ctx,t.cam,W,H);
     });

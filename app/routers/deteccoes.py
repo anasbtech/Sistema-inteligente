@@ -227,6 +227,16 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     alerta = await _criar_alerta(db, det, cam, pessoa, notificar=publicar_evento)
 
     if publicar_evento:
+        # Publicar identificação em tempo real (para exibir nome na câmera)
+        if dados.tipo == TipoDeteccao.FACIAL and pessoa is not None:
+            await publicar("identificacao", {
+                "camera_codigo": cam.codigo,
+                "pessoa_nome": pessoa.nome,
+                "id_biometrico": pessoa.id_biometrico,
+                "bbox": det.bbox,
+                "similaridade": similaridade,
+            })
+
         await publicar("deteccao", {
             "codigo": det.codigo,
             "tipo": det.tipo.value,

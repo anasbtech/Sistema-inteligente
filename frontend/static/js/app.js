@@ -459,6 +459,10 @@ EventosAoVivo.ao(msg => {
     // Sobreposição do mosaico: a cena atual, que não vira registro.
     FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas);
   }
+  if(msg.tipo === 'identificacao'){
+    // Pessoa identificada: renderizar o nome sobre a câmera
+    FEED.adicionarIdentificacao(msg.dados.camera_codigo, msg.dados);
+  }
   if(msg.tipo === 'alerta_atualizado'){
     atualizarContadoresDebounced();
     if(APP.view === 'alerts') irPara('alerts');
