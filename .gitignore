@@ -13,3 +13,4 @@ evidencias/
 vigia.db
 vigia.db-wal
 vigia.db-shm
+vigia.db.bak-*
