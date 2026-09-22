@@ -100,6 +100,46 @@ def test_rotulo_que_oscila_entre_analises_nao_duplica():
     assert len(escoar(sel)) == 1
 
 
+def test_objeto_parado_que_pisca_no_detector_nao_reregistra():
+    """O caso real: uma moto estacionada, confiança entre 0,65 e 0,71 contra
+    um limiar de 0,65. O detector a perde, a passagem fecha e emite; ela
+    volta, e tudo recomeça. Rendeu dez registros da mesma moto em vinte e
+    cinco minutos.
+    """
+    sel = SeletorMelhorObjeto()
+    parada = [0.863, 0.224, 0.128, 0.254]
+    emitidos = []
+
+    for rodada in range(6):
+        # Aparece por duas análises...
+        for _ in range(2):
+            sel.adicionar(
+                ObjetoDetectado("motocicleta", 0.67, (550, 120, 640, 260),
+                                # A trilha se perde a cada sumiço: id novo.
+                                10 + rodada),
+                parada, "", captura("m"), AGORA)
+            emitidos += sel.prontos()
+        # ... e some, porque a confiança caiu abaixo do limiar.
+        for _ in range(sel.ciclos_de_espera + 1):
+            emitidos += sel.prontos()
+
+    assert len(emitidos) == 1, (
+        f"a mesma moto parada virou {len(emitidos)} registros")
+
+
+def test_objeto_novo_no_lugar_de_um_ja_esquecido_volta_a_registrar():
+    """A lembrança não é eterna: passada a memória sem ninguém ali, quem
+    chegar àquele ponto é outra passagem."""
+    sel = SeletorMelhorObjeto(memoria_s=0.0)   # esquece na hora
+    caixa = [0.5, 0.5, 0.1, 0.1]
+    emitidos = []
+    for _ in range(2):
+        sel.adicionar(ObjetoDetectado("carro", 0.7, (300, 300, 380, 380), 1),
+                      caixa, "", captura("c"), AGORA)
+        emitidos += escoar(sel)
+    assert len(emitidos) == 2
+
+
 def test_objetos_separados_na_cena_sao_passagens_distintas():
     sel = SeletorMelhorObjeto()
     sel.adicionar(ObjetoDetectado("pessoa", 0.9, (50, 50, 150, 250), 1),

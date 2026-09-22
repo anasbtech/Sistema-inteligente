@@ -303,6 +303,15 @@ class _ObjetoEmCena:
     primeiro: float
     ciclo: int
     amostras: int = 1
+    ja_registrado: bool = False    # retomada de uma passagem já emitida
+
+
+@dataclass
+class _PassagemEmitida:
+    """Lembrança de um objeto que já virou registro, para não virar de novo."""
+    familia: str
+    caixa: list
+    quando: float                  # monotonic, renovado a cada reaparição
 
 
 class SeletorMelhorObjeto:
@@ -330,15 +339,36 @@ class SeletorMelhorObjeto:
     A espera é contada em ciclos de análise, não em segundos — o intervalo
     entre análises varia com a carga da máquina, e todo prazo em segundos
     liberava a captura antes de a seguinte existir.
+
+    Depois de emitir, a passagem continua lembrada por `memoria_s`, e a
+    lembrança se renova enquanto o objeto reaparecer naquele ponto. É o que
+    impede um objeto parado de ser registrado de novo: a confiança de quem
+    fica longe da câmera ronda o limiar — uma moto medida nesta instalação
+    oscilava entre 0,65 e 0,71 contra um limiar de 0,65 — então o detector a
+    perde e a reencontra sem parar, e cada reencontro parecia uma chegada
+    nova. Eram dez registros da mesma moto parada em vinte e cinco minutos.
+
+    Reaparecer não interrompe o acompanhamento: a caixa segue no vídeo
+    enquanto o objeto estiver em cena. O que não acontece é virar registro
+    outra vez.
     """
 
     def __init__(self, iou_minimo: float = 0.35, ciclos_de_espera: int = 3,
-                 janela_maxima_s: float = 1800.0) -> None:
+                 janela_maxima_s: float = 1800.0, memoria_s: float = 600.0) -> None:
         self.iou_minimo = iou_minimo
         self.ciclos_de_espera = ciclos_de_espera
         self.janela_maxima_s = janela_maxima_s
+        self.memoria_s = memoria_s
         self._emcena: list[_ObjetoEmCena] = []
+        self._emitidas: list[_PassagemEmitida] = []
         self._ciclo = 0
+
+    def _emitida_em(self, familia: str, caixa: Sequence[float]) -> Optional[_PassagemEmitida]:
+        """Passagem já registrada naquele ponto, se houver."""
+        for antiga in self._emitidas:
+            if antiga.familia == familia and iou(antiga.caixa, caixa) >= self.iou_minimo:
+                return antiga
+        return None
 
     def _alvo(self, familia: str, track_id: Optional[int],
               caixa: Sequence[float]) -> Optional[_ObjetoEmCena]:
@@ -368,12 +398,20 @@ class SeletorMelhorObjeto:
         alvo = self._alvo(familia, obj.track_id, caixa)
 
         if alvo is None:
+            # Já houve registro naquele ponto? Então isto é o mesmo objeto
+            # reaparecendo, não um chegando: a confiança dele ronda o limiar e
+            # o detector o perde e reencontra sem parar. Segue acompanhado,
+            # para a caixa continuar no vídeo, mas não vira registro de novo.
+            antiga = self._emitida_em(familia, caixa)
+            if antiga is not None:
+                antiga.quando = time.monotonic()
             recorte, hash_ev = capturar()
             self._emcena.append(_ObjetoEmCena(
                 melhor=obj, recorte=recorte, hash_evidencia=hash_ev,
                 quando=quando, bbox=list(caixa), familia=familia,
                 track_id=obj.track_id, caixa_atual=list(caixa),
                 zona_nome=zona_nome, primeiro=time.monotonic(), ciclo=self._ciclo,
+                ja_registrado=antiga is not None,
             ))
             return
 
@@ -382,6 +420,12 @@ class SeletorMelhorObjeto:
         alvo.caixa_atual = list(caixa)
         if obj.track_id is not None:
             alvo.track_id = obj.track_id
+        if alvo.ja_registrado:
+            # Enquanto continua ali, a lembrança não envelhece — senão um
+            # objeto parado voltaria a ser registrado ao vencer a memória.
+            antiga = self._emitida_em(familia, caixa)
+            if antiga is not None:
+                antiga.quando = time.monotonic()
         if obj.confianca > alvo.melhor.confianca:
             alvo.recorte, alvo.hash_evidencia = capturar()
             alvo.melhor, alvo.bbox = obj, list(caixa)
@@ -396,13 +440,29 @@ class SeletorMelhorObjeto:
         """
         self._ciclo += 1
         agora = time.monotonic()
+        self._emitidas = [e for e in self._emitidas
+                          if agora - e.quando < self.memoria_s]
+
         saindo, ficando = [], []
         for item in self._emcena:
             sumiu = self._ciclo - item.ciclo >= self.ciclos_de_espera
             demorou = agora - item.primeiro >= self.janela_maxima_s
             (saindo if sumiu or demorou else ficando).append(item)
         self._emcena = ficando
-        return saindo
+
+        novos = []
+        for item in saindo:
+            antiga = self._emitida_em(item.familia, item.caixa_atual)
+            if item.ja_registrado or antiga is not None:
+                # Já contado: renova a lembrança e fica por isso mesmo.
+                if antiga is not None:
+                    antiga.quando, antiga.caixa = agora, list(item.caixa_atual)
+                continue
+            self._emitidas.append(_PassagemEmitida(
+                familia=item.familia, caixa=list(item.caixa_atual), quando=agora,
+            ))
+            novos.append(item)
+        return novos
 
 
 class PipelineCamera:
