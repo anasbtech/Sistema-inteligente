@@ -14,12 +14,17 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi.responses import Response
+
 from app import audit
 from app.database import get_db
-from app.deps import exige, pode_ver_pii, usuario_atual
-from app.models import AmostraFacial, Deteccao, Pessoa, Sexo, StatusPessoa, Usuario
+from app.deps import exige, pode_ver_pii, usuario_atual, usuario_de_query
+from app.models import (
+    AmostraFacial, Deteccao, Pessoa, Sexo, StatusPessoa, TipoDeteccao, Usuario,
+)
 from app.schemas import MatchOut, Pagina, PessoaCreate, PessoaOut, PessoaUpdate
 from app.security import mascarar_cpf, mascarar_rg
+from app.services import evidencias
 from app.services import biometrics, face_engine
 
 router = APIRouter(prefix="/pessoas", tags=["Base biométrica"])
@@ -423,3 +428,50 @@ async def capturas(id_biometrico: str, request: Request, limite: int = Query(50,
         }
         for d in linhas
     ]
+
+
+@router.get("/{id_biometrico}/face", summary="Rosto da pessoa, da captura mais recente")
+async def face(id_biometrico: str, token: str = Query(..., description="Access token JWT"),
+               db: AsyncSession = Depends(get_db)):
+    """O rosto que a ficha mostra, para quem revisa reconhecer de quem se trata.
+
+    É o recorte de uma captura, não uma fotografia de cadastro: a foto enviada
+    no cadastro é descartada assim que o template sai dela, e continua sendo.
+    Guardá-la mudaria o que um vazamento desta base expõe — de vetores, que
+    não reconstroem ninguém, para um álbum de pessoas monitoradas.
+
+    Quem ainda não foi capturado não tem rosto aqui, e a ficha fica com o
+    retrato do template, que não finge ser fotografia de alguém.
+
+    Não gera linha de auditoria, pela mesma razão que o recorte da captura não
+    gera: a imagem é a mesma, e as listas trazem uma por registro — auditar
+    cada miniatura encheria a trilha de ruído paralelo ao acesso que importa,
+    que é abrir a ficha.
+    """
+    await usuario_de_query(token, db, "facial")
+
+    pessoa = (
+        await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))
+    ).scalar_one_or_none()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
+
+    det = (
+        await db.execute(
+            select(Deteccao)
+            .where(Deteccao.pessoa_id == pessoa.id,
+                   Deteccao.tipo == TipoDeteccao.FACIAL,
+                   Deteccao.snapshot_key != "")
+            .order_by(Deteccao.ocorrido_em.desc())
+            .limit(1)
+        )
+    ).scalars().unique().one_or_none()
+    if det is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sem captura guardada desta pessoa.")
+
+    imagem = evidencias.ler(det.snapshot_key)
+    if imagem is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recorte já expurgado.")
+
+    return Response(content=imagem, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=300"})

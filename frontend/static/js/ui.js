@@ -265,7 +265,23 @@ function pintarFaces(raiz){
     if(c.dataset.pintado) return;
     drawBioFace(c, hash32(c.dataset.face), c.dataset.sexo, +(c.getAttribute('width') || 38));
     c.dataset.pintado = '1';
+    carregarFace(c, c.dataset.face);
   });
+}
+
+/* Busca o rosto da captura mais recente e o desenha sobre o retrato do
+   template.
+
+   O template continua por baixo: quem ainda não foi capturado fica com o
+   esquema, que não finge ser fotografia de alguém. A imagem é sempre de uma
+   captura — a foto do cadastro é descartada quando o template sai dela. */
+function carregarFace(canvas, idBiometrico){
+  if(!idBiometrico || !API.access) return;
+  const img = new Image();
+  img.onload  = () => pintarRecorte(canvas.getContext('2d', {alpha:false}), img, canvas.width, canvas.height);
+  img.onerror = () => {};   // sem captura guardada: fica o template
+  img.src = `${API.base}/pessoas/${encodeURIComponent(idBiometrico)}/face`
+          + `?token=${encodeURIComponent(API.access)}`;
 }
 /* Busca o recorte guardado da captura e o desenha sobre o canvas.
 
