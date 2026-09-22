@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     FACE_THRESHOLD: float = 0.88
     FACE_DET_SIZE: int = 640
     MIN_FACE_QUALITY: float = 0.55
+    # Capturas sem correspondência na mesma câmera dentro desta janela contam
+    # como uma presença só. Nesta resolução o embedding não separa capturas da
+    # mesma pessoa (medido: 0,004 de similaridade a seis segundos), então quem
+    # decide é o relógio — e sem isto uma pessoa de passagem virava uma dezena
+    # de linhas "não identificada", que afogam a revisão humana.
+    UNMATCHED_FACE_WINDOW_S: int = 120
     # Medido em CPU num quadro 1080p real: o nano leva 3,2s e o large 5,1s,
     # achando os mesmos objetos. Com GPU, troque por yolov8l.pt — aí o modelo
     # maior sai quase de graça e ganha nos objetos pequenos e distantes.

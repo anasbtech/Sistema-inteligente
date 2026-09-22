@@ -8,7 +8,7 @@ sexo, ingestão de detecção com busca 1:N, alerta e trilha de auditoria.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -165,6 +165,54 @@ def test_abaixo_do_limiar_nao_atribui_identidade(cliente, camera):
     assert d["match"] is False
     assert d["id_biometrico"] is None, "nenhum palpite de identidade abaixo do limiar"
     assert d["severidade"] == 1
+
+
+def test_capturas_nao_identificadas_seguidas_viram_um_registro(cliente):
+    """Uma presença, uma linha — mesmo sem saber de quem é o rosto.
+
+    Câmera própria porque a janela é contada por câmera, e a fixture `camera`
+    tem escopo de módulo: reusá-la deixaria o resultado na mão da ordem dos
+    testes.
+    """
+    codigo = cliente.post("/cameras", json={
+        "nome": "Câmera Sem Repetição", "setor": "Centro", "cena": "portaria",
+        "rtsp_url": "rtsp://10.0.0.9:554/s1", "analitico_facial": True,
+    }).json()["codigo"]
+
+    agora = datetime.now(timezone.utc)
+    primeira = cliente.post("/deteccoes/ingest", json={
+        "tipo": "FACIAL", "camera_codigo": codigo,
+        "ocorrido_em": agora.isoformat(),
+        "embedding": vetor(70001), "qualidade_face": 0.62,
+    })
+    assert primeira.status_code == 201, primeira.text
+    assert primeira.json()["match"] is False
+
+    # Outro quadro do mesmo desconhecido, seis segundos depois. O vetor é
+    # diferente de propósito: nesta resolução duas capturas da mesma pessoa
+    # não se parecem, e é justamente por isso que quem decide é o relógio.
+    segunda = cliente.post("/deteccoes/ingest", json={
+        "tipo": "FACIAL", "camera_codigo": codigo,
+        "ocorrido_em": (agora + timedelta(seconds=6)).isoformat(),
+        "embedding": vetor(70002), "qualidade_face": 0.81,
+    })
+    assert segunda.status_code == 201, segunda.text
+    d2 = segunda.json()
+    assert d2["descartada"] is True, "a segunda captura não pode virar registro"
+    assert d2["codigo"] == primeira.json()["codigo"], "absorvida pela anterior"
+
+    # Passada a janela, uma presença nova volta a ser registrada.
+    from app.config import settings
+    depois = cliente.post("/deteccoes/ingest", json={
+        "tipo": "FACIAL", "camera_codigo": codigo,
+        "ocorrido_em": (agora + timedelta(
+            seconds=settings.UNMATCHED_FACE_WINDOW_S + 30)).isoformat(),
+        "embedding": vetor(70003), "qualidade_face": 0.77,
+    })
+    assert depois.status_code == 201, depois.text
+    d3 = depois.json()
+    assert not d3.get("descartada"), "fora da janela é outra passagem"
+    assert d3["codigo"] != primeira.json()["codigo"]
 
 
 def test_objeto_critico_gera_alerta(cliente, camera):

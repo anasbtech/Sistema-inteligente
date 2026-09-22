@@ -41,6 +41,23 @@ MAPA_CLASSES: Dict[str, str] = {
     "elephant": "animal", "zebra": "animal", "giraffe": "animal",
 }
 
+# Classes que o modelo troca entre si conforme o ângulo: o mesmo veículo sai
+# como caminhão num quadro e ônibus no seguinte. Para decidir se um objeto já
+# passou por ali, elas contam como uma família só — senão cada oscilação de
+# rótulo do modelo era lida como uma passagem nova, e um veículo parado
+# rendia uma linha por ciclo, alternando entre as duas classes.
+# Moto e bicicleta ficam de fora de propósito: têm silhueta própria, e
+# agrupá-las esconderia uma moto passando ao lado de um carro parado.
+FAMILIA_CLASSE: Dict[str, str] = {
+    "carro": "veiculo", "caminhao": "veiculo", "onibus": "veiculo",
+}
+
+
+def familia_de(classe: str) -> str:
+    """Grupo de classes indistinguíveis para fins de contagem de passagem."""
+    return FAMILIA_CLASSE.get(classe, classe)
+
+
 SEVERIDADE_OBJETO: Dict[str, int] = {
     "pessoa": 1, "carro": 1, "caminhao": 1, "onibus": 1, "bicicleta": 1,
     "motocicleta": 2, "animal": 2, "mochila": 2, "capacete": 2, "placa": 2,

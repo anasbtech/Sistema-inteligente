@@ -165,6 +165,43 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
                     pessoa.ultima_camera = cam.nome
         # Sem match: severidade 1 e pessoa_id nulo — nenhuma identidade atribuída.
 
+        # Uma presença, uma linha. Sem correspondência não existe identidade
+        # para separar duas capturas, e nesta resolução o embedding também não
+        # separa — então quem chega dentro da janela da anterior é tratado como
+        # a mesma passagem. Sem isto, alguém que cruza o saguão deixava uma
+        # dezena de linhas "não identificada", todas com o mesmo rosto.
+        # O seed fica de fora: ele fabrica um histórico espalhado, não uma
+        # presença contínua diante da câmera.
+        if pessoa is None and origem != "seed" and settings.UNMATCHED_FACE_WINDOW_S > 0:
+            desde = como_utc(dados.ocorrido_em) - timedelta(
+                seconds=settings.UNMATCHED_FACE_WINDOW_S
+            )
+            anterior_codigo = (
+                await db.execute(
+                    select(Deteccao.codigo)
+                    .where(
+                        Deteccao.camera_id == cam.id,
+                        Deteccao.tipo == TipoDeteccao.FACIAL,
+                        Deteccao.pessoa_id.is_(None),
+                        Deteccao.ocorrido_em >= desde,
+                    )
+                    .order_by(Deteccao.ocorrido_em.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if anterior_codigo is not None:
+                log.info("%s: captura não identificada absorvida por %s",
+                         cam.codigo, anterior_codigo)
+                return {
+                    "codigo": anterior_codigo,
+                    "match": False,
+                    "id_biometrico": None,
+                    "similaridade": similaridade,
+                    "severidade": 1,
+                    "alerta": None,
+                    "descartada": True,
+                }
+
     elif dados.tipo == TipoDeteccao.OBJETO:
         limiar = cam.limiar_objeto
         severidade = severidade_objeto(dados.classe)

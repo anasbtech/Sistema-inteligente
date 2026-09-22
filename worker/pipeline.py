@@ -25,7 +25,9 @@ import numpy as np
 from app.config import settings
 from app.security import hash_evidencia
 from app.services import face_engine
-from app.services.vision import AnalisadorAcoes, detectar_objetos, ponto_em_poligono
+from app.services.vision import (
+    AnalisadorAcoes, detectar_objetos, familia_de, ponto_em_poligono,
+)
 
 log = logging.getLogger("vigia.worker")
 
@@ -223,6 +225,24 @@ def cantos_para_caixa(bbox: Sequence[float]) -> list[float]:
     return [x1, y1, x2 - x1, y2 - y1]
 
 
+def suprimir_sobrepostas(objetos: Sequence, iou_maximo: float = 0.7) -> list:
+    """Uma caixa em cena, uma classe — a de maior confiança.
+
+    O YOLO pontua as classes de forma independente, então um mesmo veículo
+    sai como `caminhao` a 0,68 *e* `onibus` a 0,66. A deduplicação por
+    passagem não resolve isso: ela compara dentro de cada classe, e para ela
+    são dois objetos diferentes. O resultado eram dois registros com o mesmo
+    recorte e classes que se contradizem.
+    """
+    mantidos: list = []
+    for obj in sorted(objetos, key=lambda o: o.confianca, reverse=True):
+        caixa = cantos_para_caixa(obj.bbox)
+        if any(iou(caixa, cantos_para_caixa(m.bbox)) > iou_maximo for m in mantidos):
+            continue
+        mantidos.append(obj)
+    return mantidos
+
+
 class RegistroUnicoPorObjeto:
     """Um registro por objeto que passa, não um por quadro analisado.
 
@@ -232,10 +252,15 @@ class RegistroUnicoPorObjeto:
     * sobreposição das caixas — um carro estacionado ocupa o mesmo lugar em
       toda análise, mesmo que a trilha se perca e ele ganhe um id novo.
 
+    A comparação é por *família* de classe, não pela classe exata: o modelo
+    troca caminhão por ônibus conforme o ângulo, e comparar o rótulo cru fazia
+    cada oscilação parecer um objeto novo chegando ao mesmo ponto.
+
     A memória expira a partir do ritmo medido, não de um prazo fixo. Era esse
     o defeito: dez segundos de memória com análises a cada doze fazia tudo ser
     esquecido entre uma e outra, e o mesmo carro parado era registrado de novo
-    a cada passada do laço.
+    a cada passada do laço. Enquanto o objeto continua em cena o prazo é
+    renovado, então quem fica parado não volta a ser registrado.
 
     O registro sai na primeira aparição, e não quando o objeto some — é o que
     permite a caixa aparecer no vídeo enquanto ele ainda está em cena.
@@ -265,15 +290,16 @@ class RegistroUnicoPorObjeto:
     def e_passagem_nova(self, classe: str, track_id: Optional[int],
                         caixa: Sequence[float]) -> bool:
         agora = time.monotonic()
+        familia = familia_de(classe)
         for visto in self._vistos:
-            if visto["classe"] != classe:
+            if visto["familia"] != familia:
                 continue
             mesma_trilha = track_id is not None and visto["track_id"] == track_id
             if mesma_trilha or iou(visto["caixa"], caixa) >= self.iou_minimo:
                 visto.update(quando=agora, caixa=list(caixa), track_id=track_id)
                 return False
 
-        self._vistos.append({"classe": classe, "track_id": track_id,
+        self._vistos.append({"familia": familia, "track_id": track_id,
                              "caixa": list(caixa), "quando": agora})
         return True
 
@@ -393,6 +419,7 @@ class PipelineCamera:
                 objetos = await asyncio.to_thread(
                     detectar_objetos, quadro, self.cfg.limiar_objeto, True
                 )
+                objetos = suprimir_sobrepostas(objetos)
                 self.objetos.marcar_ciclo()
                 for obj in objetos:
                     caixa = obj.bbox_normalizado(largura, altura)
