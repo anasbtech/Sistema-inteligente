@@ -334,7 +334,7 @@ async function montarApp(usuario){
 
   try{ APP.cfg = await API.info(); }catch(e){ APP.cfg = {}; }
 
-  FEED.watermark = true;
+  FEED.watermark = false;
   FEED.aoMedirFps = fps => { const e = $('#mFps'); if(e) e.textContent = fps; };
   // O token vai na URL porque <img> não envia cabeçalho. Se a câmera não
   // responder, o onerror do próprio <img> devolve o tile à cena sintética.
