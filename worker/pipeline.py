@@ -123,10 +123,18 @@ class SeletorMelhorQuadro:
     e esse intervalo varia com a carga da máquina — de quatro a doze segundos
     nesta instalação. Toda tentativa de estimá-lo liberava a captura antes de
     a seguinte existir, e tudo saía como "melhor de 1".
+
+    A espera é longa porque o detector oscila: ele perde um rosto que continua
+    diante da câmera e o reencontra alguns ciclos depois. Com três ciclos,
+    quem ficava parado na recepção saía fatiado em vários registros de uma
+    captura só — medidos vinte e um em sete minutos, quase todos "melhor de
+    1". Seis ciclos dão cerca de meio minuto de tolerância no ritmo desta
+    instalação, e o custo de errar para este lado é só o registro sair mais
+    tarde; para o outro, é a lista voltar a encher.
     """
 
     def __init__(self, similaridade_minima: float = 0.45, iou_minimo: float = 0.25,
-                 ciclos_de_espera: int = 3, janela_maxima_s: float = 1800.0) -> None:
+                 ciclos_de_espera: int = 6, janela_maxima_s: float = 1800.0) -> None:
         self.similaridade_minima = similaridade_minima
         self.iou_minimo = iou_minimo
         self.ciclos_de_espera = ciclos_de_espera

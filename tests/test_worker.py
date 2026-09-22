@@ -27,10 +27,14 @@ def captura(marca: str):
     return lambda: (f"jpeg-{marca}", f"hash-{marca}")
 
 
-def escoar(seletor, ciclos: int = 5) -> list:
-    """Deixa as passagens abertas fecharem, sem novas detecções."""
+def escoar(seletor) -> list:
+    """Deixa as passagens abertas fecharem, sem novas detecções.
+
+    Os ciclos vêm do próprio seletor: afrouxar a tolerância à oscilação do
+    detector não deve quebrar teste nenhum aqui.
+    """
     saindo = []
-    for _ in range(ciclos):
+    for _ in range(seletor.ciclos_de_espera + 1):
         saindo += seletor.prontos()
     return saindo
 
