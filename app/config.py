@@ -90,7 +90,22 @@ class Settings(BaseSettings):
     # peso à resolução: rosto pequeno e nítido era aprovado.
     # Abaixo deste piso o rosto ainda aparece na caixa do vídeo, mas não vira
     # captura: identificar dali é chute, e registrar só enche a revisão.
-    MIN_FACE_PIXELS: int = 90
+    # O valor equilibra duas perdas. A 90 não entrava nada nesta câmera —
+    # cinco minutos, nenhuma captura — e com isso ia embora também o registro
+    # de passagem, que serve à auditoria mesmo sem identificar ninguém. A 70
+    # metade volta a entrar, e o lixo de 26 a 50 pixels continua de fora.
+    # Identificação, porém, só sai quando o rosto vem grande: abaixe a câmera
+    # ou feche o zoom se o reconhecimento é o objetivo desta posição.
+    MIN_FACE_PIXELS: int = 70
+    # Nitidez mínima, na mesma escala de 0 a 1 da nota de qualidade.
+    # Rosto borrado não tem detalhe para extrair, igual a rosto pequeno — e
+    # escapava pela mesma brecha: a nota é média ponderada, então uma captura
+    # medida aqui com 145 pixels de rosto, frontalidade 0,88 e nitidez 0,01
+    # tirava 0,61 e passava, para gerar um vetor sem informação.
+    # Borrão assim vem de ambiente escuro: com brilho medido em 45 de 255, a
+    # câmera alonga a exposição e quem se move sai arrastado. O piso barra a
+    # captura inútil, mas quem resolve é luz na cena, não este número.
+    MIN_FACE_SHARPNESS: float = 0.15
     # Rede de segurança para capturas sem correspondência: duas na mesma
     # câmera dentro desta janela contam como uma presença só.
     # Quem consolida de verdade é o seletor de melhor quadro no worker, que

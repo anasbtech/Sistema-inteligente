@@ -137,11 +137,16 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
                   min_pixels: Optional[int] = None) -> List[FaceDetectada]:
     """Detecta rostos no quadro BGR e devolve embeddings normalizados.
 
-    Rosto abaixo de `min_pixels` de altura é descartado antes de tudo. A nota
-    de qualidade não dá conta disso sozinha: ela dá um quarto do peso à
-    resolução, então um rosto de cinquenta pixels, nítido e de frente, tirava
-    0,7 e passava — com um vetor que não casa nem com outra captura da mesma
-    pessoa. Resolução é a única dessas medidas que o modelo não perdoa.
+    Resolução e nitidez têm piso próprio, aplicado antes da nota de
+    qualidade. As duas são eliminatórias: rosto pequeno é esticado até os
+    112x112 que o ArcFace recebe, rosto borrado não tem detalhe, e em ambos
+    os casos sai um vetor que não casa nem com outra captura da mesma pessoa.
+
+    A nota não dá conta delas porque é média ponderada — cada uma pesa pouco
+    e as outras compensam. Medidas nesta instalação, passavam pela nota um
+    rosto de 50 pixels nítido e de frente (0,7) e um de 145 pixels de frente
+    com nitidez 0,01 (0,61). O segundo é o pior dos dois, e era o que mais
+    parecia aprovado.
     """
     limite = settings.MIN_FACE_QUALITY if min_qualidade is None else min_qualidade
     piso = settings.MIN_FACE_PIXELS if min_pixels is None else min_pixels
@@ -158,6 +163,8 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
         if y2 - y1 < piso:
             continue
         recorte = quadro[y1:y2, x1:x2]
+        if _nitidez(recorte) < settings.MIN_FACE_SHARPNESS:
+            continue
         lm = getattr(face, "kps", None)
         q = calcular_qualidade(recorte, float(face.det_score), lm, y2 - y1)
         if q < limite:
