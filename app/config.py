@@ -71,9 +71,26 @@ class Settings(BaseSettings):
     # --- Biometria -------------------------------------------------------
     EMBEDDING_DIM: int = 512
     FACE_MODEL: str = "buffalo_l"
-    FACE_THRESHOLD: float = 0.88
+    # Similaridade cosseno mínima para atribuir identidade. A referência do
+    # próprio InsightFace para este modelo é 0,5; fica acima disso porque aqui
+    # um falso positivo leva alguém a ser abordado pelo nome de outro.
+    # Estava em 0,88, que na prática desliga o reconhecimento: exigiria a
+    # mesma pessoa no mesmo ângulo e na mesma luz da foto de cadastro. Em
+    # centenas de capturas reais desta instalação, nada passou de 0,15.
+    # Seja qual for o valor, o alerta continua exigindo confirmação humana
+    # antes de qualquer abordagem.
+    FACE_THRESHOLD: float = 0.55
     FACE_DET_SIZE: int = 640
     MIN_FACE_QUALITY: float = 0.55
+    # Altura mínima do rosto, em pixels, para o vetor valer alguma coisa.
+    # O ArcFace recebe 112x112: o que chega menor é esticado até lá, e o vetor
+    # que sai é ruído. Medido nesta instalação, duas capturas da mesma pessoa
+    # com rostos de ~50px deram 0,004 de similaridade — o esperado passa de
+    # 0,5. E a nota de qualidade não barra isso, porque dá só um quarto do
+    # peso à resolução: rosto pequeno e nítido era aprovado.
+    # Abaixo deste piso o rosto ainda aparece na caixa do vídeo, mas não vira
+    # captura: identificar dali é chute, e registrar só enche a revisão.
+    MIN_FACE_PIXELS: int = 90
     # Rede de segurança para capturas sem correspondência: duas na mesma
     # câmera dentro desta janela contam como uma presença só.
     # Quem consolida de verdade é o seletor de melhor quadro no worker, que

@@ -133,9 +133,18 @@ def calcular_qualidade(recorte: np.ndarray, det_score: float,
     return round(float(max(0.0, min(q, 1.0))), 4)
 
 
-def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None) -> List[FaceDetectada]:
-    """Detecta rostos no quadro BGR e devolve embeddings normalizados."""
+def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
+                  min_pixels: Optional[int] = None) -> List[FaceDetectada]:
+    """Detecta rostos no quadro BGR e devolve embeddings normalizados.
+
+    Rosto abaixo de `min_pixels` de altura é descartado antes de tudo. A nota
+    de qualidade não dá conta disso sozinha: ela dá um quarto do peso à
+    resolução, então um rosto de cinquenta pixels, nítido e de frente, tirava
+    0,7 e passava — com um vetor que não casa nem com outra captura da mesma
+    pessoa. Resolução é a única dessas medidas que o modelo não perdoa.
+    """
     limite = settings.MIN_FACE_QUALITY if min_qualidade is None else min_qualidade
+    piso = settings.MIN_FACE_PIXELS if min_pixels is None else min_pixels
     modelo = obter_modelo()
     altura, largura = quadro.shape[:2]
 
@@ -145,6 +154,8 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None) -> 
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(largura, x2), min(altura, y2)
         if x2 <= x1 or y2 <= y1:
+            continue
+        if y2 - y1 < piso:
             continue
         recorte = quadro[y1:y2, x1:x2]
         lm = getattr(face, "kps", None)
