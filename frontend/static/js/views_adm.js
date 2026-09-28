@@ -169,34 +169,41 @@ async function renderUsuarios(alvo){
       <div class="search">${ico('search',14)}<input class="inp" id="usQ" placeholder="Nome, matrícula, e-mail…"></div>
       <button class="btn btn-primary btn-sm" id="usNovo">${ico('plus',14)} Novo usuário</button>
     </div></div>
-  <div class="panel" style="margin-bottom:14px">
-    <div class="panel-hd"><h3>Matriz de permissões</h3><span class="sub">o que cada perfil pode fazer</span></div>
-    <div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Perfil</th>${PERMS_COLUNAS.map(p => `<th style="text-align:center">${PERMS_ROTULO[p]}</th>`).join('')}</tr></thead>
-      <tbody>${(perfis.perfis||[]).map(pf => `<tr>
-        <td><b>${esc(rotuloPerfil(pf.codigo))}</b><br><span class="td-id">${esc(pf.codigo)}</span></td>
-        ${PERMS_COLUNAS.map(p => `<td style="text-align:center">${pf.permissoes.includes(p)
-          ? `<span style="color:var(--green)">${ico('check',14)}</span>`
-          : '<span style="color:var(--txt-4)">—</span>'}</td>`).join('')}
-      </tr>`).join('')}</tbody></table></div></div></div>
+
+  <div class="grid cols-3" style="margin-bottom:18px" id="rolGrid">${carregando()}</div>
+
+  <div class="sec-hd" style="margin-top:22px"><h3>Usuários do sistema</h3></div>
   <div class="panel"><div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl" id="usTbl">
-    <thead><tr><th>Usuário</th><th>Matrícula</th><th>Perfil</th><th>Unidade</th><th>MFA</th>
+    <thead><tr><th>Usuário</th><th>Perfil</th><th>Unidade</th><th>MFA</th>
       <th>Último acesso</th><th>Status</th><th style="width:80px"></th></tr></thead>
     <tbody></tbody></table></div></div></div>`;
 
+  $('#rolGrid').innerHTML = (perfis.perfis||[]).map(pf => {
+    const cores = {ADMIN:'c-red', SUPER:'c-amber', AUDITOR:'c-violet'};
+    const cor = cores[pf.codigo] || 'c-blue';
+    return `<div class="perm-card">
+      <div class="perm-head ${cor}">
+        <b>${esc(rotuloPerfil(pf.codigo))}</b>
+        <span class="mono" style="font-size:10px;opacity:.7">${esc(pf.codigo)}</span>
+      </div>
+      <div class="perm-list">
+        ${pf.permissoes.map(p => `<div class="perm-item">${ico('check',12)} ${esc(PERMS_ROTULO[p]||p)}</div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+
   const pintar = lista => {
     $('#usTbl tbody').innerHTML = lista.map(u => `
-      <tr class="clickable" data-u="${esc(u.id)}">
-        <td><div class="face-cell"><span class="avatar" style="width:30px;height:30px;font-size:11px">${esc(iniciais(u.nome))}</span>
-          <div class="face-meta"><b>${esc(u.nome)}</b><span style="color:var(--txt-3);font-family:var(--f-mono)">${esc(u.email)}</span></div></div></td>
-        <td class="mono">${esc(u.matricula)}</td>
+      <tr class="user-row clickable" data-u="${esc(u.id)}">
+        <td><div class="face-cell"><span class="avatar" style="width:36px;height:36px;font-size:12px">${esc(iniciais(u.nome))}</span>
+          <div class="face-meta"><b>${esc(u.nome)}</b><span style="color:var(--txt-3);font-family:var(--f-mono);font-size:11px">${esc(u.email)}</span></div></div></td>
         <td><span class="chip ${u.perfil==='ADMIN'?'c-red':u.perfil==='SUPER'?'c-amber':u.perfil==='AUDITOR'?'c-violet':'c-blue'}">${esc(rotuloPerfil(u.perfil))}</span></td>
-        <td>${esc(u.unidade||'—')}</td>
+        <td style="color:var(--txt-2);font-size:13px">${esc(u.unidade||'—')}</td>
         <td>${u.mfa_ativo ? '<span class="chip c-green">Ativo</span>' : '<span class="chip c-amber">Inativo</span>'}</td>
-        <td class="td-ts">${u.ultimo_acesso ? fmtDT(u.ultimo_acesso) + '<br><span style="color:var(--txt-4)">' + relTime(u.ultimo_acesso) + '</span>' : '—'}</td>
+        <td class="mono" style="font-size:12px">${u.ultimo_acesso ? '<b>'+fmtDT(u.ultimo_acesso).split(' ')[1]+'</b><br><span style="color:var(--txt-4)">'+fmtDT(u.ultimo_acesso).split(' ')[0]+'</span>' : '—'}</td>
         <td>${u.ativo ? '<span class="chip c-green">Ativo</span>' : '<span class="chip c-gray">Desativado</span>'}</td>
         <td style="text-align:right"><button class="btn btn-ghost btn-sm btn-icon" data-eu="${esc(u.id)}">${ico('edit',14)}</button></td>
-      </tr>`).join('') || `<tr><td colspan="8">${vazio('users','Nenhum usuário encontrado.')}</td></tr>`;
+      </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;padding:24px">${vazio('users','Nenhum usuário encontrado.')}</td></tr>`;
     $$('#usTbl [data-eu]').forEach(b => b.onclick = e => { e.stopPropagation(); editarUsuario(b.dataset.eu, usuarios, perfis); });
     $$('#usTbl tr[data-u]').forEach(t => t.onclick = () => editarUsuario(t.dataset.u, usuarios, perfis));
   };
