@@ -63,27 +63,51 @@
 </svg>
 <!-- ===================== AUTENTICAÇÃO ===================== -->
 <div id="authScreen">
-  <canvas id="authCanvas"></canvas>
+  <div class="auth-brand">
+    <canvas id="authCanvas"></canvas>
+    <div class="auth-brand-in">
+      <div class="auth-mark">
+        <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
+          <path d="M21 1.8 3.5 8.2v14.2C3.5 34 11 42 21 46.2 31 42 38.5 34 38.5 22.4V8.2L21 1.8z"
+                fill="#0F1821" stroke="#35A7DE" stroke-width="1.6"/>
+          <circle cx="21" cy="21.4" r="8.6" stroke="#35A7DE" stroke-width="1.4"/>
+          <g stroke="#F0A02A" stroke-width="1.15" stroke-linecap="round">
+            <path d="M21 13.6v2.9M21 26.3v2.9M13.1 21.4h2.9M26 21.4h2.9"/>
+            <path d="m15.4 15.8 2.1 2.1M24.5 24.9l2.1 2.1M26.6 15.8l-2.1 2.1M17.5 24.9l-2.1 2.1"/>
+          </g>
+          <circle cx="21" cy="21.4" r="3.4" fill="#35A7DE"/>
+          <circle cx="21" cy="21.4" r="1.25" fill="#0F1821"/>
+        </svg>
+        <div class="auth-mark-txt">
+          <b>SEGURANÇA</b>
+          <span>Centro Integrado de Videomonitoramento</span>
+        </div>
+      </div>
+
+      <h1 class="auth-head">Vigilância inteligente com<br><em>rastro auditável</em>.</h1>
+      <p class="auth-sub">Plataforma unificada de videomonitoramento com reconhecimento facial, detecção de objetos e análise de ações. Cada identificação gera registro imutável vinculado a um identificador biométrico permanente.</p>
+
+      <div class="auth-stats">
+        <div class="auth-stat"><b id="statUptime">—</b><span>Disponibilidade</span></div>
+        <div class="auth-stat"><b id="statComp">—</b><span>Componentes operantes</span></div>
+        <div class="auth-stat"><b id="statRet">—</b><span>Dias de retenção</span></div>
+      </div>
+    </div>
+    <div class="auth-foot">
+      <span>ACESSO RESTRITO E AUDITADO</span>
+      <span>Argon2id · JWT · TLS</span>
+      <span>Trilha encadeada por SHA-256</span>
+    </div>
+  </div>
 
   <div class="auth-pane">
     <!-- LOGIN -->
-    <div class="auth-card term" id="viewLogin">
-      <div class="term-hd">
-        <span class="term-led" id="authLed" data-estado="checando"></span>
-        <span class="term-estado" id="authEstado">verificando terminal</span>
-        <span class="sp"></span>
-        <span class="mono term-relogio" id="authRelogio">--:--:--</span>
+    <div class="auth-card" id="viewLogin">
+      <div>
+        <div class="eyebrow" style="margin-bottom:8px">Acesso restrito</div>
+        <h2>Identificação do operador</h2>
       </div>
-
-      <div class="term-ident">
-        <span class="term-brasao"><svg width="26" height="26"><use href="#i-shield"/></svg></span>
-        <span class="term-nomes">
-          <b>SEGURANÇA</b>
-          <small>Centro Integrado de Videomonitoramento</small>
-        </span>
-      </div>
-
-      <div class="term-sep"><span>Acesso restrito</span></div>
+      <p class="lede">Use suas credenciais funcionais. Tentativas são registradas na trilha de auditoria.</p>
 
       <div id="loginAlert"></div>
 
@@ -98,14 +122,7 @@
       <div class="auth-row">
         <button class="link-q" id="goRecover">Esqueci minha senha</button>
       </div>
-      <button class="btn btn-primary btn-block" id="btnLogin"><svg width="16" height="16"><use href="#i-lock"/></svg> Autenticar</button>
-
-      <div class="term-pe">
-        <div class="term-comp mono" id="authComp"><span class="comp-vazio">consultando componentes…</span></div>
-        <p>Terminal monitorado. Toda tentativa de acesso — aceita ou recusada — é registrada na
-           trilha de auditoria com data, origem e identificação. O uso é restrito à finalidade
-           funcional autorizada.</p>
-      </div>
+      <button class="btn btn-primary btn-block" id="btnLogin"><svg width="16" height="16"><use href="#i-lock"/></svg> Entrar no sistema</button>
     </div>
 
     <!-- RECUPERAÇÃO DE SENHA -->

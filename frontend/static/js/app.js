@@ -243,54 +243,33 @@ $('#recPass2').addEventListener('keydown', e => { if(e.key === 'Enter') salvarSe
    Um <canvas> aceita um único tipo de contexto: com o 2D tomado aqui, o
    WebGL do Three.js voltaria null. O desenho fica em three-auth.js. */
 const AUTHFX = {
-  iniciar(){ window.AuthFX3D && window.AuthFX3D.iniciar(); TERMINAL.iniciar(); },
-  parar(){ window.AuthFX3D && window.AuthFX3D.parar(); TERMINAL.parar(); }
+  iniciar(){ window.AuthFX3D && window.AuthFX3D.iniciar(); indicadoresDaMarca(); },
+  parar(){ window.AuthFX3D && window.AuthFX3D.parar(); }
 };
 
-/* Estado do terminal na tela de acesso.
-   A fonte é /saude, que responde se a API, o banco e o barramento de eventos
-   estão de pé — e nada além disso. /api/info devolveria também o tamanho da
-   base biométrica e a política de bloqueio de senha, que não têm por que
-   chegar a quem ainda não se autenticou. */
-const TERMINAL = {
-  _relogio: null,
-
-  async _consultarSaude(){
-    const led = $('#authLed'), estado = $('#authEstado'), comp = $('#authComp');
-    if(!led) return;
-    try{
-      const r = await fetch('/saude', {cache:'no-store'});
-      if(!r.ok) throw new Error(r.status);
-      const s = await r.json();
-      const ok = s.saudavel !== false;
-      led.dataset.estado = ok ? 'ok' : 'falha';
-      estado.textContent = ok ? 'sistema operante' : 'sistema degradado';
-      const itens = Object.entries(s.componentes || {});
-      comp.innerHTML = itens.length
-        ? itens.map(([nome, v]) =>
-            `<span class="comp${/^(ok|mem)/i.test(String(v)) ? '' : ' ruim'}"><i></i>${esc(nome)} <b>${esc(String(v))}</b></span>`
-          ).join('')
-        : '<span class="comp-vazio">sem componentes declarados</span>';
-    }catch(e){
-      led.dataset.estado = 'falha';
-      estado.textContent = 'terminal sem resposta';
-      comp.innerHTML = '<span class="comp-vazio">sem contato com o servidor</span>';
-    }
-  },
-
-  iniciar(){
-    this.parar();
-    const bater = () => {
-      const r = $('#authRelogio');
-      if(r) r.textContent = new Date().toLocaleTimeString('pt-BR');
-    };
-    bater();
-    this._relogio = setInterval(bater, 1000);
-    this._consultarSaude();
-  },
-
-  parar(){ clearInterval(this._relogio); this._relogio = null; }
-};
+/* Os três números da coluna da marca.
+   São indicadores do serviço — disponibilidade, componentes de pé e prazo de
+   retenção. Aqui ficava a contagem de registros biométricos, que dizia a quem
+   ainda não autenticou quantas pessoas a base monitora; a capacidade instalada
+   do sistema é o que cabe nesta tela, não o volume de gente dentro dele. */
+async function indicadoresDaMarca(){
+  const alvo = $('#statUptime');
+  if(!alvo) return;
+  const pôr = (id, v) => { const el = $('#' + id); if(el) el.textContent = v; };
+  try{
+    const [info, saude] = await Promise.all([
+      fetch('/api/info', {cache:'no-store'}).then(r => r.json()),
+      fetch('/saude',    {cache:'no-store'}).then(r => r.json())
+    ]);
+    const comps = Object.values(saude.componentes || {});
+    const oks = comps.filter(v => /^(ok|mem)/i.test(String(v))).length;
+    pôr('statUptime', (info.estatisticas || {}).disponibilidade || '—');
+    pôr('statComp', comps.length ? `${oks}/${comps.length}` : '—');
+    pôr('statRet', (info.config || {}).retencao_dias ?? '—');
+  }catch(e){
+    ['statUptime','statComp','statRet'].forEach(id => pôr(id, '—'));
+  }
+}
 
 /* ==========================================================
    SHELL
