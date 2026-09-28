@@ -19,6 +19,7 @@ async def proximo_numero(
     db: AsyncSession,
     chave: str,
     semente: Optional[Callable[[], Awaitable[int]]] = None,
+    em_uso: Optional[Callable[[int], Awaitable[bool]]] = None,
 ) -> int:
     """Reserva e devolve o próximo número da série ``chave``.
 
@@ -26,6 +27,13 @@ async def proximo_numero(
     existe, e deve devolver o maior número já emitido na série. É o que faz
     a migração do esquema antigo ser silenciosa: o contador nasce acima do
     que já está gravado, em vez de recomeçar do começo e colidir.
+
+    ``em_uso`` diz se um número já foi gravado. Uma importação que insere
+    registros sem adiantar o contador o deixa atrás do que existe — e a
+    semente não corrige isso, porque só roda quando o contador não existe.
+    A série então reemite código que já está gravado e **toda** inserção
+    passa a falhar por unicidade, sem nada além de um aviso no log. Quando
+    isso é detectado, o contador é ressincronizado pela semente.
     """
     linha = (
         await db.execute(
@@ -42,6 +50,9 @@ async def proximo_numero(
         await db.flush()
 
     numero = linha.proximo
+    if em_uso is not None and semente is not None and await em_uso(numero):
+        numero = await semente() + 1
+
     linha.proximo = numero + 1
     await db.flush()
     return numero

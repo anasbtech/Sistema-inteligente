@@ -75,7 +75,18 @@ async def _proximo_codigo(db: AsyncSession, tipo: TipoDeteccao) -> str:
         ).scalar_one_or_none()
         return _sequencial_do_codigo(codigo or "", 6)
 
-    numero = await sequencias.proximo_numero(db, f"{pfx}-{ano}", maior_emitido)
+    async def em_uso(numero: int) -> bool:
+        return (
+            await db.execute(
+                select(Deteccao.id)
+                .where(Deteccao.codigo == f"{pfx}-{ano}{numero:06d}")
+                .limit(1)
+            )
+        ).scalar_one_or_none() is not None
+
+    numero = await sequencias.proximo_numero(
+        db, f"{pfx}-{ano}", maior_emitido, em_uso
+    )
     return f"{pfx}-{ano}{numero:06d}"
 
 

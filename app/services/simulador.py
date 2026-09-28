@@ -128,18 +128,31 @@ class Simulador:
 
             cam = rng.choice(cameras)
             agora = datetime.now(timezone.utc)
-            sorte = rng.random()
 
-            if sorte < 0.40 and cam.analitico_facial:
+            # Sorteia entre os analíticos que a câmera de fato tem ligados.
+            # A escada de `elif` anterior sorteava a faixa antes de olhar o que
+            # a câmera fazia: numa câmera só-facial, toda sorte acima de 0,40
+            # caía na faixa de objeto, não encontrava objeto ligado e saía sem
+            # gerar nada — 60% dos ciclos perdidos.
+            pesos = [
+                ("facial", 40 if cam.analitico_facial else 0),
+                ("objeto", 40 if cam.analitico_objeto else 0),
+                ("acao", 20 if cam.analitico_acao else 0),
+            ]
+            disponiveis = [(nome, p) for nome, p in pesos if p]
+            if not disponiveis:
+                return
+
+            escolha = rng.choices(
+                [n for n, _ in disponiveis], weights=[p for _, p in disponiveis], k=1
+            )[0]
+
+            if escolha == "facial":
                 dados = await self._facial(db, cam, agora)
-            elif sorte < 0.80 and cam.analitico_objeto:
-                dados = self._objeto(cam, agora)
-            elif cam.analitico_acao:
-                dados = self._acao(cam, agora)
-            elif cam.analitico_objeto:
+            elif escolha == "objeto":
                 dados = self._objeto(cam, agora)
             else:
-                return
+                dados = self._acao(cam, agora)
 
             if dados is None:
                 return
