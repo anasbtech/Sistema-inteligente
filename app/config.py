@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     # identificação exige (MIN_FACE_PIXELS). Quem entra no campo da câmera
     # aparece marcado desde longe; só perto o bastante é que vira registro.
     INFERENCIA_ROSTO_MIN_PX: int = 24
+    # Rosto se deduplica pelo vetor, não pela posição. O limiar é alto de
+    # propósito: não se pergunta quem é a pessoa, e sim se é a mesma captura
+    # de segundos atrás — abaixo disso, duas pessoas parecidas viram uma.
+    INFERENCIA_ROSTO_IGUAL: float = 0.92
+    # Curta porque passar de novo é evento de verdade: quem volta ao saguão
+    # mais tarde deve constar outra vez, mas quem fica parado diante da
+    # câmera não pode virar uma linha a cada ciclo.
+    INFERENCIA_ROSTO_JANELA_S: float = 120.0
 
     # --- Parque de câmeras -----------------------------------------------
     # O parque é homogêneo (Intelbras/Dahua, mesma credencial), então a URL

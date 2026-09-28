@@ -44,6 +44,7 @@ class Inferencia:
         self.janela_track = janela_track
         self._task: Optional[asyncio.Task] = None
         self._visto: Dict[Tuple[str, str], float] = {}
+        self._rostos: Dict[str, list] = {}
         self.gerados = 0
 
     async def iniciar(self) -> None:
@@ -91,6 +92,32 @@ class Inferencia:
                     await self._processar(db, cam)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
+
+    def _rosto_repetido(self, camera: str, embedding) -> bool:
+        """Mesmo rosto que já entrou há pouco naquela câmera.
+
+        Compara o vetor, não a posição: é o que distingue duas pessoas no
+        mesmo ponto de uma pessoa parada. O limiar é bem mais alto que o da
+        identificação — aqui não se pergunta *quem* é, e sim se é a mesma
+        captura de instantes atrás, então o parecido de menos tem de passar.
+
+        A janela é curta porque passar de novo é um evento de verdade: quem
+        volta ao saguão depois de um tempo deve constar outra vez.
+        """
+        agora = time.monotonic()
+        recentes = [
+            (v, t) for v, t in self._rostos.get(camera, [])
+            if agora - t < settings.INFERENCIA_ROSTO_JANELA_S
+        ]
+        for vetor, _ in recentes:
+            if face_engine.similaridade_cosseno(vetor, embedding) >= settings.INFERENCIA_ROSTO_IGUAL:
+                self._rostos[camera] = recentes
+                return True
+        recentes.append((embedding, agora))
+        # Guarda só as últimas: o saguão cheio não pode fazer a lista crescer
+        # sem teto, e comparar contra as mais recentes já resolve.
+        self._rostos[camera] = recentes[-24:]
+        return False
 
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
@@ -200,7 +227,11 @@ class Inferencia:
                 if (face.qualidade < settings.MIN_FACE_QUALITY
                         or (y2 - y1) < settings.MIN_FACE_PIXELS):
                     continue
-                if self._repetido((cam.codigo, f"face:{x1 // 160}:{y1 // 160}")):
+                # Rosto se deduplica pelo próprio rosto, não pelo lugar onde
+                # apareceu: duas pessoas que passam pelo mesmo ponto são duas
+                # passagens, e a segunda não pode sumir porque a primeira
+                # esteve ali. O embedding separa uma da outra; a posição não.
+                if self._rosto_repetido(cam.codigo, face.embedding):
                     continue
 
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, face.bbox)
