@@ -1,5 +1,5 @@
 /* ==========================================================
-   VIGIA — Utilidades de interface
+   SEGURANÇA — Utilidades de interface
    Formatação, ícones, toasts, modais, gráficos SVG e tabelas.
    ========================================================== */
 'use strict';

@@ -1,5 +1,5 @@
 /* ==========================================================
-   VIGIA — Registros de detecção e base biométrica
+   SEGURANÇA — Registros de detecção e base biométrica
    ========================================================== */
 'use strict';
 
@@ -262,7 +262,7 @@ async function abrirDeteccao(codigo){
           <div class="eyebrow" style="margin-bottom:7px">Quadro da detecção</div>
           <div style="border:1px solid var(--line);border-radius:var(--r-m);overflow:hidden;position:relative;background:#000">
             <canvas id="detBig" style="width:100%;display:block"></canvas>
-            <div class="watermark">VIGIA · ${esc(d.camera?d.camera.codigo:'')} · ${fmtDT(d.ocorrido_em)}</div>
+            <div class="watermark">SEGURANÇA · ${esc(d.camera?d.camera.codigo:'')} · ${fmtDT(d.ocorrido_em)}</div>
           </div>
           <p class="hint" style="margin-top:8px">Chave da evidência: <span class="mono">${esc(d.snapshot_key || '—')}</span></p>
         </div>

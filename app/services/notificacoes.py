@@ -15,7 +15,7 @@ log = logging.getLogger("seguranca.notificacoes")
 MODELO = """\
 {saudacao},
 
-Recebemos um pedido de redefinição de senha para sua conta no seguranca.
+Recebemos um pedido de redefinição de senha para sua conta no SEGURANÇA.
 
     Código de verificação: {codigo}
 
@@ -55,7 +55,7 @@ async def enviar_codigo_recuperacao(email: str, nome: str, codigo: str, minutos:
     saudacao = f"Prezado(a) {nome.split()[0]}" if nome else "Prezado(a)"
     await _enviar_email(
         email,
-        "seguranca — código de redefinição de senha",
+        "SEGURANÇA — código de redefinição de senha",
         MODELO.format(saudacao=saudacao, codigo=codigo, minutos=minutos),
     )
 

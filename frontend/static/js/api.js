@@ -1,5 +1,5 @@
 ﻿/* ==========================================================
-   seguranca — Cliente da API
+   SEGURANÇA — Cliente da API
 
    Um único ponto de contato com o backend. Guarda os tokens,
    renova o access token quando expira e reemite a requisição,

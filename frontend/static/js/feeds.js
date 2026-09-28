@@ -1,5 +1,5 @@
 /* ==========================================================
-   VIGIA — Motor de vídeo sintético (frontend)
+   SEGURANÇA — Motor de vídeo sintético (frontend)
 
    Renderiza cenas procedurais em <canvas> para dar imagem às
    câmeras enquanto não há RTSP real ligado. A troca por vídeo
@@ -444,7 +444,7 @@ function pintarIdentificacoes(ctx,lista,W,H){
     const nome=id.pessoa_nome.toUpperCase();
     const pad=4*s, alt=16*s, larg=ctx.measureText(nome).width+pad*2;
     // Renderiza acima da caixa com cor destaque
-    ctx.fillStyle='rgba(240,160,42,0.9)';  // Laranja VIGIA
+    ctx.fillStyle='rgba(240,160,42,0.9)';  // Laranja SEGURANÇA
     ctx.fillRect(x,Math.max(0,y-alt-2),larg,alt);
     ctx.fillStyle='#08121A';
     ctx.fillText(nome,x+pad,Math.max(0,y-alt/2-1));

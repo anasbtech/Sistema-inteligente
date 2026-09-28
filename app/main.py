@@ -1,4 +1,4 @@
-﻿"""Ponto de entrada da aplicação seguranca — API + interface no mesmo processo.
+﻿"""Ponto de entrada da aplicação SEGURANÇA — API + interface no mesmo processo.
 
     python run.py                       # tudo pronto, modo demonstração
     uvicorn app.main:app --reload       # se preferir controlar você mesmo

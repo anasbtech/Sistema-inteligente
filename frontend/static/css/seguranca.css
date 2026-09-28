@@ -1,5 +1,5 @@
 /* ============================================================
-   VIGIA — Centro Integrado de Videomonitoramento
+   SEGURANÇA — Centro Integrado de Videomonitoramento
    Tema único: console operacional 24/7 (video wall).
    Decisão deliberada: salas de monitoramento trabalham com
    luminância baixa para reduzir ofuscamento sobre os monitores.
@@ -76,43 +76,20 @@ a{color:var(--acc);text-decoration:none}
    1. AUTENTICAÇÃO
    ============================================================ */
 #authScreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--ink-950);z-index:200}
-#authCanvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.auth-brand{display:none}
-.auth-brand-in{position:relative;z-index:2;display:flex;flex-direction:column;gap:26px;max-width:520px}
-.auth-mark{display:flex;align-items:center;gap:13px}
-.shield{width:42px;height:48px;flex:none}
-.auth-mark-txt b{
-  display:block;font-family:var(--f-disp);font-size:27px;font-weight:700;
-  letter-spacing:.18em;line-height:1;color:var(--txt-1);
-}
-.auth-mark-txt span{display:block;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--acc);margin-top:5px;font-weight:600}
-.auth-head{font-family:var(--f-disp);font-size:clamp(34px,4.6vw,58px);font-weight:600;line-height:1.02;letter-spacing:.005em;margin:0;text-wrap:balance}
-.auth-head em{font-style:normal;color:var(--acc)}
-.auth-sub{color:var(--txt-2);font-size:14.5px;max-width:46ch;margin:0}
-.auth-stats{display:flex;gap:30px;flex-wrap:wrap;padding-top:8px}
-.auth-stat b{display:block;font-family:var(--f-mono);font-size:23px;font-weight:600;color:var(--txt-1);line-height:1.1}
-.auth-stat span{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--txt-3);font-weight:600}
-.auth-foot{position:relative;z-index:2;display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:var(--txt-4);font-family:var(--f-mono)}
+/* O canvas ocupa a tela inteira e fica atrás do cartão. */
+#authCanvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
 
 .auth-pane{
-  display:flex;align-items:center;justify-content:center;padding:32px 20px;overflow-y:auto;
-  background:linear-gradient(135deg, var(--ink-900) 0%, var(--ink-850) 100%);
-  position:relative;backdrop-filter:blur(10px);
-}
-.auth-pane::before{
-  content:'';position:absolute;inset:0;background:radial-gradient(circle at 70% 40%, rgba(53,167,222,0.08) 0%, transparent 50%);
-  pointer-events:none;z-index:0;
+  position:relative;z-index:1;
+  display:flex;align-items:center;justify-content:center;
+  width:100%;padding:32px 20px;overflow-y:auto;
 }
 .auth-card{
-  width:100%;max-width:420px;display:flex;flex-direction:column;gap:24px;
-  background:rgba(15,24,33,0.6);border:1px solid var(--line);border-radius:16px;
-  padding:36px 32px;position:relative;z-index:1;
-  box-shadow:0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(53,167,222,0.1);
-  backdrop-filter:blur(20px);
-  transition:all 0.3s ease;
-}
-.auth-card:hover{
-  border-color:var(--acc);box-shadow:0 20px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(53,167,222,0.2);
+  width:100%;max-width:412px;display:flex;flex-direction:column;gap:22px;
+  background:rgba(11,18,26,.82);border:1px solid var(--line);border-radius:14px;
+  padding:34px 32px;
+  box-shadow:0 24px 70px rgba(0,0,0,.6), inset 0 1px 0 rgba(53,167,222,.09);
+  backdrop-filter:blur(18px);
 }
 .auth-card h2{
   font-family:var(--f-disp);font-size:32px;font-weight:700;margin:0;
@@ -141,10 +118,6 @@ a{color:var(--acc);text-decoration:none}
 .inp.err{border-color:var(--red)}
 select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--txt-3) 50%),linear-gradient(135deg,var(--txt-3) 50%,transparent 50%);background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:32px}
 textarea.inp{resize:vertical;min-height:70px}
-.pw-wrap{position:relative}
-.pw-eye{display:none !important}
-
-@keyframes shimmer{0%{background-position:200% center}100%{background-position:-200% center}}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
   padding:12px 20px;border-radius:10px;font-weight:700;font-size:14px;
@@ -171,9 +144,7 @@ textarea.inp{resize:vertical;min-height:70px}
 .btn-sm{padding:6px 11px;font-size:12px;border-radius:var(--r-s)}
 .btn-icon{padding:7px;width:32px;height:32px}
 
-.auth-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.chk{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-2);cursor:pointer;user-select:none}
-.chk input{accent-color:var(--acc);width:15px;height:15px;cursor:pointer}
+.auth-row{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap}
 .link-q{font-size:12.5px;color:var(--acc);font-weight:500;background:none}
 .link-q:hover{color:var(--acc-2);text-decoration:underline}
 
@@ -186,10 +157,6 @@ textarea.inp{resize:vertical;min-height:70px}
 
 .demo-box{border:1px dashed var(--line);border-radius:var(--r-m);padding:11px 13px;background:rgba(53,167,222,.04)}
 .demo-box .eyebrow{margin-bottom:7px}
-.demo-cred{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:4px 0;font-family:var(--f-mono);font-size:11.5px;color:var(--txt-2);border-top:1px solid var(--line-soft)}
-.demo-cred:first-of-type{border-top:0}
-.demo-cred b{color:var(--txt-1);font-weight:500}
-.demo-cred button{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--acc);font-weight:600;font-family:var(--f-body)}
 
 /* Stepper recuperação */
 .stepper{display:flex;align-items:center;gap:0;margin-bottom:2px}

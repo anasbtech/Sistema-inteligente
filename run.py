@@ -1,19 +1,4 @@
-﻿#!/usr/bin/env python3
-"""VIGIA — ponto de entrada único.
-
-    python run.py
-
-Cria o banco na primeira execução, popula com dados de demonstração e sobe o
-servidor com a interface e a API no mesmo endereço. Nada de Docker, Postgres
-ou Redis para começar.
-
-Opções:
-    python run.py --porta 9000      outra porta
-    python run.py --reset           apaga o banco e recomeça
-    python run.py --sem-simulador   não gera detecções automáticas
-    python run.py --sem-navegador   não abre o navegador
-"""
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import asyncio
@@ -144,7 +129,7 @@ def abrir_navegador(url: str, atraso: float = 2.0) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="VIGIA — Centro Integrado de Videomonitoramento",
+        description="SEGURANÇA — Centro Integrado de Videomonitoramento",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--porta", type=int, default=8000)
@@ -178,7 +163,7 @@ def main() -> None:
         os.environ["SECRET_KEY"] = arq.read_text().strip()
 
     print()
-    faixa("VIGIA — Centro Integrado de Videomonitoramento")
+    faixa("SEGURANÇA — Centro Integrado de Videomonitoramento")
 
     from app.config import settings
     print(f"  Modo: {settings.modo}")

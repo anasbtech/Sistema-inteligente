@@ -20,19 +20,6 @@ from app.models import Alerta, Auditoria, Camera, Deteccao, Pessoa, StatusCamera
 FRONTEND = RAIZ / "frontend"
 router = APIRouter(tags=["Interface"])
 
-# Contas criadas pelo seed. Só aparecem em modo de demonstração — nunca em
-# produção, onde `SIMULADOR=false` e `ENV=production`.
-# A lista é filtrada pelo que existe no banco antes de ir para a tela: quem
-# apaga uma conta não deveria continuar vendo a senha dela oferecida no login,
-# num botão que preenche e falha.
-CREDENCIAIS_DEMO = [
-    {"email": "admin@pa.com.br",      "senha": "Admin@2026", "perfil": "Administrador"},
-    {"email": "supervisor@pm.gov.br", "senha": "Super@2026", "perfil": "Supervisor"},
-    {"email": "operador@pm.gov.br",   "senha": "Oper@2026",  "perfil": "Operador"},
-    {"email": "analista@pm.gov.br",   "senha": "Anal@2026",  "perfil": "Analista"},
-    {"email": "auditoria@mp.gov.br",  "senha": "Audi@2026",  "perfil": "Auditor"},
-]
-
 
 class EstaticosRevalidados(StaticFiles):
     """Arquivos estáticos que o navegador sempre reconfirma antes de usar.
@@ -73,23 +60,6 @@ async def favicon():
     return FileResponse(FRONTEND / "static" / "favicon.svg")
 
 
-async def _credenciais_existentes(db: AsyncSession) -> list[dict]:
-    """Só as contas de demonstração que ainda existem e estão ativas."""
-    emails = {c["email"] for c in CREDENCIAIS_DEMO}
-    vivos = set(
-        (
-            await db.execute(
-                select(Usuario.email).where(
-                    Usuario.email.in_(emails), Usuario.ativo.is_(True)
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return [c for c in CREDENCIAIS_DEMO if c["email"] in vivos]
-
-
 @router.get("/api/info", summary="Modo de operação e estatísticas públicas")
 async def info(db: AsyncSession = Depends(get_db)):
     """Consumido pela tela de login e pela aba de configurações.
@@ -110,14 +80,15 @@ async def info(db: AsyncSession = Depends(get_db)):
     )).scalar_one())
 
     demo = settings.ENV == "development" and settings.SIMULADOR
-    credenciais = await _credenciais_existentes(db) if demo else None
 
+    # As senhas de demonstração não saem por aqui: esta rota é pública, e
+    # devolvê-las seria entregar credenciais válidas a quem não se autenticou.
+    # Quem sobe o sistema as encontra na saída de `run.py`.
     return {
         "sistema": settings.APP_NAME,
         "versao": settings.APP_VERSION,
         "modo": settings.modo,
         "demo": demo,
-        "credenciais_demo": credenciais,
         "simulador": settings.SIMULADOR,
         "simulador_gerados": simulador.simulador.gerados,
         "busca_vetorial": "pgvector (HNSW)" if dialeto_suporta_vetor(db) else "numpy (força bruta)",

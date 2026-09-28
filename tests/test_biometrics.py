@@ -80,7 +80,7 @@ def test_politica_de_senha_rejeita_fraca(fraca):
 
 
 def test_politica_de_senha_aceita_forte():
-    assert validar_senha("Vigia@Central2026")
+    assert validar_senha("Seguranca@Central2026")
 
 
 # ----------------------------------------------------------------------

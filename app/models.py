@@ -1,4 +1,4 @@
-"""Modelos ORM do VIGIA (SQLAlchemy 2.0, async).
+"""Modelos ORM do SEGURANÇA (SQLAlchemy 2.0, async).
 
 Pontos de projeto que importam:
 

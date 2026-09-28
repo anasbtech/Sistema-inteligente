@@ -20,7 +20,7 @@ log = logging.getLogger("seguranca.vision")
 
 _yolo = None
 
-# COCO -> classes operacionais do seguranca
+# COCO -> classes operacionais do SEGURANÇA
 MAPA_CLASSES: Dict[str, str] = {
     "person": "pessoa",
     # Carro, caminhão e ônibus entram como uma classe só. O COCO não tem

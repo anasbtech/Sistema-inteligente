@@ -1,5 +1,5 @@
 ﻿-- ============================================================
--- seguranca — extras do PostgreSQL (opcional)
+-- SEGURANÇA — extras do PostgreSQL (opcional)
 --
 -- O sistema roda sem este arquivo, em SQLite. Aplique-o quando migrar
 -- para PostgreSQL, DEPOIS de `python run.py` ter criado as tabelas:

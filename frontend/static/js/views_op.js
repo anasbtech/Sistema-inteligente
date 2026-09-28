@@ -1,5 +1,5 @@
 /* ==========================================================
-   VIGIA — Telas operacionais: painel, mosaico ao vivo e câmeras
+   SEGURANÇA — Telas operacionais: painel, mosaico ao vivo e câmeras
    ========================================================== */
 'use strict';
 

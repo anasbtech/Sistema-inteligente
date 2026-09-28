@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from sqlalchemy import event
@@ -16,6 +17,11 @@ from app.config import settings
 # Engine
 # ----------------------------------------------------------------------
 if settings.usa_sqlite:
+    # `data/` não vem no repositório (está no .gitignore), e o SQLite não cria
+    # o diretório do arquivo — sem isto, um clone novo falha ao abrir o banco.
+    if ":memory:" not in settings.DATABASE_URL:
+        Path(settings.DATABASE_URL.split("///")[-1]).parent.mkdir(parents=True, exist_ok=True)
+
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=settings.DEBUG,
@@ -75,7 +81,7 @@ async def db_context() -> AsyncGenerator[AsyncSession, None]:
 class MemoriaVolatil:
     """Substituto de Redis para rodar em um processo só.
 
-    Implementa apenas o que o VIGIA usa. Ao configurar REDIS_URL, a classe
+    Implementa apenas o que o SEGURANÇA usa. Ao configurar REDIS_URL, a classe
     some do caminho e o cliente real entra no lugar — a interface é a mesma.
     """
 

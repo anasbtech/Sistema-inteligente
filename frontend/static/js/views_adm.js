@@ -1,5 +1,5 @@
 /* ==========================================================
-   VIGIA — Alertas, usuários, auditoria e configurações
+   SEGURANÇA — Alertas, usuários, auditoria e configurações
    ========================================================== */
 'use strict';
 
@@ -437,7 +437,7 @@ async function renderConfiguracoes(alvo){
         <span class="sp"></span><span class="chip ${saude.saudavel?'c-green':'c-red'}">${saude.saudavel?'Saudável':'Degradado'}</span></div>
       <div class="panel-bd">
         <dl class="kv">
-          <dt>Versão</dt><dd class="mono">VIGIA ${esc(info.versao||'')}</dd>
+          <dt>Versão</dt><dd class="mono">SEGURANÇA ${esc(info.versao||'')}</dd>
           <dt>Modo</dt><dd class="mono">${esc(info.modo||'')}</dd>
           <dt>Banco</dt><dd class="mono">${esc(saude.componentes.banco)}</dd>
           <dt>Barramento</dt><dd class="mono">${esc(saude.componentes.eventos||'—')}</dd>

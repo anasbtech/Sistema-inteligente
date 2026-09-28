@@ -166,7 +166,7 @@ async def principal(codigos: List[str] | None, token: str, intervalo: int,
 
 
 def cli() -> None:
-    p = argparse.ArgumentParser(description="Worker de inferência do seguranca")
+    p = argparse.ArgumentParser(description="Worker de inferência do SEGURANÇA")
     grupo = p.add_mutually_exclusive_group(required=True)
     grupo.add_argument("--camera", action="append", help="Código da câmera (repetível)")
     grupo.add_argument("--todas", action="store_true", help="Todas as câmeras on-line")

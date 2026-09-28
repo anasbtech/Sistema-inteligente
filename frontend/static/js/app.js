@@ -1,5 +1,5 @@
 ﻿/* ==========================================================
-   seguranca — Shell da aplicação
+   SEGURANÇA — Shell da aplicação
    Autenticação, recuperação de senha, navegação e barra de status.
    ========================================================== */
 'use strict';
@@ -28,13 +28,6 @@ function authAlert(alvo, tipo, msg){
   el.innerHTML = `<div class="alert alert-${tipo}">${ico(icone,15)}<div>${msg}</div></div>`;
 }
 
-$$('[data-pwtoggle]').forEach(b => b.onclick = () => {
-  const i = $('#' + b.dataset.pwtoggle);
-  const visivel = i.type === 'text';
-  i.type = visivel ? 'password' : 'text';
-  b.innerHTML = `<svg width="17" height="17"><use href="#i-${visivel ? 'eye' : 'eye-off'}"/></svg>`;
-});
-
 async function fazerLogin(){
   const u = $('#loginUser').value.trim();
   const p = $('#loginPass').value;
@@ -46,7 +39,8 @@ async function fazerLogin(){
   authAlert('#loginAlert', '', '');
 
   try{
-    const usuario = await API.login(u, p, $('#loginRemember').checked);
+    // Sem "manter conectado": a sessão vive só na aba (sessionStorage).
+    const usuario = await API.login(u, p, false);
     await entrarNoSistema(usuario);
   }catch(e){
     if(e.status === 428){
@@ -245,62 +239,12 @@ $('#btnRecVerify').onclick = verificarCodigo;
 $('#btnRecSave').onclick = salvarSenha;
 $('#recPass').addEventListener('input', atualizarMedidor);
 $('#recPass2').addEventListener('keydown', e => { if(e.key === 'Enter') salvarSenha(); });
-$$('[data-fill]').forEach(b => b.onclick = () => {
-  const [u, p] = b.dataset.fill.split('|');
-  $('#loginUser').value = u; $('#loginPass').value = p;
-  authAlert('#loginAlert', '', '');
-  $('#btnLogin').focus();
-});
-
-/* ---------- Fundo animado do login ---------- */
+/* ---------- Fundo animado do login ----------
+   Um <canvas> aceita um único tipo de contexto: com o 2D tomado aqui, o
+   WebGL do Three.js voltaria null. O desenho fica em three-auth.js. */
 const AUTHFX = {
-  raf: null, t: 0,
-  iniciar(){
-    const c = $('#authCanvas'); if(!c) return;
-    const ctx = c.getContext('2d');
-    const desenhar = () => {
-      const r = c.getBoundingClientRect();
-      if(!r.width){ AUTHFX.raf = requestAnimationFrame(desenhar); return; }
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      if(c.width !== Math.round(r.width*dpr)){ c.width = r.width*dpr; c.height = r.height*dpr; }
-      const W = c.width, H = c.height;
-      AUTHFX.t += .006;
-      ctx.fillStyle = '#05080C'; ctx.fillRect(0, 0, W, H);
-      const g = ctx.createRadialGradient(W*.72, H*.3, 0, W*.72, H*.3, W*.85);
-      g.addColorStop(0, 'rgba(22,80,111,.30)'); g.addColorStop(1, 'rgba(5,8,12,0)');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = 'rgba(53,167,222,.055)'; ctx.lineWidth = 1;
-      const passo = Math.max(34, W/28);
-      for(let x = 0; x < W; x += passo){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-      for(let y = 0; y < H; y += passo){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-      const cx = W*.72, cy = H*.34, R = Math.min(W,H)*.46;
-      ctx.save(); ctx.translate(cx, cy);
-      ctx.strokeStyle = 'rgba(53,167,222,.12)';
-      [.35,.62,.86,1].forEach(k => { ctx.beginPath(); ctx.arc(0,0,R*k,0,6.3); ctx.stroke(); });
-      ctx.rotate(AUTHFX.t * 1.5);
-      if(ctx.createConicGradient){
-        const sw = ctx.createConicGradient(0, 0, 0);
-        sw.addColorStop(0, 'rgba(53,167,222,.26)');
-        sw.addColorStop(.12, 'rgba(53,167,222,0)');
-        sw.addColorStop(1, 'rgba(53,167,222,0)');
-        ctx.fillStyle = sw; ctx.beginPath(); ctx.arc(0,0,R,0,6.3); ctx.fill();
-      }
-      ctx.strokeStyle = 'rgba(95,196,240,.5)'; ctx.lineWidth = 1.4;
-      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(R,0); ctx.stroke();
-      ctx.restore();
-      const rr = mulberry(7);
-      for(let i = 0; i < 9; i++){
-        const a = rr()*6.3, d = .2 + rr()*.78;
-        const x = cx + Math.cos(a)*R*d, y = cy + Math.sin(a)*R*d;
-        const fase = (Math.sin(AUTHFX.t*1.5 - a) + 1) / 2;
-        ctx.fillStyle = `rgba(240,160,42,${.12 + fase*.55})`;
-        ctx.beginPath(); ctx.arc(x, y, 2.2*dpr, 0, 6.3); ctx.fill();
-      }
-      AUTHFX.raf = requestAnimationFrame(desenhar);
-    };
-    cancelAnimationFrame(AUTHFX.raf); desenhar();
-  },
-  parar(){ cancelAnimationFrame(AUTHFX.raf); }
+  iniciar(){ window.AuthFX3D && window.AuthFX3D.iniciar(); },
+  parar(){ window.AuthFX3D && window.AuthFX3D.parar(); }
 };
 
 /* ==========================================================
@@ -554,29 +498,5 @@ document.addEventListener('visibilitychange', () => {
 
   mostrarLogin();
   setTimeout(() => $('#loginUser').focus(), 300);
-
-  // Preenche as credenciais de demonstração só quando o servidor as expõe.
-  try{
-    const info = await fetch('/api/info').then(r => r.json());
-    const caixa = $('#demoBox');
-    if(info.demo && info.credenciais_demo && caixa){
-      caixa.hidden = false;
-      caixa.querySelector('.demo-lista').innerHTML = info.credenciais_demo.map(c =>
-        `<div class="demo-cred"><span><b>${esc(c.email)}</b> · ${esc(c.senha)}</span>
-         <button data-fill="${esc(c.email)}|${esc(c.senha)}">usar</button></div>`).join('');
-      $$('[data-fill]', caixa).forEach(b => b.onclick = () => {
-        const [u, p] = b.dataset.fill.split('|');
-        $('#loginUser').value = u; $('#loginPass').value = p;
-        authAlert('#loginAlert', '', '');
-        $('#btnLogin').focus();
-      });
-    }
-    if(info.estatisticas){
-      const e = info.estatisticas;
-      $('#statCams').textContent = fmtNum(e.cameras || 0);
-      $('#statFaces').textContent = fmtNum(e.pessoas || 0);
-      $('#statUptime').textContent = e.disponibilidade || '—';
-    }
-  }catch(e){ /* a tela de login funciona sem isso */ }
 })();
 
