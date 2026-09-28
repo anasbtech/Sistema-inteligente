@@ -3,6 +3,13 @@
    ========================================================== */
 'use strict';
 
+/* A URL RTSP carrega a senha da câmera. Quem cadastra não precisa mais
+   conhecê-la — o servidor a monta a partir do IP —, então a ficha não tem
+   por que entregá-la a todo perfil que possa abrir uma câmera. */
+function semSenha(url){
+  return String(url || '').replace(/(rtsp:\/\/[^:@/]*):[^@/]*@/i, '$1:••••@');
+}
+
 /* ==========================================================
    PAINEL
    ========================================================== */
@@ -595,11 +602,9 @@ async function editarCamera(codigo){
 
       <div class="eyebrow" style="margin:17px 0 8px">Conexão</div>
       <div class="form-grid">
-        <div class="field full"><label for="cRtsp">Endereço RTSP</label>
-          <input class="inp mono" id="cRtsp" value="${esc(v('rtsp_url',''))}" placeholder="rtsp://usuario:senha@192.168.0.10:554/caminho">
-          <span class="hint">Caracteres especiais da senha precisam vir <b>percent-encoded</b> (<code>@</code> como <code>%40</code>, <code>?</code> como <code>%3F</code>).</span></div>
         <div class="field"><label for="cIp">Endereço IP</label>
-          <input class="inp mono" id="cIp" value="${esc(v('ip',''))}" placeholder="192.168.0.10"></div>
+          <input class="inp mono" id="cIp" value="${esc(v('ip',''))}" placeholder="192.168.3.27">
+          <span class="hint">O servidor monta o endereço RTSP a partir dele.</span></div>
         <div class="field"><label for="cOnvif">ONVIF (opcional)</label>
           <input class="inp mono" id="cOnvif" value="${esc(v('onvif_url',''))}" placeholder="http://192.168.0.10:80/onvif/device_service">
           <span class="hint">Necessário só para comando PTZ.</span></div>
@@ -694,7 +699,6 @@ async function editarCamera(codigo){
       cena: $('#cCena').value,
       status: $('#cStatus').value,
       ip: texto('#cIp'),
-      rtsp_url: texto('#cRtsp'),
       onvif_url: texto('#cOnvif'),
       fabricante: texto('#cFab'),
       modelo: texto('#cMod'),
@@ -714,7 +718,9 @@ async function editarCamera(codigo){
     const erro =
       dados.nome.length < 3       ? ['Nome inválido', 'Informe ao menos 3 caracteres.'] :
       !dados.setor                ? ['Setor obrigatório', 'Informe o setor onde a câmera está.'] :
-      !dados.rtsp_url             ? ['RTSP obrigatório', 'Sem endereço RTSP não há imagem para processar.'] :
+      !dados.ip                   ? ['IP obrigatório', 'Sem o endereço da câmera não há imagem para processar.'] :
+      !/^(\d{1,3}\.){3}\d{1,3}$/.test(dados.ip) ? ['IP inválido', 'Use o formato 192.168.3.27.'] :
+      dados.ip.split('.').some(o => +o > 255) ? ['IP inválido', 'Cada parte vai de 0 a 255.'] :
       !/^\d+x\d+$/.test(dados.resolucao) ? ['Resolução inválida', 'Use o formato 1920x1080.'] :
       (dados.fps < 1 || dados.fps > 120) ? ['FPS fora da faixa', 'Informe entre 1 e 120.'] :
       (dados.limiar_facial < 0.5 || dados.limiar_facial > 1) ? ['Limiar facial fora da faixa', 'Informe entre 50% e 100%.'] :
@@ -817,7 +823,7 @@ async function abrirCamera(codigo){
             <div class="eyebrow" style="margin-bottom:8px">Rede</div>
             <dl class="kv">
               <dt>IP</dt><dd class="mono">${esc(c.ip) || '—'}</dd>
-              <dt>RTSP</dt><dd class="mono" style="font-size:10.5px;word-break:break-all;line-height:1.4">${esc(c.rtsp_url)}</dd>
+              <dt>RTSP</dt><dd class="mono" style="font-size:10.5px;word-break:break-all;line-height:1.4">${esc(semSenha(c.rtsp_url))}</dd>
               <dt>Coordenadas</dt><dd class="mono">${c.latitude != null ? c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) : '—'}</dd>
             </dl>
           </div>

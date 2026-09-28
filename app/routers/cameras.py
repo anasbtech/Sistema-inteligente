@@ -4,12 +4,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
+from app.config import settings
 from app.database import get_db
 from app.deps import exige
 from app.models import Camera, StatusCamera, Usuario, Zona
@@ -19,8 +21,34 @@ router = APIRouter(prefix="/cameras", tags=["Câmeras"])
 
 
 async def _proximo_codigo(db: AsyncSession) -> str:
-    total = (await db.execute(select(func.count()).select_from(Camera))).scalar_one()
-    return f"CAM-{total + 1:03d}"
+    # Do maior código emitido, não de COUNT(*): apagar uma câmera faria a
+    # contagem cair e o cadastro seguinte reemitir um código que já existe.
+    codigos = (
+        await db.execute(select(Camera.codigo).where(Camera.codigo.like("CAM-%")))
+    ).scalars().all()
+    maior = 0
+    for c in codigos:
+        try:
+            maior = max(maior, int(c.rsplit("-", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"CAM-{maior + 1:03d}"
+
+
+def rtsp_do_ip(ip: str) -> str:
+    """Monta a URL RTSP a partir do IP, com o padrão do parque.
+
+    O percent-encoding da credencial é feito aqui. A senha das câmeras tem
+    `@` e `?`, que quebram a URL se entrarem crus — exigir que quem cadastra
+    saiba disso é um erro esperando para acontecer.
+    """
+    usuario = quote(settings.CAMERA_USUARIO, safe="")
+    senha = quote(settings.CAMERA_SENHA, safe="")
+    credencial = f"{usuario}:{senha}@" if usuario or senha else ""
+    caminho = settings.CAMERA_RTSP_CAMINHO
+    if caminho and not caminho.startswith("/"):
+        caminho = "/" + caminho
+    return f"rtsp://{credencial}{ip}:{settings.CAMERA_RTSP_PORTA}{caminho}"
 
 
 async def _obter(db: AsyncSession, codigo: str) -> Camera:
@@ -92,6 +120,14 @@ async def criar(dados: CameraCreate, request: Request, db: AsyncSession = Depend
         raise HTTPException(status.HTTP_409_CONFLICT, f"Já existe câmera com o código '{codigo}'.")
 
     campos = dados.model_dump(exclude={"codigo", "zonas"})
+    if not campos.get("rtsp_url") and campos.get("ip"):
+        campos["rtsp_url"] = rtsp_do_ip(campos["ip"])
+    if not campos.get("rtsp_url"):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Informe o endereço IP da câmera — sem ele não há stream para processar.",
+        )
+
     cam = Camera(codigo=codigo, **campos)
     _aplicar_zonas(cam, dados.zonas)
     db.add(cam)
@@ -113,6 +149,11 @@ async def atualizar(codigo: str, dados: CameraUpdate, request: Request,
     cam = await _obter(db, codigo)
     campos = dados.model_dump(exclude_unset=True)
     zonas = campos.pop("zonas", None)
+
+    # Trocar o IP reaponta o stream: a URL derivada acompanha, a menos que
+    # uma URL própria tenha sido informada na mesma edição.
+    if campos.get("ip") and not campos.get("rtsp_url"):
+        campos["rtsp_url"] = rtsp_do_ip(campos["ip"])
 
     limiar_antigo = cam.limiar_facial
     for campo, valor in campos.items():

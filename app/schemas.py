@@ -163,7 +163,9 @@ class CameraBase(BaseModel):
     cena: str = "rua"
     status: StatusCamera = StatusCamera.ONLINE
     ip: str = ""
-    rtsp_url: str
+    # Em branco, o servidor deriva do IP com o padrão do parque. Preencher
+    # continua valendo para uma câmera que fuja do padrão.
+    rtsp_url: str = ""
     onvif_url: str = ""
     fabricante: str = ""
     modelo: str = ""

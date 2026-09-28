@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     SIMULADOR: bool = False
     SIMULADOR_INTERVALO: float = 2.5
 
+    # --- Parque de câmeras -----------------------------------------------
+    # O parque é homogêneo (Intelbras/Dahua, mesma credencial), então a URL
+    # RTSP é derivada do IP no cadastro: quem cadastra informa o endereço da
+    # câmera, não uma URL com senha dentro. A senha fica aqui, fora do banco
+    # e fora do git — no banco ela apareceria em texto claro na listagem de
+    # câmeras, ao alcance de qualquer perfil que possa ver o cadastro.
+    CAMERA_USUARIO: str = "admin"
+    CAMERA_SENHA: str = ""
+    CAMERA_RTSP_PORTA: int = 554
+    CAMERA_RTSP_CAMINHO: str = "/cam/realmonitor?channel=1&subtype=0"
+
     # --- Segurança -------------------------------------------------------
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(48))
     ACCESS_TOKEN_MINUTES: int = 60
