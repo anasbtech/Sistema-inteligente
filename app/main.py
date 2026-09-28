@@ -21,6 +21,7 @@ from app.config import settings
 from app.database import MemoriaVolatil, close_connections, engine, get_redis
 from app.routers import alertas, auditoria, auth, cameras, deteccoes, pessoas, stream, usuarios
 from app.services.events import gerenciador
+from app.services.inferencia import inferencia
 from app.services.simulador import simulador
 
 logging.basicConfig(
@@ -41,7 +42,13 @@ async def ciclo_de_vida(app: FastAPI):
     await get_redis().ping()
 
     await gerenciador.iniciar_escuta()
-    if settings.SIMULADOR:
+    # Um exclui o outro: detecção sorteada misturada à real deixa o registro
+    # sem como distinguir o que a câmera viu do que foi inventado.
+    if settings.INFERENCIA:
+        if settings.SIMULADOR:
+            log.warning("SIMULADOR ignorado: INFERENCIA está ligada.")
+        await inferencia.iniciar()
+    elif settings.SIMULADOR:
         await simulador.iniciar()
 
     log.info("Interface em http://%s:%s", settings.HOST, settings.PORT)
@@ -50,6 +57,7 @@ async def ciclo_de_vida(app: FastAPI):
 
     log.info("Encerrando…")
     await simulador.parar()
+    await inferencia.parar()
     await gerenciador.parar()
     await close_connections()
 
@@ -145,6 +153,7 @@ async def saude():
             "componentes": estado,
             "websockets_ativos": len(gerenciador.ativos),
             "simulador_gerados": simulador.gerados,
+            "inferencia_gerados": inferencia.gerados,
         },
     )
 

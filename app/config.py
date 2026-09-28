@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     SIMULADOR: bool = False
     SIMULADOR_INTERVALO: float = 2.5
 
+    # --- Inferência sobre o vídeo real -----------------------------------
+    # Roda os modelos nas câmeras on-line e registra o que eles veem. É o
+    # oposto do simulador: nada é sorteado, e sem objeto em cena não há
+    # registro. Os dois juntos não fazem sentido — um contamina o outro.
+    INFERENCIA: bool = False
+    INFERENCIA_INTERVALO: float = 3.0
+    # Mesma trilha só volta ao registro depois disso. Um carro estacionado
+    # geraria uma detecção por ciclo, e o registro viraria mil linhas dele.
+    INFERENCIA_JANELA_S: float = 45.0
+
     # --- Parque de câmeras -----------------------------------------------
     # O parque é homogêneo (Intelbras/Dahua, mesma credencial), então a URL
     # RTSP é derivada do IP no cadastro: quem cadastra informa o endereço da
@@ -128,7 +138,10 @@ class Settings(BaseSettings):
     # Medido em CPU num quadro 1080p real: o nano leva 3,2s e o large 5,1s,
     # achando os mesmos objetos. Com GPU, troque por yolov8l.pt — aí o modelo
     # maior sai quase de graça e ganha nos objetos pequenos e distantes.
-    OBJECT_MODEL: str = "yolov8n.pt"
+    # Caminho a partir da raiz: os pesos moram em models/. Como nome solto, o
+    # Ultralytics procura no diretório de trabalho, não encontra e baixa de
+    # novo — passando a carregar uma cópia na raiz em vez do peso versionado.
+    OBJECT_MODEL: str = str(RAIZ / "models" / "yolov8n.pt")
     OBJECT_THRESHOLD: float = 0.65
     DEVICE: str = "cpu"
 

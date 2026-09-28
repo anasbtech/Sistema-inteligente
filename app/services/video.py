@@ -228,6 +228,54 @@ def obter(codigo: str, url: str) -> Leitor:
         return leitor
 
 
+def quadro_bgr(codigo: str, url: str):
+    """Quadro corrente da câmera como matriz BGR, para alimentar os modelos.
+
+    ``None`` enquanto a câmera não entregou nada — a negociação do RTSP leva
+    segundos, e quem chama deve simplesmente tentar de novo no ciclo seguinte.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+
+    try:
+        leitor = obter(codigo, url)
+    except LeitorIndisponivel:
+        return None
+
+    jpeg = leitor.quadro_detalhe if leitor.detalhe_ativo else leitor.quadro
+    if not jpeg:
+        return None
+    try:
+        return cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def recortar_bgr(quadro, bbox_px, margem: float = 0.25) -> Optional[bytes]:
+    """Recorta a região da caixa (em pixels) e devolve JPEG."""
+    try:
+        import cv2
+    except ImportError:
+        return None
+    try:
+        alt, larg = quadro.shape[:2]
+        x1, y1, x2, y2 = (int(v) for v in bbox_px)
+        mx, my = int((x2 - x1) * margem), int((y2 - y1) * margem)
+        x1, y1 = max(0, x1 - mx), max(0, y1 - my)
+        x2, y2 = min(larg, x2 + mx), min(alt, y2 + my)
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            return None
+        ok, buf = cv2.imencode(
+            ".jpg", quadro[y1:y2, x1:x2], [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+        )
+        return buf.tobytes() if ok else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def recorte(codigo: str, url: str, bbox: Optional[list], margem: float = 0.35) -> Optional[bytes]:
     """Recorte do quadro corrente da câmera, na região da caixa.
 
