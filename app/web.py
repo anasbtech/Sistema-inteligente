@@ -22,6 +22,9 @@ router = APIRouter(tags=["Interface"])
 
 # Contas criadas pelo seed. Só aparecem em modo de demonstração — nunca em
 # produção, onde `SIMULADOR=false` e `ENV=production`.
+# A lista é filtrada pelo que existe no banco antes de ir para a tela: quem
+# apaga uma conta não deveria continuar vendo a senha dela oferecida no login,
+# num botão que preenche e falha.
 CREDENCIAIS_DEMO = [
     {"email": "admin@pa.com.br",      "senha": "Admin@2026", "perfil": "Administrador"},
     {"email": "supervisor@pm.gov.br", "senha": "Super@2026", "perfil": "Supervisor"},
@@ -31,19 +34,60 @@ CREDENCIAIS_DEMO = [
 ]
 
 
+class EstaticosRevalidados(StaticFiles):
+    """Arquivos estáticos que o navegador sempre reconfirma antes de usar.
+
+    Sem `Cache-Control`, o navegador aplica cache heurístico: ele mesmo arbitra
+    um prazo — em geral uma fração do tempo desde o `Last-Modified` — e nesse
+    prazo nem pergunta se mudou. Depois de uma alteração no JS, a interface
+    continuava rodando o código antigo por horas, e nem recarregar resolvia.
+
+    `no-cache` não proíbe guardar; obriga a revalidar. Com o ETag que o
+    StaticFiles já emite, a resposta vira um 304 de alguns bytes quando nada
+    mudou — o custo é uma ida ao servidor por arquivo, e a garantia é que a
+    tela nunca roda uma versão que não é a do disco.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resposta = super().file_response(*args, **kwargs)
+        resposta.headers["Cache-Control"] = "no-cache"
+        return resposta
+
+
 def montar_estaticos(app) -> None:
     (FRONTEND / "static").mkdir(parents=True, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=FRONTEND / "static"), name="static")
+    app.mount("/static", EstaticosRevalidados(directory=FRONTEND / "static"), name="static")
 
 
 @router.get("/", include_in_schema=False)
 async def index():
-    return FileResponse(FRONTEND / "templates" / "index.html")
+    # A página carrega os scripts por caminho fixo, então é ela que ancora a
+    # versão de tudo: guardada, nem os `no-cache` dos estáticos são
+    # consultados, porque a requisição não chega a acontecer.
+    return FileResponse(FRONTEND / "templates" / "index.html",
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return FileResponse(FRONTEND / "static" / "favicon.svg")
+
+
+async def _credenciais_existentes(db: AsyncSession) -> list[dict]:
+    """Só as contas de demonstração que ainda existem e estão ativas."""
+    emails = {c["email"] for c in CREDENCIAIS_DEMO}
+    vivos = set(
+        (
+            await db.execute(
+                select(Usuario.email).where(
+                    Usuario.email.in_(emails), Usuario.ativo.is_(True)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [c for c in CREDENCIAIS_DEMO if c["email"] in vivos]
 
 
 @router.get("/api/info", summary="Modo de operação e estatísticas públicas")
@@ -66,13 +110,14 @@ async def info(db: AsyncSession = Depends(get_db)):
     )).scalar_one())
 
     demo = settings.ENV == "development" and settings.SIMULADOR
+    credenciais = await _credenciais_existentes(db) if demo else None
 
     return {
         "sistema": settings.APP_NAME,
         "versao": settings.APP_VERSION,
         "modo": settings.modo,
         "demo": demo,
-        "credenciais_demo": CREDENCIAIS_DEMO if demo else None,
+        "credenciais_demo": credenciais,
         "simulador": settings.SIMULADOR,
         "simulador_gerados": simulador.simulador.gerados,
         "busca_vetorial": "pgvector (HNSW)" if dialeto_suporta_vetor(db) else "numpy (força bruta)",

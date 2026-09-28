@@ -1,20 +1,27 @@
-__pycache__/
+﻿__pycache__/
 *.py[cod]
 .env
 .venv/
 venv/
-*.pt
-*.onnx
 .pytest_cache/
 .ruff_cache/
 .secret_key
-evidencias/
-*.pt.bak
-vigia.db
-vigia.db-wal
-vigia.db-shm
-vigia.db.bak-*
-# Token de serviço do worker e logs — os logs trazem a URL RTSP inteira,
-# com a senha da câmera, quando a conexão cai.
 .worker_token
+evidencias/
+
+# Dados
+data/
+data/*.db*
+data/*.bak*
+
+# Modelos de ML
+models/
+models/*.pt
+models/*.onnx
+models/*.pt.bak
+
+# Logs — trazem a URL RTSP inteira com a senha da câmera
+logs/
+logs/*.log
 *.log
+

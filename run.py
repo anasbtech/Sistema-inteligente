@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """VIGIA — ponto de entrada único.
 
     python run.py
@@ -57,8 +57,8 @@ def checar_dependencias() -> None:
 
     if faltando:
         print(f"\n{AMARELO}Faltam dependências:{FIM} {', '.join(faltando)}\n")
-        print(f"  {NEGRITO}pip install -r requirements-min.txt{FIM}\n")
-        print(f"{CINZA}  (requirements.txt traz também os modelos de visão, que são opcionais){FIM}\n")
+        print(f"  {NEGRITO}pip install -r config/requirements-min.txt{FIM}\n")
+        print(f"{CINZA}  (config/requirements.txt traz também os modelos de visão, que são opcionais){FIM}\n")
         sys.exit(1)
 
 
@@ -89,7 +89,7 @@ async def preparar_banco(reset: bool) -> bool:
         ja_tem = int((await db.execute(select(func.count()).select_from(Usuario))).scalar_one())
 
     if ja_tem:
-        print(f"  {VERDE}✓{FIM} Banco já populado ({ja_tem} usuários)")
+        print(f"  {VERDE}✓{FIM} Banco já populado ({ja_tem} usuário(s))")
         return False
 
     print(f"  {AZUL}…{FIM} Populando dados de demonstração", end="", flush=True)
@@ -97,6 +97,39 @@ async def preparar_banco(reset: bool) -> bool:
     await semear(silencioso=True)
     print(f"\r  {VERDE}✓{FIM} Dados de demonstração criados          ")
     return True
+
+
+DEMONSTRACAO = [
+    ("admin@pa.com.br", "Admin@2026", "Administrador"),
+    ("supervisor@pm.gov.br", "Super@2026", "Supervisor"),
+    ("operador@pm.gov.br", "Oper@2026", "Operador"),
+    ("analista@pm.gov.br", "Anal@2026", "Analista"),
+    ("auditoria@mp.gov.br", "Audi@2026", "Auditor"),
+]
+
+
+async def _contas_de_demonstracao() -> list[tuple[str, str, str]]:
+    """Das contas de demonstração, as que de fato existem e estão ativas."""
+    from sqlalchemy import select
+
+    from app.database import db_context, engine
+    from app.models import Usuario
+
+    async with db_context() as db:
+        vivos = set(
+            (
+                await db.execute(
+                    select(Usuario.email).where(
+                        Usuario.email.in_([e for e, _, _ in DEMONSTRACAO]),
+                        Usuario.ativo.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    await engine.dispose()
+    return [c for c in DEMONSTRACAO if c[0] in vivos]
 
 
 def abrir_navegador(url: str, atraso: float = 2.0) -> None:
@@ -160,14 +193,14 @@ def main() -> None:
     print(f"  API (docs)    {CINZA}{url}/docs{FIM}")
     print()
     if semeou or settings.ENV == "development":
-        print(f"  {NEGRITO}Credenciais de demonstração{FIM}")
-        for email, senha, perfil in [
-            ("admin@pa.com.br", "Admin@2026", "Administrador"),
-            ("operador@pm.gov.br", "Oper@2026", "Operador"),
-            ("analista@pm.gov.br", "Anal@2026", "Analista"),
-        ]:
-            print(f"    {email:<26} {VERDE}{senha:<12}{FIM} {CINZA}{perfil}{FIM}")
-        print()
+        # Filtrado pelo que existe: uma conta apagada não deve seguir aparecendo
+        # aqui com a senha ao lado, num convite que falha no login.
+        existentes = asyncio.run(_contas_de_demonstracao())
+        if existentes:
+            print(f"  {NEGRITO}Credenciais de demonstração{FIM}")
+            for email, senha, perfil in existentes:
+                print(f"    {email:<26} {VERDE}{senha:<12}{FIM} {CINZA}{perfil}{FIM}")
+            print()
     if settings.SIMULADOR:
         print(f"  {CINZA}O simulador gera detecções continuamente. Desligue com --sem-simulador.{FIM}")
     print(f"  {CINZA}Ctrl+C para encerrar.{FIM}")
@@ -192,3 +225,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(f"\n{CINZA}  Encerrado.{FIM}\n")
+

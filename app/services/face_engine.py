@@ -1,4 +1,4 @@
-"""Motor facial: detecção, embedding 512-D e busca 1:N.
+﻿"""Motor facial: detecção, embedding 512-D e busca 1:N.
 
 O que este módulo faz e o que deliberadamente NÃO faz
 ------------------------------------------------------
@@ -31,7 +31,7 @@ from app.config import settings
 from app.models import AmostraFacial, Pessoa
 from app.tipos import dialeto_suporta_vetor
 
-log = logging.getLogger("vigia.face")
+log = logging.getLogger("seguranca.face")
 
 _app = None
 
@@ -298,3 +298,4 @@ async def recalcular_template(db: AsyncSession, pessoa: Pessoa) -> None:
     pessoa.embedding = media_embeddings([a.embedding for a in amostras]).tolist()
     pessoa.qualidade = round(float(np.mean([a.qualidade for a in amostras])), 4)
     pessoa.amostras = len(amostras)
+

@@ -1,4 +1,4 @@
-"""Controle PTZ via ONVIF.
+﻿"""Controle PTZ via ONVIF.
 
 Usa a biblioteca `onvif-zeep-async`. As credenciais da câmera devem vir de um
 cofre (Vault, AWS Secrets Manager) — nunca do banco em claro. Aqui lemos de
@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from app.models import Camera
 
-log = logging.getLogger("vigia.ptz")
+log = logging.getLogger("seguranca.ptz")
 
 VETORES = {
     "left":     (-1.0, 0.0),
@@ -92,3 +92,4 @@ async def executar_ptz(cam: Camera, comando: str, velocidade: float = 0.5,
     except Exception as exc:  # noqa: BLE001
         log.error("PTZ %s em %s falhou: %s", comando, cam.codigo, exc)
         raise RuntimeError(f"Não foi possível comandar a câmera {cam.codigo}: {exc}") from exc
+

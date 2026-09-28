@@ -1,4 +1,4 @@
-"""Simulador de câmeras.
+﻿"""Simulador de câmeras.
 
 Gera detecções plausíveis sem nenhuma câmera ligada, usando **a mesma função
 de ingestão** que o worker de inferência real chama. Isso importa: o caminho
@@ -28,7 +28,7 @@ from app.database import db_context
 from app.models import Camera, Pessoa, StatusCamera, StatusPessoa, TipoDeteccao
 from app.schemas import DeteccaoIn
 
-log = logging.getLogger("vigia.simulador")
+log = logging.getLogger("seguranca.simulador")
 
 rng = random.Random()
 nprng = np.random.default_rng()
@@ -264,3 +264,4 @@ async def popular_historico(horas: int = 26, quantidade: int = 700) -> int:
 
         await db.commit()
     return criados
+

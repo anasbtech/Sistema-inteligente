@@ -279,3 +279,55 @@ def test_interface_e_info_sao_publicas(cliente):
     r = anon.get("/api/info")
     assert r.status_code == 200
     assert "estatisticas" in r.json()
+
+
+# ----------------------------------------------------------------------
+# Série dos códigos de registro
+# ----------------------------------------------------------------------
+def test_codigo_nao_e_reemitido_depois_de_apagar(cliente, camera):
+    """O caso real: apagar um registro travava toda a ingestão.
+
+    O código saía de ``COUNT(*) + 1``, que presume que registro nunca é
+    apagado. Apagados cinco, a contagem ficou abaixo do maior código já
+    emitido e cada ingestão passou a tentar um código existente: o UNIQUE
+    recusava, a contagem não subia, e a tentativa seguinte repetia o mesmo
+    código. A ingestão parou de vez — com o worker detectando normalmente e
+    todo registro sendo descartado com 500.
+    """
+    def ingerir() -> str:
+        r = cliente.post("/deteccoes/ingest", json={
+            "tipo": "OBJETO", "camera_codigo": camera,
+            "ocorrido_em": datetime.now(timezone.utc).isoformat(),
+            "classe": "carro", "confianca": 0.8, "bbox": [0.1, 0.1, 0.2, 0.2],
+        })
+        assert r.status_code == 201, r.text
+        return r.json()["codigo"]
+
+    primeiro, segundo = ingerir(), ingerir()
+    assert primeiro != segundo
+
+    for codigo in (segundo, primeiro):
+        r = cliente.delete(f"/deteccoes/{codigo}", params={"motivo": "teste de regressão"})
+        assert r.status_code == 204, r.text
+
+    # Sem contador, estes dois voltariam aos códigos apagados e o 201 daria 500.
+    terceiro, quarto = ingerir(), ingerir()
+    assert terceiro not in (primeiro, segundo), "código de registro apagado foi reemitido"
+    assert quarto not in (primeiro, segundo, terceiro)
+
+
+def test_deteccao_presa_a_alerta_nao_pode_ser_apagada(cliente, camera):
+    """Apagar por baixo de um alerta o deixaria apontando para o vazio: o
+    vínculo é ``ON DELETE SET NULL``, então nem daria erro."""
+    r = cliente.post("/deteccoes/ingest", json={
+        "tipo": "ACAO", "camera_codigo": camera,
+        "ocorrido_em": datetime.now(timezone.utc).isoformat(),
+        "classe": "invasao", "confianca": 0.95, "duracao_s": 4,
+    })
+    assert r.status_code == 201, r.text
+    codigo = r.json()["codigo"]
+    assert r.json()["severidade"] >= 3, "invasão deve gerar alerta"
+
+    negado = cliente.delete(f"/deteccoes/{codigo}", params={"motivo": "tentativa indevida"})
+    assert negado.status_code == 409
+    assert cliente.get(f"/deteccoes/{codigo}").status_code == 200, "o registro continua lá"

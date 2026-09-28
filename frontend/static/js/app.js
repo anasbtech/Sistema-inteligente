@@ -1,5 +1,5 @@
-/* ==========================================================
-   VIGIA — Shell da aplicação
+﻿/* ==========================================================
+   seguranca — Shell da aplicação
    Autenticação, recuperação de senha, navegação e barra de status.
    ========================================================== */
 'use strict';
@@ -338,8 +338,9 @@ async function montarApp(usuario){
   FEED.aoMedirFps = fps => { const e = $('#mFps'); if(e) e.textContent = fps; };
   // O token vai na URL porque <img> não envia cabeçalho. Se a câmera não
   // responder, o onerror do próprio <img> devolve o tile à cena sintética.
-  FEED.fonteAoVivo = cam => cam.status === 'ONLINE'
+  FEED.fonteAoVivo = (cam, opts) => cam.status === 'ONLINE'
     ? `${API.base}/stream/${encodeURIComponent(cam.codigo)}/mjpeg?token=${encodeURIComponent(API.access)}`
+      + ((opts && opts.hd) ? '&hd=1' : '')
     : null;
   FEED.fonteSnapshot = cam => cam.status === 'ONLINE'
     ? `${API.base}/stream/${encodeURIComponent(cam.codigo)}/snapshot?token=${encodeURIComponent(API.access)}`
@@ -470,7 +471,7 @@ EventosAoVivo.ao(msg => {
 });
 const atualizarContadoresDebounced = debounce(atualizarContadores, 2500);
 
-document.addEventListener('vigia:sessao-expirada', () => {
+document.addEventListener('seguranca:sessao-expirada', () => {
   toast('Sessão expirada', 'Autentique-se novamente para continuar.', 'warn', 6000);
   EventosAoVivo.desconectar();
   FEED.stop();
@@ -578,3 +579,4 @@ document.addEventListener('visibilitychange', () => {
     }
   }catch(e){ /* a tela de login funciona sem isso */ }
 })();
+

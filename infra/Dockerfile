@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /srv
 
-COPY requirements.txt requirements-min.txt ./
+COPY config/requirements.txt config/requirements-min.txt ./
 # CPU por padrão; para GPU troque onnxruntime-gpu e instale o torch com CUDA.
 RUN sed -i 's/onnxruntime-gpu/onnxruntime/' requirements.txt \
     && pip install --no-cache-dir -r requirements.txt

@@ -464,10 +464,16 @@ function pintarRecorte(ctx,img,W,H){
   ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
 }
 
-/* Quadro ao vivo cobrindo o tile, sem distorcer: recorta o excedente. */
-function pintarAoVivo(ctx,img,W,H){
-  const esc=Math.max(W/img.naturalWidth,H/img.naturalHeight);
+/* Quadro ao vivo cobrindo o tile, sem distorcer: recorta o excedente.
+
+   Com `conter`, nada é recortado — o quadro inteiro cabe na área. É o que a
+   ficha da câmera precisa: quem vai ajustar enquadramento tem de ver onde o
+   campo de visão termina, e o corte do mosaico escondia justamente as bordas. */
+function pintarAoVivo(ctx,img,W,H,conter){
+  const esc=conter?Math.min(W/img.naturalWidth,H/img.naturalHeight)
+                  :Math.max(W/img.naturalWidth,H/img.naturalHeight);
   const w=img.naturalWidth*esc,h=img.naturalHeight*esc;
+  if(conter){ctx.fillStyle='#000';ctx.fillRect(0,0,W,H)}
   ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
 }
 
@@ -515,7 +521,7 @@ const FEED={
   },
   register(canvas,cam,opts){
     const t={canvas,ctx:canvas.getContext('2d',{alpha:false}),cam,opts:opts||{},img:null};
-    const url=this.fonteAoVivo?this.fonteAoVivo(cam):null;
+    const url=this.fonteAoVivo?this.fonteAoVivo(cam,t.opts):null;
     if(url){
       const img=new Image();
       img.onerror=()=>{t.img=null};   // câmera muda: volta para a cena sintética
@@ -523,6 +529,18 @@ const FEED={
       t.img=img;
     }
     this.tiles.push(t);
+  },
+  /* Tile cujo canvas saiu do documento — modal fechado, lista redesenhada.
+     Sem soltar o `src`, a conexão MJPEG continua aberta e o leitor RTSP do
+     servidor segue vivo, alimentando um canvas que ninguém vê. Na ficha da
+     câmera isso custava caro: o fluxo em resolução nativa não terminava. */
+  podar(){
+    const vivos=[];
+    this.tiles.forEach(t=>{
+      if(t.canvas&&t.canvas.isConnected){vivos.push(t);return}
+      if(t.img){t.img.onerror=null;t.img.src='';t.img=null}
+    });
+    this.tiles=vivos;
   },
   clear(){
     // Soltar o src encerra a conexão MJPEG. Sem isto cada troca de tela
@@ -534,7 +552,11 @@ const FEED={
     const r=t.canvas.getBoundingClientRect();
     if(!r.width||!r.height)return false;
     const dpr=Math.min(window.devicePixelRatio||1,2);
-    const w=Math.min(Math.round(r.width*dpr),900), h=Math.round(w*r.height/r.width);
+    // 900px é o teto do mosaico, onde cada tile é pequeno e são muitos. Na
+    // ficha da câmera esse mesmo teto era o gargalo final: o quadro nativo
+    // chegava inteiro e era reamostrado para 900 antes de aparecer.
+    const teto=t.opts.hd?2560:900;
+    const w=Math.min(Math.round(r.width*dpr),teto), h=Math.round(w*r.height/r.width);
     if(t.canvas.width!==w||t.canvas.height!==h){t.canvas.width=w;t.canvas.height=h}
     return true;
   },
@@ -547,6 +569,7 @@ const FEED={
     FEED.frames++;
     if(ts-FEED.fpsT>1000){FEED.fps=FEED.frames;FEED.frames=0;FEED.fpsT=ts;if(FEED.aoMedirFps)FEED.aoMedirFps(FEED.fps)}
     if(document.hidden)return;
+    FEED.podar();
 
     const seen=new Set();
     FEED.tiles.forEach(t=>{
@@ -558,7 +581,7 @@ const FEED={
       // Sobre vídeo real não há agentes sintéticos: a caixa ali representa o
       // que o modelo detectou de verdade, e vem do worker pelo WebSocket.
       const agents=vivo?null:drawScene(ctx,sc,W,H,{noite:FEED.noite});
-      if(vivo)pintarAoVivo(ctx,t.img,W,H);
+      if(vivo)pintarAoVivo(ctx,t.img,W,H,t.opts.conter);
       if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,sc,W,H);
       if(t.opts.boxes!==false&&FEED.mostrarCaixas){
         if(agents)drawBoxes(ctx,sc,agents,W,H,W/640);

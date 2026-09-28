@@ -1,5 +1,5 @@
-/* ==========================================================
-   VIGIA — Cliente da API
+﻿/* ==========================================================
+   seguranca — Cliente da API
 
    Um único ponto de contato com o backend. Guarda os tokens,
    renova o access token quando expira e reemite a requisição,
@@ -17,7 +17,7 @@ const API = {
   /* ---------- Sessão ---------- */
   carregarSessao(){
     try{
-      const bruto = localStorage.getItem('vigia.sessao');
+      const bruto = localStorage.getItem('seguranca.sessao');
       if(!bruto) return false;
       const s = JSON.parse(bruto);
       this.access = s.access; this.refresh = s.refresh; this.usuario = s.usuario;
@@ -27,18 +27,18 @@ const API = {
   salvarSessao(lembrar){
     const s = {access:this.access, refresh:this.refresh, usuario:this.usuario};
     try{
-      if(lembrar) localStorage.setItem('vigia.sessao', JSON.stringify(s));
-      else sessionStorage.setItem('vigia.sessao', JSON.stringify(s));
+      if(lembrar) localStorage.setItem('seguranca.sessao', JSON.stringify(s));
+      else sessionStorage.setItem('seguranca.sessao', JSON.stringify(s));
     }catch(e){ /* navegação privada: a sessão vive só em memória */ }
   },
   limparSessao(){
     this.access = this.refresh = this.usuario = null;
-    try{ localStorage.removeItem('vigia.sessao'); sessionStorage.removeItem('vigia.sessao'); }catch(e){}
+    try{ localStorage.removeItem('seguranca.sessao'); sessionStorage.removeItem('seguranca.sessao'); }catch(e){}
   },
   restaurar(){
     for(const store of [sessionStorage, localStorage]){
       try{
-        const bruto = store.getItem('vigia.sessao');
+        const bruto = store.getItem('seguranca.sessao');
         if(bruto){
           const s = JSON.parse(bruto);
           this.access = s.access; this.refresh = s.refresh; this.usuario = s.usuario;
@@ -104,7 +104,7 @@ const API = {
         const ok = await this._renovar();
         if(ok) return await this._bruto(metodo, rota, opts);
         this.limparSessao();
-        document.dispatchEvent(new CustomEvent('vigia:sessao-expirada'));
+        document.dispatchEvent(new CustomEvent('seguranca:sessao-expirada'));
       }
       throw e;
     }
@@ -116,7 +116,7 @@ const API = {
       try{
         const d = await this._bruto('POST', '/auth/refresh', {corpo:{refresh_token:this.refresh}});
         this.access = d.access_token; this.refresh = d.refresh_token; this.usuario = d.usuario;
-        this.salvarSessao(!!localStorage.getItem('vigia.sessao'));
+        this.salvarSessao(!!localStorage.getItem('seguranca.sessao'));
         return true;
       }catch(e){ return false; }
       finally{ this._renovando = null; }
@@ -184,6 +184,9 @@ const API = {
   resumoDeteccoes(horas){ return this.get('/deteccoes/resumo', {horas:horas||24}); },
   revisar(codigo, veredito, observacao){
     return this.post(`/deteccoes/${codigo}/revisao`, {veredito, observacao:observacao||''});
+  },
+  removerDeteccao(codigo, motivo){
+    return this.del(`/deteccoes/${codigo}`, {motivo: motivo || ''});
   },
   expurgar(){ return this.post('/deteccoes/expurgo'); },
 
@@ -275,3 +278,4 @@ const EventosAoVivo = {
 
   _emitir(msg){ this.ouvintes.forEach(fn => { try{ fn(msg); }catch(e){ console.error(e); } }); }
 };
+

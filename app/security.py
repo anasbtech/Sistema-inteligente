@@ -1,4 +1,4 @@
-"""Senhas, JWT, OTP e bloqueio por tentativas.
+﻿"""Senhas, JWT, OTP e bloqueio por tentativas.
 
 Escolhas:
 * Argon2id para senhas (resistente a GPU) via passlib.
@@ -76,7 +76,7 @@ def _criar_token(sub: str, tipo: str, expira: timedelta, extra: Optional[dict] =
         "nbf": agora,
         "exp": agora + expira,
         "jti": str(uuid.uuid4()),
-        "iss": "vigia",
+        "iss": "seguranca",
     }
     if extra:
         payload.update(extra)
@@ -100,7 +100,7 @@ def decodificar_token(token: str, tipo_esperado: str = "access") -> dict:
     payload = jwt.decode(
         token, settings.SECRET_KEY,
         algorithms=[settings.JWT_ALGORITHM],
-        issuer="vigia",
+        issuer="seguranca",
         options={"require": ["exp", "sub", "typ", "iat"]},
     )
     if payload.get("typ") != tipo_esperado:
@@ -143,3 +143,4 @@ def mascarar_cpf(cpf: Optional[str]) -> str:
 
 def mascarar_rg(rg: Optional[str]) -> str:
     return "**.***.***-*" if rg else ""
+

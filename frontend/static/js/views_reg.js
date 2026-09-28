@@ -244,6 +244,10 @@ async function abrirDeteccao(codigo){
 
   const p = d.pessoa;
   const podeRevisar = API.pode('edit') && API.pode('facial') && !d.revisado;
+  // Descartar é para o registro que nasceu errado no detector; falso positivo
+  // é revisão e continua no banco, alimentando a reavaliação do limiar. Por
+  // isso o descarte fica atrás de `settings`, como o expurgo, e não de `edit`.
+  const podeDescartar = API.pode('settings') && !d.pessoa;
   const naoIdentificada = d.tipo === 'FACIAL' && !p;
 
   box.className = 'modal wide';
@@ -299,6 +303,7 @@ async function abrirDeteccao(codigo){
     </div>
     <div class="modal-ft">
       <button class="btn btn-ghost" data-close>Fechar</button>
+      ${podeDescartar ? `<button class="btn btn-ghost" id="detDel">${ico('trash',14)} Descartar</button>` : ''}
       ${p && API.pode('biometrics') ? `<button class="btn btn-soft" id="detPessoa">${ico('db',14)} Abrir ficha</button>` : ''}
       ${naoIdentificada && API.pode('biometrics') && API.pode('edit')
         ? `<button class="btn btn-soft" id="detCadastrar">${ico('db',14)} Cadastrar na base</button>` : ''}
@@ -326,6 +331,22 @@ async function abrirDeteccao(codigo){
   if(bc) bc.onclick = () => { fecharModal(); abrirCamera(d.camera.codigo); };
   const bcad = $('#detCadastrar');
   if(bcad) bcad.onclick = () => { fecharModal(); editarPessoa(null, {deteccao: d.codigo}); };
+
+  const bdel = $('#detDel');
+  if(bdel) bdel.onclick = async () => {
+    const motivo = await confirmar('Descartar registro',
+      `O registro <b>${esc(d.codigo)}</b> e o seu recorte serão apagados em definitivo. ` +
+      `Isto não se desfaz.<br><br>Se a detecção está certa mas você discorda dela, ` +
+      `marque como <b>falso positivo</b>: assim ela permanece e alimenta a reavaliação do limiar.`,
+      {rotulo:'Descartar', perigo:true, exigeTexto:'Motivo do descarte'});
+    if(!motivo) return;
+    try{
+      await API.removerDeteccao(d.codigo, motivo);
+      fecharModal();
+      toast('Registro descartado', `${d.codigo} — removido e registrado na trilha de auditoria.`, 'warn');
+      irPara(APP.view);
+    }catch(e){ erroToast(e); }
+  };
 
   if(podeRevisar){
     const revisar = async veredito => {

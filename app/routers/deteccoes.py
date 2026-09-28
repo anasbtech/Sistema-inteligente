@@ -1,4 +1,4 @@
-"""Ingestão e consulta de detecções, e geração automática de alertas.
+﻿"""Ingestão e consulta de detecções, e geração automática de alertas.
 
 O worker de inferência chama `POST /deteccoes/ingest`. É aqui — e não no
 worker — que a busca 1:N acontece, para que o limiar, a auditoria e a regra
@@ -26,13 +26,13 @@ from app.models import (
     TipoDeteccao, Usuario, Zona,
 )
 from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn
-from app.services import evidencias, face_engine
+from app.services import evidencias, face_engine, sequencias
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
 from app.services.vision import ROTULO_ACAO, SEVERIDADE_ACAO, severidade_objeto
 from app.tipos import como_utc
 
-log = logging.getLogger("vigia.deteccoes")
+log = logging.getLogger("seguranca.deteccoes")
 router = APIRouter(prefix="/deteccoes", tags=["Detecções"])
 
 PREFIXO_CODIGO = {
@@ -50,15 +50,33 @@ SEVERIDADE_STATUS = {
 }
 
 
+def _sequencial_do_codigo(codigo: str, digitos: int) -> int:
+    """Últimos ``digitos`` do código, como número. 0 quando não dá para ler."""
+    if not codigo:
+        return 0
+    try:
+        return int(codigo.rsplit("-", 1)[1][-digitos:])
+    except (IndexError, ValueError):
+        return 0
+
+
 async def _proximo_codigo(db: AsyncSession, tipo: TipoDeteccao) -> str:
     ano = datetime.now(timezone.utc).year
     pfx = PREFIXO_CODIGO[tipo]
-    total = (
-        await db.execute(
-            select(func.count()).select_from(Deteccao).where(Deteccao.tipo == tipo)
-        )
-    ).scalar_one()
-    return f"{pfx}-{ano}{total + 1:06d}"
+
+    async def maior_emitido() -> int:
+        # Lexicográfico serve como numérico aqui: o sequencial tem largura fixa.
+        codigo = (
+            await db.execute(
+                select(func.max(Deteccao.codigo)).where(
+                    Deteccao.codigo.like(f"{pfx}-{ano}%")
+                )
+            )
+        ).scalar_one_or_none()
+        return _sequencial_do_codigo(codigo or "", 6)
+
+    numero = await sequencias.proximo_numero(db, f"{pfx}-{ano}", maior_emitido)
+    return f"{pfx}-{ano}{numero:06d}"
 
 
 async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
@@ -68,7 +86,13 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
     if det.severidade < 3:
         return None
 
-    total = (await db.execute(select(func.count()).select_from(Alerta))).scalar_one()
+    async def maior_alerta() -> int:
+        codigo = (
+            await db.execute(select(func.max(Alerta.codigo)))
+        ).scalar_one_or_none()
+        return _sequencial_do_codigo(codigo or "", 5)
+
+    numero_alerta = await sequencias.proximo_numero(db, "ALR", maior_alerta)
 
     if det.tipo == TipoDeteccao.FACIAL and pessoa is not None:
         rotulo = {
@@ -93,7 +117,7 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
         )
 
     alerta = Alerta(
-        codigo=f"ALR-{total + 1:05d}",
+        codigo=f"ALR-{numero_alerta:05d}",
         deteccao_id=det.id,
         camera_id=cam.id,
         pessoa_id=pessoa.id if pessoa else None,
@@ -523,6 +547,68 @@ async def revisar(codigo: str, dados: RevisaoIn, request: Request,
     return DeteccaoOut.model_validate(det)
 
 
+@router.delete("/{codigo}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Remover detecção")
+async def remover(codigo: str, request: Request,
+                  motivo: str = Query("", max_length=300,
+                                      description="Por que o registro está sendo descartado"),
+                  db: AsyncSession = Depends(get_db),
+                  usuario: Usuario = Depends(exige("settings"))):
+    """Descarta um registro e o seu recorte, sem esperar a retenção vencer.
+
+    É para o registro que nasceu errado por defeito do detector — não para
+    aquele de que o operador discorda. Falso positivo é revisão: fica no
+    banco, porque é ele que alimenta a reavaliação do limiar. Apagar cabe
+    quando o próprio rótulo deixou de existir e o registro só polui a lista:
+    o furgão que saía como "Ônibus" porque o COCO não tem `van`.
+
+    Recusa o que está preso a alerta ou a uma pessoa. O vínculo do alerta é
+    `ON DELETE SET NULL`, então apagar por baixo dele não daria erro nenhum —
+    deixaria um alerta apontando para o vazio, que é pior do que recusar.
+
+    Admin apenas, como o expurgo: das ações sobre o registro, esta é a única
+    que não se desfaz.
+    """
+    det = (
+        await db.execute(select(Deteccao).where(Deteccao.codigo == codigo))
+    ).scalars().unique().one_or_none()
+    if det is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Detecção não encontrada.")
+
+    if det.pessoa_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Esta detecção identificou uma pessoa e pode integrar inquérito. "
+            "Marque como falso positivo em vez de apagar.",
+        )
+
+    alertas = (
+        await db.execute(
+            select(func.count()).select_from(Alerta).where(Alerta.deteccao_id == det.id)
+        )
+    ).scalar_one()
+    if alertas:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Esta detecção gerou {alertas} alerta(s) e não pode ser apagada. "
+            "Feche o alerta antes, ou marque a detecção como falso positivo.",
+        )
+
+    # Apagar o registro e deixar o recorte no disco transformaria a retenção
+    # numa promessa vazia — o mesmo motivo do expurgo.
+    recorte = evidencias.apagar(det.snapshot_key)
+    await audit.registrar(
+        db, acao="DET_EXCLUSAO", descricao=f"Detecção {det.codigo} removida ({det.classe or det.tipo.value})",
+        severidade="warn", usuario=usuario, alvo=det.codigo,
+        finalidade=motivo or "Remoção manual de registro incorreto",
+        request=request,
+        metadados={"classe": det.classe, "confianca": det.confianca,
+                   "hash_evidencia": det.hash_evidencia, "recorte_apagado": recorte},
+    )
+    await db.delete(det)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/expurgo", summary="Expurgar capturas vencidas")
 async def expurgo(db: AsyncSession = Depends(get_db),
                   usuario: Usuario = Depends(exige("settings"))):
@@ -559,3 +645,4 @@ async def expurgo(db: AsyncSession = Depends(get_db),
     )
     return {"removidos": len(alvos), "imagens_removidas": imagens,
             "prazo_dias": settings.RETENTION_DAYS_UNMATCHED}
+

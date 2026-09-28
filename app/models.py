@@ -249,6 +249,26 @@ class SequenciaBiometrica(Base):
     proximo: Mapped[int] = mapped_column(BigInteger, default=1)
 
 
+class SequenciaCodigo(Base):
+    """Contador por série de código: uma linha por prefixo (e ano, quando há).
+
+    Antes o código de uma detecção saía de ``COUNT(*) + 1``. Isso presume que
+    registro nunca é apagado — e no dia em que um foi, a contagem recuou
+    abaixo do maior código já emitido e o gerador passou a reemitir código
+    existente. O ``UNIQUE`` barrava o insert, a contagem não subia, e a
+    próxima tentativa repetia o mesmo código: a ingestão parava de vez, com
+    o worker detectando normalmente e todo registro sendo descartado.
+
+    Um contador não recua quando uma linha é apagada, e a trava de linha na
+    emissão serializa dois envios simultâneos — o mesmo desenho de
+    ``sequencia_biometrica``, pelas mesmas duas razões.
+    """
+    __tablename__ = "sequencia_codigo"
+
+    chave: Mapped[str] = mapped_column(String(16), primary_key=True)
+    proximo: Mapped[int] = mapped_column(BigInteger, default=1)
+
+
 class Pessoa(Base):
     __tablename__ = "pessoas"
 

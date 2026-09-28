@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from app.services.vision import ObjetoDetectado
+from app.services.vision import MAPA_CLASSES, ObjetoDetectado
 from worker.pipeline import (
     SeletorMelhorObjeto, SeletorMelhorQuadro, suprimir_sobrepostas,
 )
@@ -42,15 +42,16 @@ def escoar(seletor) -> list:
 # ----------------------------------------------------------------------
 # Supressão de caixas sobrepostas
 # ----------------------------------------------------------------------
-def test_mesma_caixa_com_duas_classes_vira_uma_so():
-    """O YOLO pontua as classes à parte: o mesmo veículo sai como caminhão e
-    como ônibus. Dois registros, o mesmo recorte, classes que se contradizem."""
+def test_mesma_caixa_com_duas_leituras_vira_uma_so():
+    """O YOLO pontua as classes à parte: o mesmo furgão pontua na cabeça de
+    `car` e na de `truck`. As duas entram como `carro`, mas continuam sendo
+    duas caixas — sem supressão, dois registros do mesmo veículo."""
     mesma = (100, 50, 400, 300)
     saida = suprimir_sobrepostas([
-        ObjetoDetectado("caminhao", 0.683, mesma, 7),
-        ObjetoDetectado("onibus", 0.661, mesma, 8),
+        ObjetoDetectado("carro", 0.683, mesma, 7),
+        ObjetoDetectado("carro", 0.661, mesma, 8),
     ])
-    assert [o.classe for o in saida] == ["caminhao"], "fica a leitura mais confiante"
+    assert [o.confianca for o in saida] == [0.683], "fica a leitura mais confiante"
 
 
 def test_caixa_encaixada_de_outra_coisa_sobrevive():
@@ -89,15 +90,19 @@ def test_objeto_parado_nao_rende_um_registro_por_analise():
     assert emitidos == [], "quem continua ali já foi contado"
 
 
-def test_rotulo_que_oscila_entre_analises_nao_duplica():
-    """Caminhão num quadro, ônibus no seguinte: é o ângulo mudando, não um
-    veículo novo chegando ao mesmo ponto."""
-    sel = SeletorMelhorObjeto()
-    for i, classe in enumerate(["caminhao", "onibus", "caminhao", "onibus"]):
-        sel.adicionar(ObjetoDetectado(classe, 0.66 + i * 0.01, (100, 50, 400, 300), None),
-                      CAIXA, "", captura(classe), AGORA)
-        sel.prontos()
-    assert len(escoar(sel)) == 1
+def test_furgao_nao_vira_onibus_nem_caminhao():
+    """O caso real: a ficha de uma van dizia "Ônibus" a 73,1%.
+
+    O COCO não tem `van`, e o mesmo furgão pontuou `bus` no yolov8n e `truck`
+    no yolov8l — o rótulo dependia do peso carregado, não do que estava na
+    cena. As três classes de veículo entram como `carro` para que o registro
+    não afirme um tipo que o modelo não sabe distinguir.
+    """
+    assert MAPA_CLASSES["car"] == "carro"
+    assert MAPA_CLASSES["truck"] == "carro"
+    assert MAPA_CLASSES["bus"] == "carro"
+    assert "onibus" not in MAPA_CLASSES.values()
+    assert "caminhao" not in MAPA_CLASSES.values()
 
 
 def test_objeto_parado_que_pisca_no_detector_nao_reregistra():
@@ -207,3 +212,15 @@ def test_dois_rostos_ao_mesmo_tempo_seguem_separados():
                               _FaceFalsa(vetor(300 + i), (400, 100, 460, 180), 0.5)],
                              QUADRO, AGORA)
     assert len(escoar(sel)) == 2
+
+
+def test_sequencial_lido_do_codigo():
+    """De onde o contador parte quando ainda não existe: o maior código já
+    gravado. Ler errado aqui reemitiria código em uso."""
+    from app.routers.deteccoes import _sequencial_do_codigo
+    assert _sequencial_do_codigo("OD-2026000151", 6) == 151
+    assert _sequencial_do_codigo("FR-2026000001", 6) == 1
+    assert _sequencial_do_codigo("ALR-00042", 5) == 42
+    # Sem código algém ou ilegível, a série começa do zero em vez de estourar.
+    assert _sequencial_do_codigo("", 6) == 0
+    assert _sequencial_do_codigo("lixo", 6) == 0

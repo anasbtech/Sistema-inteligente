@@ -383,6 +383,20 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .modal-scrim[hidden]{display:none}
 .modal{background:var(--ink-850);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--sh-3);width:100%;max-width:560px;max-height:92vh;display:flex;flex-direction:column;animation:pop .17s ease-out}
 .modal.wide{max-width:880px}
+/* A ficha da câmera existe para olhar a imagem, então ela manda no
+   tamanho: ocupa a largura disponível e deixa o quadro decidir a altura. */
+.modal.theater{max-width:min(1480px,95vw)}
+
+/* Imagem à esquerda, ficha técnica à direita.
+   Antes a imagem ia sozinha na largura toda: com `aspect-ratio` e um teto de
+   altura, o navegador encolhe a largura para manter a proporção, e sobrava
+   metade do modal vazia enquanto os dados da câmera ficavam abaixo da dobra.
+   A coluna da direita ocupa essa sobra com o que o operador precisa ler
+   junto da imagem — endereço, latência, limiares e zonas. */
+.cam-ficha{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.cam-ficha-lado{display:flex;flex-direction:column;gap:14px;min-width:0}
+/* Abaixo disto a coluna lateral estrangula a imagem: empilha. */
+@media (max-width:1040px){.cam-ficha{grid-template-columns:minmax(0,1fr)}}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
 .modal-hd{display:flex;align-items:center;gap:12px;padding:14px 17px;border-bottom:1px solid var(--line-soft);flex:none}
 .modal-hd h3{font-family:var(--f-disp);font-size:19px;font-weight:600;margin:0;flex:1;letter-spacing:.02em}

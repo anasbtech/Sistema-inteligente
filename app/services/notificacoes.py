@@ -1,4 +1,4 @@
-"""Envio do código de recuperação.
+﻿"""Envio do código de recuperação.
 
 Em desenvolvimento apenas registra no log. Em produção, troque `_enviar_email`
 por SMTP institucional, API transacional ou gateway de SMS — a assinatura da
@@ -10,12 +10,12 @@ import logging
 
 from app.config import settings
 
-log = logging.getLogger("vigia.notificacoes")
+log = logging.getLogger("seguranca.notificacoes")
 
 MODELO = """\
 {saudacao},
 
-Recebemos um pedido de redefinição de senha para sua conta no VIGIA.
+Recebemos um pedido de redefinição de senha para sua conta no seguranca.
 
     Código de verificação: {codigo}
 
@@ -55,7 +55,7 @@ async def enviar_codigo_recuperacao(email: str, nome: str, codigo: str, minutos:
     saudacao = f"Prezado(a) {nome.split()[0]}" if nome else "Prezado(a)"
     await _enviar_email(
         email,
-        "VIGIA — código de redefinição de senha",
+        "seguranca — código de redefinição de senha",
         MODELO.format(saudacao=saudacao, codigo=codigo, minutos=minutos),
     )
 
@@ -63,3 +63,4 @@ async def enviar_codigo_recuperacao(email: str, nome: str, codigo: str, minutos:
 async def notificar_alerta_critico(titulo: str, detalhe: str, camera: str) -> None:
     """Gancho para push/rádio/despacho. Implementação a cargo da integração local."""
     log.warning("ALERTA CRÍTICO | %s | %s | %s", camera, titulo, detalhe)
+

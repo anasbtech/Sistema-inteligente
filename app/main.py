@@ -1,4 +1,4 @@
-"""Ponto de entrada da aplicação VIGIA — API + interface no mesmo processo.
+﻿"""Ponto de entrada da aplicação seguranca — API + interface no mesmo processo.
 
     python run.py                       # tudo pronto, modo demonstração
     uvicorn app.main:app --reload       # se preferir controlar você mesmo
@@ -28,7 +28,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)-22s %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("vigia")
+log = logging.getLogger("seguranca")
 
 
 @asynccontextmanager
@@ -147,3 +147,4 @@ async def saude():
             "simulador_gerados": simulador.gerados,
         },
     )
+

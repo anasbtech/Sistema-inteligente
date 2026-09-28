@@ -1,4 +1,4 @@
-"""Ponte RTSP → MJPEG para o mosaico.
+﻿"""Ponte RTSP → MJPEG para o mosaico.
 
 O navegador não reproduz RTSP. Em produção o caminho é o gateway WebRTC que
 `/stream/{codigo}` anuncia, com passagem direta do H.264 e latência abaixo de
@@ -17,15 +17,30 @@ import threading
 import time
 from typing import Dict, Optional
 
-log = logging.getLogger("vigia.video")
+log = logging.getLogger("seguranca.video")
 
 # Sem isto o OpenCV negocia UDP e perde pacote em rede com switch gerenciado.
 os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;8000000"
 )
 
+# Mosaico: dezesseis tiles pequenos ao mesmo tempo. Aqui o limite é a CPU do
+# servidor, e 640px já cobre o tamanho em que cada tile é exibido.
 LARGURA_SAIDA = 640
 QUALIDADE_JPEG = 70
+
+# Detalhe: um espectador só, com o quadro grande na tela para conferir foco,
+# enquadramento e zona. Reduzir aqui não economiza nada que importe e destrói
+# justamente o que se foi olhar — uma câmera 1080p chegava ao operador como
+# 640x360 recomprimido a 70, três vezes menor em cada lado que o sensor.
+# `0` significa não redimensionar: sai o que a lente entregou.
+LARGURA_DETALHE = 0
+QUALIDADE_DETALHE = 92
+# O encode extra só acontece enquanto alguém está de fato olhando o detalhe.
+# Sem pedido novo dentro desta janela, o leitor volta a gastar só com o
+# mosaico.
+OCIOSO_DETALHE_S = 6.0
+
 FPS_SAIDA = 10
 OCIOSO_S = 30.0
 FALHAS_ATE_DESISTIR = 60
@@ -42,9 +57,16 @@ class Leitor:
         self.codigo = codigo
         self.url = url
         self.quadro: Optional[bytes] = None
+        # Quadro em resolução nativa, produzido só enquanto há quem assista.
+        self.quadro_detalhe: Optional[bytes] = None
+        self.largura_nativa = 0
+        self.altura_nativa = 0
         self.erro: str = ""
         self.pronto = threading.Event()
+        self.pronto_detalhe = threading.Event()
         self._ultimo_uso = time.monotonic()
+        # Zero, e não `monotonic()`: ninguém pediu detalhe ainda.
+        self._ultimo_uso_detalhe = 0.0
         self._parar = threading.Event()
         self._thread = threading.Thread(
             target=self._rodar, daemon=True, name=f"rtsp-{codigo}"
@@ -58,6 +80,16 @@ class Leitor:
     def tocar(self) -> None:
         """Marca que alguém ainda está assistindo."""
         self._ultimo_uso = time.monotonic()
+
+    def tocar_detalhe(self) -> None:
+        """Marca que alguém está assistindo em resolução nativa."""
+        agora = time.monotonic()
+        self._ultimo_uso = agora
+        self._ultimo_uso_detalhe = agora
+
+    @property
+    def detalhe_ativo(self) -> bool:
+        return (time.monotonic() - self._ultimo_uso_detalhe) <= OCIOSO_DETALHE_S
 
     def parar(self) -> None:
         self._parar.set()
@@ -110,6 +142,29 @@ class Leitor:
                 continue
 
             altura, largura = quadro.shape[:2]
+            self.largura_nativa, self.altura_nativa = largura, altura
+
+            # O detalhe sai do quadro intacto, antes de qualquer redução — e
+            # só quando há espectador, porque é um encode a mais por quadro.
+            if self.detalhe_ativo:
+                bruto = quadro
+                if LARGURA_DETALHE and largura > LARGURA_DETALHE:
+                    nova = int(altura * LARGURA_DETALHE / largura)
+                    bruto = cv2.resize(
+                        quadro, (LARGURA_DETALHE, nova), interpolation=cv2.INTER_AREA
+                    )
+                ok_det, buf_det = cv2.imencode(
+                    ".jpg", bruto, [int(cv2.IMWRITE_JPEG_QUALITY), QUALIDADE_DETALHE]
+                )
+                if ok_det:
+                    self.quadro_detalhe = buf_det.tobytes()
+                    self.pronto_detalhe.set()
+            elif self.quadro_detalhe is not None:
+                # Ninguém olhando: solta o buffer grande e rearma a espera,
+                # senão o próximo espectador receberia um quadro velho.
+                self.quadro_detalhe = None
+                self.pronto_detalhe.clear()
+
             if largura > LARGURA_SAIDA:
                 nova_altura = int(altura * LARGURA_SAIDA / largura)
                 quadro = cv2.resize(
@@ -126,6 +181,7 @@ class Leitor:
 
         cap.release()
         self.pronto.set()
+        self.pronto_detalhe.set()   # não deixa espectador de detalhe pendurado
         _descartar(self)
 
 
@@ -177,3 +233,4 @@ def encerrar_todos() -> None:
         leitores = list(_leitores.values())
     for leitor in leitores:
         leitor.parar()
+

@@ -1,4 +1,4 @@
-"""Detecção de objetos (YOLO), rastreamento e classificação de ações.
+﻿"""Detecção de objetos (YOLO), rastreamento e classificação de ações.
 
 As ações aqui são derivadas de *trajetórias* — velocidade, permanência,
 densidade, cruzamento de linha — e não de julgamento sobre pessoas. São
@@ -16,18 +16,25 @@ import numpy as np
 
 from app.config import settings
 
-log = logging.getLogger("vigia.vision")
+log = logging.getLogger("seguranca.vision")
 
 _yolo = None
 
-# COCO -> classes operacionais do VIGIA
+# COCO -> classes operacionais do seguranca
 MAPA_CLASSES: Dict[str, str] = {
     "person": "pessoa",
-    # Carro, caminhão e ônibus separados: para quem lê o registro depois, "um
-    # caminhão às 3h" e "um carro às 3h" não são a mesma ocorrência.
+    # Carro, caminhão e ônibus entram como uma classe só. O COCO não tem
+    # `van`, e um furgão cai ora em `bus`, ora em `truck`, ora em `car`
+    # conforme o ângulo: o mesmo furgão desta instalação saiu `bus` a 0,49 no
+    # nano e `truck` a 0,77 no large. Separar as três dava ao operador uma
+    # certeza que o modelo não tem — a ficha de uma van dizia "Ônibus" a
+    # 73,1%. Van é veículo de passeio, e é assim que o registro a nomeia.
+    # O preço, assumido: um caminhão de verdade também entra como carro. Se
+    # um dia essa distinção importar, ela não volta pelo rótulo cru do COCO —
+    # precisa de um classificador de porte sobre o recorte.
     "car": "carro",
-    "truck": "caminhao",
-    "bus": "onibus",
+    "truck": "carro",
+    "bus": "carro",
     "motorcycle": "motocicleta",
     "bicycle": "bicicleta",
     "backpack": "mochila",
@@ -41,16 +48,17 @@ MAPA_CLASSES: Dict[str, str] = {
     "elephant": "animal", "zebra": "animal", "giraffe": "animal",
 }
 
-# Classes que o modelo troca entre si conforme o ângulo: o mesmo veículo sai
-# como caminhão num quadro e ônibus no seguinte. Para decidir se um objeto já
-# passou por ali, elas contam como uma família só — senão cada oscilação de
-# rótulo do modelo era lida como uma passagem nova, e um veículo parado
-# rendia uma linha por ciclo, alternando entre as duas classes.
-# Moto e bicicleta ficam de fora de propósito: têm silhueta própria, e
+# Classes que o modelo troca entre si conforme o ângulo contam como uma
+# família só para decidir se um objeto já passou por ali — senão cada
+# oscilação de rótulo era lida como uma passagem nova, e um veículo parado
+# rendia uma linha por ciclo.
+# Está vazio porque a oscilação que este mapa existia para absorver era
+# justamente carro/caminhão/ônibus, e as três já entram como `carro` em
+# MAPA_CLASSES — ela não chega mais até aqui. `familia_de` fica como a
+# costura para o dia em que duas classes distintas voltarem a se confundir.
+# Moto e bicicleta continuam de fora de propósito: têm silhueta própria, e
 # agrupá-las esconderia uma moto passando ao lado de um carro parado.
-FAMILIA_CLASSE: Dict[str, str] = {
-    "carro": "veiculo", "caminhao": "veiculo", "onibus": "veiculo",
-}
+FAMILIA_CLASSE: Dict[str, str] = {}
 
 
 def familia_de(classe: str) -> str:
@@ -58,6 +66,9 @@ def familia_de(classe: str) -> str:
     return FAMILIA_CLASSE.get(classe, classe)
 
 
+# `caminhao` e `onibus` seguem aqui pelos registros gravados antes da
+# unificação: o detector não emite mais essas classes, mas a ficha antiga
+# ainda as consulta.
 SEVERIDADE_OBJETO: Dict[str, int] = {
     "pessoa": 1, "carro": 1, "caminhao": 1, "onibus": 1, "bicicleta": 1,
     "motocicleta": 2, "animal": 2, "mochila": 2, "capacete": 2, "placa": 2,
@@ -443,3 +454,4 @@ class AnalisadorAcoes:
 
 def severidade_objeto(classe: str) -> int:
     return SEVERIDADE_OBJETO.get(classe, 1)
+

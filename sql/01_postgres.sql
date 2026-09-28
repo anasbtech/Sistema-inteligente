@@ -1,5 +1,5 @@
--- ============================================================
--- VIGIA — extras do PostgreSQL (opcional)
+﻿-- ============================================================
+-- seguranca — extras do PostgreSQL (opcional)
 --
 -- O sistema roda sem este arquivo, em SQLite. Aplique-o quando migrar
 -- para PostgreSQL, DEPOIS de `python run.py` ter criado as tabelas:
@@ -48,7 +48,7 @@ CREATE TRIGGER trg_auditoria_imutavel
     FOR EACH ROW EXECUTE FUNCTION auditoria_somente_insercao();
 
 -- Em produção, tire também o privilégio do papel da aplicação:
---   REVOKE UPDATE, DELETE, TRUNCATE ON auditoria FROM vigia_app;
+--   REVOKE UPDATE, DELETE, TRUNCATE ON auditoria FROM seguranca_app;
 
 -- ------------------------------------------------------------
 -- O formato do identificador, exigido pelo banco.
@@ -92,3 +92,4 @@ SELECT
 FROM sequencia_biometrica s
 LEFT JOIN pessoas p ON p.sexo = s.sexo AND p.ativo
 GROUP BY s.sexo, s.proximo;
+

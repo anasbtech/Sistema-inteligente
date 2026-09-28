@@ -1,4 +1,4 @@
-"""Barramento de eventos: Redis pub/sub ou fila em memória, e fan-out WebSocket.
+﻿"""Barramento de eventos: Redis pub/sub ou fila em memória, e fan-out WebSocket.
 
 Trocar por Kafka é substituir `publicar` e o laço de escuta por produtor e
 consumidor do tópico `deteccoes.v1`; o resto da aplicação não muda.
@@ -15,7 +15,7 @@ from fastapi import WebSocket
 from app.config import settings
 from app.database import MemoriaVolatil, get_redis
 
-log = logging.getLogger("vigia.events")
+log = logging.getLogger("seguranca.events")
 
 
 class GerenciadorConexoes:
@@ -115,3 +115,4 @@ async def publicar(tipo: str, dados: Dict[str, Any]) -> None:
         settings.EVENT_CHANNEL,
         json.dumps({"tipo": tipo, "dados": dados}, default=str),
     )
+

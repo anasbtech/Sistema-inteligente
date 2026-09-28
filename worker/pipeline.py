@@ -1,4 +1,4 @@
-"""Worker de inferência: lê RTSP, roda os modelos e envia detecções à API.
+﻿"""Worker de inferência: lê RTSP, roda os modelos e envia detecções à API.
 
 Um processo por câmera (ou um por GPU com várias câmeras em threads). O worker
 NÃO decide identidade: ele extrai o embedding e manda para a API, que faz a
@@ -29,7 +29,7 @@ from app.services.vision import (
     AnalisadorAcoes, detectar_objetos, familia_de, ponto_em_poligono,
 )
 
-log = logging.getLogger("vigia.worker")
+log = logging.getLogger("seguranca.worker")
 
 API = "http://localhost:8000"
 
@@ -273,11 +273,12 @@ def cantos_para_caixa(bbox: Sequence[float]) -> list[float]:
 def suprimir_sobrepostas(objetos: Sequence, iou_maximo: float = 0.7) -> list:
     """Uma caixa em cena, uma classe — a de maior confiança.
 
-    O YOLO pontua as classes de forma independente, então um mesmo veículo
-    sai como `caminhao` a 0,68 *e* `onibus` a 0,66. A deduplicação por
-    passagem não resolve isso: ela compara dentro de cada classe, e para ela
-    são dois objetos diferentes. O resultado eram dois registros com o mesmo
-    recorte e classes que se contradizem.
+    O YOLO pontua as classes de forma independente, então um mesmo furgão
+    pontua na cabeça de `car` a 0,68 *e* na de `truck` a 0,66 — duas caixas
+    no mesmo lugar, hoje ambas rotuladas `carro`. A deduplicação por passagem
+    não resolve isso: ela compara dentro de cada classe, e duas caixas
+    distintas no mesmo ponto lhe parecem dois objetos. O resultado eram dois
+    registros com o mesmo recorte.
     """
     mantidos: list = []
     for obj in sorted(objetos, key=lambda o: o.confianca, reverse=True):
@@ -332,9 +333,11 @@ class SeletorMelhorObjeto:
     * sobreposição das caixas — um carro estacionado ocupa o mesmo lugar em
       toda análise, mesmo que a trilha se perca e ele ganhe um id novo.
 
-    A comparação é por *família* de classe, não pelo rótulo cru: o modelo
-    troca caminhão por ônibus conforme o ângulo, e comparar a classe exata
-    fazia cada oscilação parecer um objeto novo chegando ao mesmo ponto.
+    A comparação é por *família* de classe, não pelo rótulo cru: quando o
+    modelo troca de rótulo conforme o ângulo, comparar a classe exata faz
+    cada oscilação parecer um objeto novo chegando ao mesmo ponto. Hoje a
+    família só importa como costura — carro, caminhão e ônibus já chegam
+    unificados de `MAPA_CLASSES`.
 
     A espera é contada em ciclos de análise, não em segundos — o intervalo
     entre análises varia com a carga da máquina, e todo prazo em segundos
@@ -483,7 +486,13 @@ class PipelineCamera:
     async def _enviar(self, payload: dict) -> None:
         try:
             r = await self.cliente.post(f"{API}/deteccoes/ingest", json=payload, timeout=10.0)
-            if r.status_code >= 400:
+            if r.status_code in (401, 403):
+                # Nomear a causa: com token vencido tudo continua rodando e só
+                # o registro some, o que na interface parece defeito do modelo.
+                log.error("Ingest recusado (%s): credencial inválida ou vencida - "
+                          "a detecção foi DESCARTADA. Reinicie o worker com "
+                          "--usuario/--senha para renovação automática.", r.status_code)
+            elif r.status_code >= 400:
                 log.error("Ingest recusado (%s): %s", r.status_code, r.text[:200])
         except httpx.HTTPError as exc:
             log.error("Falha ao enviar detecção: %s", exc)
@@ -671,3 +680,4 @@ def recortar(quadro: np.ndarray, bbox, margem: float = 0.25) -> np.ndarray:
     mx, my = int((x2 - x1) * margem), int((y2 - y1) * margem)
     return quadro[max(0, y1 - my):min(altura, y2 + my),
                   max(0, x1 - mx):min(largura, x2 + mx)]
+

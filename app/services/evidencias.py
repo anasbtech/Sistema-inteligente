@@ -1,4 +1,4 @@
-"""Armazenamento dos recortes de captura.
+﻿"""Armazenamento dos recortes de captura.
 
 O caminho é derivado do código da detecção, **nunca** do que o worker sugere.
 A chave chega pela rede, e usá-la como caminho abriria travessia de diretório
@@ -19,7 +19,7 @@ from typing import Optional
 
 from app.config import settings
 
-log = logging.getLogger("vigia.evidencias")
+log = logging.getLogger("seguranca.evidencias")
 
 RAIZ = (Path(__file__).resolve().parents[2] / settings.SNAPSHOT_DIR).resolve()
 
@@ -67,3 +67,4 @@ def apagar(chave: str) -> bool:
         return False
     alvo.unlink()
     return True
+

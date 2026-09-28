@@ -541,6 +541,210 @@ async function renderCameras(alvo){
   aplicar();
 }
 
+/* ==========================================================
+   CADASTRO E CONFIGURAÇÃO DE CÂMERA
+   ========================================================== */
+async function editarCamera(codigo){
+  const novo = !codigo;
+  let c = null;
+  if(!novo){
+    try{ c = await API.camera(codigo); }
+    catch(e){ return erroToast(e); }
+  }
+
+  let setores = [];
+  try{ setores = (await API.setores()).setores || []; }catch(e){ setores = []; }
+
+  // Valor do campo: o da câmera quando editando, o padrão do schema quando nova.
+  const v = (campo, padrao) => (c && c[campo] != null && c[campo] !== '') ? c[campo] : padrao;
+  const pct = (campo, padrao) => Math.round((c && c[campo] != null ? c[campo] : padrao) * 100);
+
+  const flags = {
+    ptz:              c ? !!c.ptz : false,
+    infravermelho:    c ? !!c.infravermelho : true,
+    analitico_facial: c ? !!c.analitico_facial : true,
+    analitico_objeto: c ? !!c.analitico_objeto : true,
+    analitico_acao:   c ? !!c.analitico_acao : false
+  };
+  const chave = k => `<span class="sw ${flags[k]?'on':''}"></span>`;
+
+  const box = abrirModal(`
+    <div class="modal-hd"><h3>${novo ? 'Nova câmera' : 'Configurar câmera'}</h3>
+      ${novo ? '' : `<span class="chip c-gray mono">${esc(c.codigo)}</span>`}
+      <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
+    <div class="modal-bd">
+      <div class="eyebrow" style="margin-bottom:8px">Identificação</div>
+      <div class="form-grid">
+        <div class="field full"><label for="cNome">Nome da câmera</label>
+          <input class="inp" id="cNome" value="${esc(v('nome',''))}" placeholder="Ex.: Recepção, Pátio dos fundos"></div>
+        ${novo ? `<div class="field"><label for="cCodigo">Código (opcional)</label>
+          <input class="inp mono" id="cCodigo" placeholder="deixe vazio para gerar">
+          <span class="hint">Em branco, o servidor emite o próximo da sequência.</span></div>` : ''}
+        <div class="field"><label for="cSetor">Setor</label>
+          <input class="inp" id="cSetor" list="cSetores" value="${esc(v('setor',''))}" placeholder="Ex.: Recepção, Externa">
+          <datalist id="cSetores">${setores.map(s => `<option value="${esc(s)}"></option>`).join('')}</datalist></div>
+        <div class="field"><label for="cCena">Tipo de cena</label>
+          <select class="inp" id="cCena">${Object.entries(CENAS)
+            .map(([k,o]) => `<option value="${k}" ${v('cena','rua')===k?'selected':''}>${esc(o.lbl)}</option>`).join('')}</select>
+          <span class="hint">Só afeta a imagem sintética de reserva, quando o RTSP não responde.</span></div>
+        <div class="field"><label for="cStatus">Status operacional</label>
+          <select class="inp" id="cStatus">${Object.entries(STATUS_CAMERA)
+            .map(([k,o]) => `<option value="${k}" ${v('status','ONLINE')===k?'selected':''}>${esc(o.lbl)}</option>`).join('')}</select>
+          <span class="hint">O worker só processa câmeras on-line.</span></div>
+      </div>
+
+      <div class="eyebrow" style="margin:17px 0 8px">Conexão</div>
+      <div class="form-grid">
+        <div class="field full"><label for="cRtsp">Endereço RTSP</label>
+          <input class="inp mono" id="cRtsp" value="${esc(v('rtsp_url',''))}" placeholder="rtsp://usuario:senha@192.168.0.10:554/caminho">
+          <span class="hint">Caracteres especiais da senha precisam vir <b>percent-encoded</b> (<code>@</code> como <code>%40</code>, <code>?</code> como <code>%3F</code>).</span></div>
+        <div class="field"><label for="cIp">Endereço IP</label>
+          <input class="inp mono" id="cIp" value="${esc(v('ip',''))}" placeholder="192.168.0.10"></div>
+        <div class="field"><label for="cOnvif">ONVIF (opcional)</label>
+          <input class="inp mono" id="cOnvif" value="${esc(v('onvif_url',''))}" placeholder="http://192.168.0.10:80/onvif/device_service">
+          <span class="hint">Necessário só para comando PTZ.</span></div>
+      </div>
+
+      <div class="eyebrow" style="margin:17px 0 8px">Equipamento</div>
+      <div class="form-grid">
+        <div class="field"><label for="cFab">Fabricante</label>
+          <input class="inp" id="cFab" value="${esc(v('fabricante',''))}" placeholder="Intelbras"></div>
+        <div class="field"><label for="cMod">Modelo</label>
+          <input class="inp" id="cMod" value="${esc(v('modelo',''))}"></div>
+        <div class="field"><label for="cRes">Resolução</label>
+          <input class="inp mono" id="cRes" value="${esc(v('resolucao','1920x1080'))}" placeholder="1920x1080">
+          <span class="hint">Usada para a proporção da pré-visualização.</span></div>
+        <div class="field"><label for="cFps">Quadros por segundo</label>
+          <input class="inp mono" id="cFps" type="number" min="1" max="120" value="${v('fps',25)}"></div>
+        <div class="field"><label for="cCodec">Codec</label>
+          <select class="inp" id="cCodec">${['H.264','H.265','MJPEG']
+            .map(x => `<option ${v('codec','H.265')===x?'selected':''}>${x}</option>`).join('')}</select></div>
+        <div class="field"><label for="cBitrate">Bitrate (kbps)</label>
+          <input class="inp mono" id="cBitrate" type="number" min="128" max="65536" value="${v('bitrate_kbps',4096)}"></div>
+      </div>
+
+      <div class="eyebrow" style="margin:17px 0 8px">Analíticos e limiares</div>
+      <div class="sw-row" data-csw="analitico_facial"><div class="bd"><b>Reconhecimento facial</b>
+        <span>Extrai template e consulta a base biométrica</span></div>${chave('analitico_facial')}</div>
+      <div class="sw-row" data-csw="analitico_objeto"><div class="bd"><b>Detecção de objetos</b>
+        <span>Pessoas, veículos, motocicletas e volumes</span></div>${chave('analitico_objeto')}</div>
+      <div class="sw-row" data-csw="analitico_acao"><div class="bd"><b>Análise de ações</b>
+        <span>Corrida, queda, permanência e aglomeração</span></div>${chave('analitico_acao')}</div>
+      <div class="sw-row" data-csw="ptz"><div class="bd"><b>PTZ</b>
+        <span>Habilita os comandos de movimento, via ONVIF</span></div>${chave('ptz')}</div>
+      <div class="sw-row" data-csw="infravermelho"><div class="bd"><b>Infravermelho</b>
+        <span>A câmera tem iluminação própria para operar no escuro</span></div>${chave('infravermelho')}</div>
+
+      <div class="form-grid" style="margin-top:14px">
+        <div class="field"><label for="cLimFace">Limiar facial (%)</label>
+          <input class="inp mono" id="cLimFace" type="number" min="50" max="100" value="${pct('limiar_facial',0.88)}">
+          <span class="hint">Abaixo disto a captura não é atribuída a ninguém. Baixar aumenta o falso positivo.</span></div>
+        <div class="field"><label for="cLimObj">Limiar de objeto (%)</label>
+          <input class="inp mono" id="cLimObj" type="number" min="10" max="100" value="${pct('limiar_objeto',0.65)}"></div>
+        <div class="field"><label for="cRet">Retenção (dias)</label>
+          <input class="inp mono" id="cRet" type="number" min="1" max="3650" value="${v('retencao_dias',90)}"></div>
+        <div class="field"><label for="cLat">Latitude</label>
+          <input class="inp mono" id="cLat" type="number" step="0.00001" value="${c&&c.latitude!=null?c.latitude:''}" placeholder="-1.45502"></div>
+        <div class="field"><label for="cLon">Longitude</label>
+          <input class="inp mono" id="cLon" type="number" step="0.00001" value="${c&&c.longitude!=null?c.longitude:''}" placeholder="-48.49017"></div>
+      </div>
+      ${novo ? '' : `<div class="note" style="margin-top:15px">${ico('alert',15)}<div>Mudança de limiar facial fica registrada com destaque na trilha de auditoria. O worker relê a configuração no próximo ciclo.</div></div>`}
+    </div>
+    <div class="modal-ft">
+      ${novo ? '' : `<button class="btn btn-danger" id="cDel">${ico('trash',14)} Remover câmera</button>`}
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="cSave">${ico('check',14)} ${novo ? 'Cadastrar câmera' : 'Salvar alterações'}</button>
+    </div>`);
+
+  $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
+  $$('[data-csw]', box).forEach(r => r.onclick = () => {
+    const k = r.dataset.csw; flags[k] = !flags[k];
+    r.querySelector('.sw').classList.toggle('on', flags[k]);
+  });
+
+  const bdel = $('#cDel');
+  if(bdel) bdel.onclick = async () => {
+    const motivo = await confirmar('Remover câmera',
+      `Remover <b>${esc(c.codigo)}</b> — ${esc(c.nome)} do parque?<br><br>` +
+      `As detecções já registradas por ela <b>são apagadas junto</b>: o vínculo é ` +
+      `<span class="mono">ON DELETE CASCADE</span>. Para só parar de processar, ` +
+      `mude o status para <b>Manutenção</b>.`,
+      {rotulo:'Remover', perigo:true, exigeTexto:'Motivo da remoção'});
+    if(!motivo) return;
+    try{
+      await API.removerCamera(c.codigo, motivo);
+      fecharModal();
+      toast('Câmera removida', `${c.codigo} saiu do parque.`, 'warn');
+      await carregarCatalogoCameras();
+      irPara('cams');
+    }catch(e){ erroToast(e); }
+  };
+
+  $('#cSave').onclick = async () => {
+    const num = (id, padrao) => {
+      const n = parseFloat($(id).value);
+      return Number.isFinite(n) ? n : padrao;
+    };
+    const texto = id => $(id).value.trim();
+
+    const dados = {
+      nome: texto('#cNome'),
+      setor: texto('#cSetor'),
+      cena: $('#cCena').value,
+      status: $('#cStatus').value,
+      ip: texto('#cIp'),
+      rtsp_url: texto('#cRtsp'),
+      onvif_url: texto('#cOnvif'),
+      fabricante: texto('#cFab'),
+      modelo: texto('#cMod'),
+      resolucao: texto('#cRes') || '1920x1080',
+      fps: Math.round(num('#cFps', 25)),
+      codec: $('#cCodec').value,
+      bitrate_kbps: Math.round(num('#cBitrate', 4096)),
+      retencao_dias: Math.round(num('#cRet', 90)),
+      limiar_facial: Math.round(num('#cLimFace', 88)) / 100,
+      limiar_objeto: Math.round(num('#cLimObj', 65)) / 100,
+      latitude: texto('#cLat') === '' ? null : num('#cLat', null),
+      longitude: texto('#cLon') === '' ? null : num('#cLon', null),
+      ...flags
+    };
+
+    // Validar aqui evita um 422 que a interface teria de traduzir depois.
+    const erro =
+      dados.nome.length < 3       ? ['Nome inválido', 'Informe ao menos 3 caracteres.'] :
+      !dados.setor                ? ['Setor obrigatório', 'Informe o setor onde a câmera está.'] :
+      !dados.rtsp_url             ? ['RTSP obrigatório', 'Sem endereço RTSP não há imagem para processar.'] :
+      !/^\d+x\d+$/.test(dados.resolucao) ? ['Resolução inválida', 'Use o formato 1920x1080.'] :
+      (dados.fps < 1 || dados.fps > 120) ? ['FPS fora da faixa', 'Informe entre 1 e 120.'] :
+      (dados.limiar_facial < 0.5 || dados.limiar_facial > 1) ? ['Limiar facial fora da faixa', 'Informe entre 50% e 100%.'] :
+      (dados.limiar_objeto < 0.1 || dados.limiar_objeto > 1) ? ['Limiar de objeto fora da faixa', 'Informe entre 10% e 100%.'] :
+      null;
+    if(erro){ toast(erro[0], erro[1], 'err'); return; }
+
+    const btn = $('#cSave');
+    btn.disabled = true;
+    try{
+      let salva;
+      if(novo){
+        const cod = texto('#cCodigo');
+        if(cod) dados.codigo = cod;
+        salva = await API.criarCamera(dados);
+      }else{
+        salva = await API.salvarCamera(c.codigo, dados);
+      }
+      fecharModal();
+      toast(novo ? 'Câmera cadastrada' : 'Configuração salva',
+        `${salva.codigo} — ${salva.nome}.`, 'ok');
+      await carregarCatalogoCameras();
+      irPara('cams');
+    }catch(e){
+      btn.disabled = false;
+      erroToast(e);
+    }
+  };
+}
+
 async function abrirCamera(codigo){
   const box = abrirModal(`<div class="modal-bd">${carregando()}</div>`, true);
   let c, evts;
@@ -553,39 +757,89 @@ async function abrirCamera(codigo){
 
   const st = STATUS_CAMERA[c.status] || {};
   const itens = evts.itens || [];
-  box.className = 'modal wide';
+  box.className = 'modal theater';
+  // Proporção da própria câmera, não um 16/9 presumido.
+  const [rw, rh] = String(c.resolucao || '').split('x').map(Number);
+  const razaoInicial = (rw > 0 && rh > 0) ? rw / rh : 16 / 9;
+  const ALTURA_MAX_VH = 68;
+
+  // Imagem inteira e sem tarja preta só coexistem de um jeito: a caixa tem de
+  // ter exatamente a proporção do quadro. `aspect-ratio` sozinho não garante
+  // isso — com um `max-height` que chega a valer, a caixa fica mais larga que
+  // a proporção e o quadro passa a flutuar entre duas faixas pretas.
+  // Amarrar a largura ao teto de altura resolve nos dois sentidos: na coluna
+  // larga manda o teto, na estreita manda a coluna, e em ambos a caixa sai na
+  // proporção exata.
+  const larguraCaixa = razao =>
+    `min(100%, calc(${ALTURA_MAX_VH}vh * ${razao.toFixed(4)}))`;
+  const medidaCaixa = razao =>
+    `width:${larguraCaixa(razao)};aspect-ratio:${razao.toFixed(4)};margin-inline:auto`;
+  const aplicarMedida = (el, razao) => {
+    el.style.width = larguraCaixa(razao);
+    el.style.aspectRatio = String(razao.toFixed(4));
+  };
   box.innerHTML = `
     <div class="modal-hd"><h3>${esc(c.nome)}</h3><span class="chip ${st.cls}">${esc(c.codigo)}</span>
       <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
     <div class="modal-bd">
-      <div style="position:relative;aspect-ratio:16/9;background:#000;border-radius:var(--r-m);overflow:hidden;border:1px solid var(--line);margin-bottom:15px">
-        <canvas id="camModalFeed" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+      <div class="cam-ficha">
+        <div style="min-width:0">
+          <div id="camQuadro" style="position:relative;${medidaCaixa(razaoInicial)};background:#000;border-radius:var(--r-m);overflow:hidden;border:1px solid var(--line)">
+            <canvas id="camModalFeed" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <span class="chip c-gray mono" id="camRes" style="position:absolute;right:9px;bottom:9px;font-size:10.5px;opacity:.85">—</span>
+          </div>
+        </div>
+        <div class="cam-ficha-lado">
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Situação</div>
+            <dl class="kv">
+              <dt>Status</dt><dd><span class="chip ${st.cls}">${esc(st.lbl || c.status)}</span></dd>
+              <dt>Latência</dt><dd class="mono">${c.status === 'ONLINE' ? (c.latencia_ms || 0) + ' ms' : '—'}</dd>
+              <dt>Analíticos</dt><dd><div style="display:flex;gap:3px;flex-wrap:wrap">
+                ${c.analitico_facial ? '<span class="chip c-amber">Facial</span>' : ''}
+                ${c.analitico_objeto ? '<span class="chip c-green">Objetos</span>' : ''}
+                ${c.analitico_acao ? '<span class="chip c-violet">Ações</span>' : ''}
+                ${c.ptz ? '<span class="chip c-blue">PTZ</span>' : ''}
+                ${!c.analitico_facial && !c.analitico_objeto && !c.analitico_acao ? '<span class="chip c-gray">Nenhum</span>' : ''}</div></dd>
+            </dl>
+          </div>
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Equipamento</div>
+            <dl class="kv">
+              <dt>Código</dt><dd class="mono">${esc(c.codigo)}</dd>
+              <dt>Setor</dt><dd>${esc(c.setor)}</dd>
+              <dt>Fabricante</dt><dd>${esc(c.fabricante)} ${esc(c.modelo)}</dd>
+              <dt>Resolução</dt><dd class="mono">${esc(c.resolucao)} @ ${c.fps}fps</dd>
+              <dt>Codec</dt><dd>${esc(c.codec)} · ${fmtNum(c.bitrate_kbps)} kbps</dd>
+            </dl>
+          </div>
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Rede</div>
+            <dl class="kv">
+              <dt>IP</dt><dd class="mono">${esc(c.ip) || '—'}</dd>
+              <dt>RTSP</dt><dd class="mono" style="font-size:10.5px;word-break:break-all;line-height:1.4">${esc(c.rtsp_url)}</dd>
+              <dt>Coordenadas</dt><dd class="mono">${c.latitude != null ? c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) : '—'}</dd>
+            </dl>
+          </div>
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Análise</div>
+            <dl class="kv">
+              <dt>Limiar facial</dt><dd class="mono">${Math.round(c.limiar_facial*100)}%</dd>
+              <dt>Limiar objeto</dt><dd class="mono">${Math.round(c.limiar_objeto*100)}%</dd>
+              <dt>Retenção</dt><dd>${c.retencao_dias} dias</dd>
+            </dl>
+          </div>
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Zonas configuradas</div>
+            <div class="zone-list">${(c.zonas||[]).map(z => `<div class="zone-item">
+              <span class="zone-swatch" style="background:${esc(z.cor)}"></span><b>${esc(z.nome)}</b>
+              <span class="chip c-gray">${z.tipo === 'LINHA' ? 'Linha' : 'Polígono'}</span>
+              <span class="mono" style="font-size:10.5px;color:var(--txt-4)">${(z.pontos||[]).length} pts</span></div>`).join('')
+              || '<p class="hint">Nenhuma zona definida.</p>'}</div>
+          </div>
+        </div>
       </div>
-      <div class="split" style="gap:16px">
-        <dl class="kv">
-          <dt>Código</dt><dd class="mono">${esc(c.codigo)}</dd>
-          <dt>Fabricante</dt><dd>${esc(c.fabricante)} ${esc(c.modelo)}</dd>
-          <dt>Endereço IP</dt><dd class="mono">${esc(c.ip)}</dd>
-          <dt>RTSP</dt><dd class="mono" style="font-size:11px;word-break:break-all">${esc(c.rtsp_url)}</dd>
-          <dt>Setor</dt><dd>${esc(c.setor)}</dd>
-          <dt>Coordenadas</dt><dd class="mono">${c.latitude != null ? c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) : '—'}</dd>
-        </dl>
-        <dl class="kv">
-          <dt>Resolução</dt><dd class="mono">${esc(c.resolucao)} @ ${c.fps}fps</dd>
-          <dt>Codec</dt><dd>${esc(c.codec)} · ${fmtNum(c.bitrate_kbps)} kbps</dd>
-          <dt>Limiar facial</dt><dd class="mono">${Math.round(c.limiar_facial*100)}%</dd>
-          <dt>Limiar objeto</dt><dd class="mono">${Math.round(c.limiar_objeto*100)}%</dd>
-          <dt>Retenção</dt><dd>${c.retencao_dias} dias</dd>
-          <dt>Latência</dt><dd class="mono">${c.latencia_ms || 0} ms</dd>
-        </dl>
-      </div>
-      <div class="eyebrow" style="margin:16px 0 8px">Zonas configuradas</div>
-      <div class="zone-list">${(c.zonas||[]).map(z => `<div class="zone-item">
-        <span class="zone-swatch" style="background:${esc(z.cor)}"></span><b>${esc(z.nome)}</b>
-        <span class="chip c-gray">${z.tipo === 'LINHA' ? 'Linha virtual' : 'Polígono'}</span>
-        <span class="mono" style="font-size:10.5px;color:var(--txt-4)">${(z.pontos||[]).length} pts</span></div>`).join('')
-        || '<p class="hint">Nenhuma zona definida.</p>'}</div>
-      <div class="eyebrow" style="margin:16px 0 8px">Últimos eventos desta câmera</div>
+      <div class="eyebrow" style="margin:18px 0 8px">Últimos eventos desta câmera</div>
       ${itens.length ? `<div class="rank" style="border:1px solid var(--line-soft);border-radius:var(--r-m)">
         ${itens.map(d => `<div class="rank-row clickable" data-det="${esc(d.codigo)}" style="cursor:pointer">
           <canvas data-snap="${snapAttr(d)}" width="46"></canvas>
@@ -604,7 +858,34 @@ async function abrirCamera(codigo){
   $$('[data-det]', box).forEach(r => r.onclick = () => { fecharModal(); abrirDeteccao(r.dataset.det); });
 
   const cv = $('#camModalFeed');
-  if(c.status === 'ONLINE'){ FEED.register(cv, c, {zonas: true}); FEED.start(); }
+  if(c.status === 'ONLINE'){
+    // `hd`: pede o quadro em resolução nativa à ponte RTSP.
+    // `conter`: mostra o campo de visão inteiro, que é o que se precisa ver
+    // para ajustar a câmera — o corte do mosaico escondia as bordas.
+    FEED.register(cv, c, {zonas: true, hd: true, conter: true});
+    FEED.start();
+    // A resolução da ficha é a cadastrada, e ela pode divergir do que a
+    // câmera entrega. Quem decide a proporção da caixa é o quadro que chegou:
+    // vindo do próprio JPEG, não sobra tarja nem com o cadastro errado.
+    const selo = $('#camRes');
+    const quadro = $('#camQuadro');
+    const relogio = setInterval(() => {
+      if(!cv.isConnected){ clearInterval(relogio); return; }
+      const t = FEED.tiles.find(x => x.canvas === cv);
+      const img = t && t.img;
+      if(img && img.naturalWidth){
+        selo.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+        const real = img.naturalWidth / img.naturalHeight;
+        // Propriedade por propriedade, e nao `replace` sobre o cssText: o
+        // navegador normaliza o texto do atributo (espacos, ordem), e a
+        // substituicao textual passaria batido sem erro nenhum.
+        if(quadro && Math.abs(real - razaoInicial) > 0.01){
+          aplicarMedida(quadro, real);
+        }
+        clearInterval(relogio);
+      }
+    }, 400);
+  }
   else renderOnce(cv, c);
 
   const ed = $('#camGoEdit'); if(ed) ed.onclick = () => { fecharModal(); editarCamera(c.codigo); };

@@ -1,4 +1,4 @@
-"""Autenticação e recuperação de senha em três etapas.
+﻿"""Autenticação e recuperação de senha em três etapas.
 
 Etapa 1  POST /auth/recuperar          -> gera e envia o código
 Etapa 2  POST /auth/verificar-codigo   -> confere o código, não troca a senha
@@ -38,7 +38,7 @@ from app.security import (
 from app.services.notificacoes import enviar_codigo_recuperacao
 from app.tipos import como_utc
 
-log = logging.getLogger("vigia.auth")
+log = logging.getLogger("seguranca.auth")
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 
@@ -353,3 +353,4 @@ async def trocar_senha(dados: TrocarSenhaIn, request: Request,
     await audit.registrar(db, acao="SENHA_RESET", descricao="Senha alterada pelo próprio usuário",
                           severidade="warn", usuario=usuario, request=request)
     return {"mensagem": "Senha alterada."}
+

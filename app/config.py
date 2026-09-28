@@ -1,4 +1,4 @@
-"""Configuração central do VIGIA.
+﻿"""Configuração central do seguranca.
 
 Dois modos de operação, decididos pelas variáveis de ambiente:
 
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- Aplicação -------------------------------------------------------
-    APP_NAME: str = "VIGIA — Centro Integrado de Videomonitoramento"
+    APP_NAME: str = "seguranca — Centro Integrado de Videomonitoramento"
     APP_VERSION: str = "4.0.0"
     ENV: str = "development"
     DEBUG: bool = False
@@ -33,8 +33,8 @@ class Settings(BaseSettings):
 
     # --- Banco -----------------------------------------------------------
     # SQLite por padrão. Para produção:
-    #   postgresql+asyncpg://vigia:vigia@localhost:5432/vigia
-    DATABASE_URL: str = f"sqlite+aiosqlite:///{RAIZ / 'vigia.db'}"
+    #   postgresql+asyncpg://seguranca:seguranca@localhost:5432/seguranca
+    DATABASE_URL: str = f"sqlite+aiosqlite:///{RAIZ / 'seguranca.db'}"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
 
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
 
     # --- Evidências (S3 compatível) --------------------------------------
     S3_ENDPOINT: str = ""
-    S3_BUCKET: str = "vigia-evidencias"
+    S3_BUCKET: str = "seguranca-evidencias"
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
 
@@ -175,3 +175,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+

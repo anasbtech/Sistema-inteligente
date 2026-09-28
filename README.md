@@ -1,11 +1,11 @@
-# Segurança inteligente — Centro Integrado de Videomonitoramento
+﻿# Segurança inteligente — Centro Integrado de Videomonitoramento
 
 Sistema completo de videomonitoramento com reconhecimento facial, detecção de
 objetos e análise de ações. **Front-end, back-end e banco num único projeto
 Python** — um comando e está no ar.
 
 ```bash
-pip install -r requirements-min.txt
+pip install -r config/requirements-min.txt
 python run.py
 ```
 
@@ -81,7 +81,7 @@ ficha explica por que o ID não mudou.
 A troca é por variável de ambiente — nenhuma linha de código muda:
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://vigia:vigia@localhost:5432/vigia
+DATABASE_URL=postgresql+asyncpg://seguranca:seguranca@localhost:5432/seguranca
 REDIS_URL=redis://localhost:6379/0
 SIMULADOR=false
 ```
@@ -154,7 +154,7 @@ app/
     notificacoes.py        envio do código de recuperação
 frontend/
   templates/index.html     página única
-  static/css/vigia.css     tema do console operacional
+  static/css/seguranca.css     tema do console operacional
   static/js/
     api.js                 cliente da API (tokens, renovação, WebSocket)
     ui.js                  formatação, toasts, modais, gráficos SVG
@@ -193,7 +193,7 @@ python run.py --recarregar        # recarrega ao editar o código
 **1. Instale os modelos** (opcionais — sem eles o resto funciona):
 
 ```bash
-pip install -r requirements.txt     # inclui insightface, ultralytics, opencv
+pip install -r config/requirements.txt     # inclui insightface, ultralytics, opencv
 ```
 
 Com isso, `POST /pessoas/{id}/amostras` passa a extrair o template de uma foto
@@ -203,7 +203,7 @@ real e `POST /pessoas/buscar` faz identificação 1:N a partir de imagem.
 
 ```bash
 docker compose up -d postgres redis
-export DATABASE_URL=postgresql+asyncpg://vigia:vigia@localhost:5432/vigia
+export DATABASE_URL=postgresql+asyncpg://seguranca:seguranca@localhost:5432/seguranca
 export REDIS_URL=redis://localhost:6379/0
 psql $DATABASE_URL -f sql/01_postgres.sql    # HNSW + triggers
 python run.py --reset
@@ -290,3 +290,5 @@ Aqui o código para e a instituição começa:
   aplicação (o `REVOKE` está comentado em `sql/01_postgres.sql`) e mantenha
   réplica em armazenamento WORM.
 - **`SIMULADOR=false`.** Em produção, sempre.
+
+

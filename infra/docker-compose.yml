@@ -1,4 +1,4 @@
-# ======================================================================
+﻿# ======================================================================
 # OPCIONAL — só para produção.
 # Para experimentar o sistema: `python run.py` (SQLite, sem Docker).
 #
@@ -11,16 +11,16 @@ services:
   # ------------------------------------------------------------------
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: vigia-postgres
+    container_name: seguranca-postgres
     environment:
-      POSTGRES_USER: vigia
-      POSTGRES_PASSWORD: vigia
-      POSTGRES_DB: vigia
+      POSTGRES_USER: seguranca
+      POSTGRES_PASSWORD: seguranca
+      POSTGRES_DB: seguranca
     ports: ["5432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vigia"]
+      test: ["CMD-SHELL", "pg_isready -U seguranca"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -30,7 +30,7 @@ services:
   # ------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    container_name: vigia-redis
+    container_name: seguranca-redis
     command: redis-server --appendonly yes
     ports: ["6379:6379"]
     volumes:
@@ -46,7 +46,7 @@ services:
   # ------------------------------------------------------------------
   minio:
     image: minio/minio:latest
-    container_name: vigia-minio
+    container_name: seguranca-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -60,7 +60,7 @@ services:
   # ------------------------------------------------------------------
   mediamtx:
     image: bluenviron/mediamtx:latest
-    container_name: vigia-mediamtx
+    container_name: seguranca-mediamtx
     environment:
       MTX_PROTOCOLS: tcp
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
@@ -69,18 +69,18 @@ services:
       - "8889:8889"   # WebRTC (WHEP)
       - "8888:8888"   # HLS
     volumes:
-      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./config/mediamtx.yml:/mediamtx.yml:ro
 
   # ------------------------------------------------------------------
   # API
   # ------------------------------------------------------------------
   app:
     build: .
-    container_name: vigia-app
+    container_name: seguranca-app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://vigia:vigia@postgres:5432/vigia
+      DATABASE_URL: postgresql+asyncpg://seguranca:seguranca@postgres:5432/seguranca
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT: http://minio:9000
       DEVICE: cpu
@@ -99,11 +99,11 @@ services:
   # ------------------------------------------------------------------
   worker:
     build: .
-    container_name: vigia-worker
+    container_name: seguranca-worker
     command: python -m worker.run --todas
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://vigia:vigia@postgres:5432/vigia
+      DATABASE_URL: postgresql+asyncpg://seguranca:seguranca@postgres:5432/seguranca
       REDIS_URL: redis://redis:6379/0
       DEVICE: cpu
     depends_on:
@@ -121,3 +121,4 @@ volumes:
   redisdata:
   miniodata:
   modelos:
+

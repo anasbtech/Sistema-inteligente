@@ -61,7 +61,9 @@ def testar(codigo: str, url: str, resolucao_ficha: str = "") -> bool:
     print(f"  primeiro quadro em {decorrido:.1f}s")
     print(f"  entregue   {largura}x{altura}  ({len(leitor.quadro)/1024:.0f} KiB em JPEG)")
     if resolucao_ficha:
-        print(f"  na ficha   {resolucao_ficha}  (o leitor reduz para {video.LARGURA_SAIDA}px de largura)")
+        print(f"  na ficha   {resolucao_ficha}")
+    print(f"  mosaico    reduzido para {video.LARGURA_SAIDA}px de largura, JPEG {video.QUALIDADE_JPEG}")
+    print(f"  detalhe    resolução nativa, JPEG {video.QUALIDADE_DETALHE} (ficha da câmera, hd=1)")
     print("  RESULTADO  OK")
     leitor.parar()
     return True
