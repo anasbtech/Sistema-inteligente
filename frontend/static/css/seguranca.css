@@ -575,17 +575,10 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .pg.on{background:var(--acc-dim);border-color:var(--acc);color:var(--acc-2);font-weight:600}
 .pg:disabled{opacity:.35;cursor:not-allowed}
 
-/* Timeline auditoria */
-.tl{position:relative;padding-left:22px}
-.tl::before{content:"";position:absolute;left:5px;top:5px;bottom:5px;width:1px;background:var(--line)}
-.tl-item{position:relative;padding:0 0 15px}
-.tl-item::before{content:"";position:absolute;left:-21px;top:5px;width:9px;height:9px;border-radius:50%;background:var(--ink-850);border:2px solid var(--acc)}
-.tl-item.warn::before{border-color:var(--amber)}
-.tl-item.err::before{border-color:var(--red)}
-.tl-item.ok::before{border-color:var(--green)}
-.tl-item b{font-size:12.5px;font-weight:600;color:var(--txt-1)}
-.tl-item p{margin:2px 0 0;font-size:11.5px;color:var(--txt-2);line-height:1.45}
-.tl-item .ts{font-family:var(--f-mono);font-size:10.5px;color:var(--txt-4)}
+/* Tabela de auditoria */
+table.tbl tbody tr.audit-row{min-height:52px}
+table.tbl tbody tr.audit-row td{padding:12px 13px;vertical-align:middle}
+table.tbl tbody tr.audit-row:hover{background:rgba(53,167,222,0.05)}
 
 .split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media (max-width:980px){.split{grid-template-columns:1fr}}

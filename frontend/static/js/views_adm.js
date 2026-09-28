@@ -331,41 +331,52 @@ async function renderAuditoria(alvo){
       <button class="btn btn-ghost btn-sm" id="auVerificar">${ico('shield',14)} Verificar cadeia</button>
       ${API.pode('export') ? `<button class="btn btn-ghost btn-sm" id="auExp">${ico('dl',14)} Exportar</button>` : ''}
     </div></div>
-  <div class="note" style="margin-bottom:13px">${ico('lock',15)}<div>Registros encadeados por hash e somente-inserção — uma trigger no banco recusa <span class="mono">UPDATE</span> e <span class="mono">DELETE</span>. Qualquer consulta a dado biométrico, exportação ou mudança de limiar fica vinculada à matrícula do operador.</div></div>
   <div id="auVerif"></div>
-  <div class="split" style="align-items:flex-start">
-    <div class="panel"><div class="panel-hd"><h3>Eventos recentes</h3></div>
-      <div class="panel-bd"><div class="tl" id="auTl">${carregando()}</div></div></div>
-    <div class="panel"><div class="panel-hd"><h3>Registro completo</h3></div>
-      <div class="panel-bd tight"><div id="auCorpo">${carregando()}</div></div></div>
-  </div>`;
+  <div class="note" style="margin-bottom:14px">${ico('lock',15)}<div>Registros encadeados por hash e somente-inserção — uma trigger no banco recusa <span class="mono">UPDATE</span> e <span class="mono">DELETE</span>. Consulta de biométricos, exportação ou mudança de limiar fica vinculada à matrícula do operador.</div></div>
+  <div class="panel"><div class="panel-bd tight"><div id="auCorpo">${carregando()}</div></div></div>`;
 
   const carregar = async () => {
     const corpo = $('#auCorpo');
     FILTRO.audit = {q: $('#auQ').value.trim(), acao: $('#auAcao').value};
     try{
       const r = await API.auditoria({
-        pagina: PAG.audit, por_pagina: 20,
+        pagina: PAG.audit, por_pagina: 30,
         q: FILTRO.audit.q || undefined, acao: FILTRO.audit.acao || undefined
       });
       const itens = r.itens || [];
 
-      $('#auTl').innerHTML = itens.slice(0, 10).map(a => `
-        <div class="tl-item ${esc(a.severidade)}">
-          <b>${esc(a.descricao)}</b>
-          <p>${esc(a.usuario_nome || a.usuario_email || 'sistema')} · <span class="mono">${esc(a.acao)}</span>${a.alvo && a.alvo !== '—' ? ` · alvo <span class="mono">${esc(a.alvo)}</span>` : ''}</p>
-          <span class="ts">${fmtDT(a.ocorrido_em)} · ${esc(a.ip || '—')}</span>
-        </div>`).join('') || '<p class="hint">Nenhum evento.</p>';
+      const iconoPorAcao = (acao) => {
+        if(acao.includes('LOGIN')) return 'key';
+        if(acao.includes('LOGOUT')) return 'logout';
+        if(acao.includes('DELETE')) return 'trash';
+        if(acao.includes('UPDATE')) return 'edit';
+        if(acao.includes('EXPORT')) return 'dl';
+        if(acao.includes('CADEIA')) return 'shield';
+        return 'log';
+      };
 
-      corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl" style="min-width:560px">
-        <thead><tr><th>Data / hora</th><th>Ação</th><th>Usuário</th><th>Alvo</th><th>Hash</th></tr></thead>
-        <tbody>${itens.map(a => `<tr>
-          <td class="td-ts">${fmtDT(a.ocorrido_em)}</td>
-          <td><b>${esc(a.acao)}</b><br><span class="td-ts">${esc(a.descricao)}</span></td>
-          <td>${esc(a.usuario_nome||'—')}<br><span class="td-ts">${esc(a.usuario_email||'')}</span></td>
-          <td class="td-id">${esc(a.alvo||'—')}</td>
-          <td class="mono" style="font-size:10px;color:var(--txt-4)" title="${esc(a.hash_atual)}">${esc((a.hash_atual||'').slice(0,12))}…</td>
-        </tr>`).join('') || `<tr><td colspan="5">${vazio('log','Nenhum registro.')}</td></tr>`}
+      corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
+        <thead><tr>
+          <th style="width:8px"></th>
+          <th>Data / hora</th>
+          <th>Ação</th>
+          <th>Descrição</th>
+          <th>Usuário</th>
+          <th>Alvo</th>
+          <th style="width:80px">IP</th></tr></thead>
+        <tbody>${itens.map(a => `<tr class="audit-row">
+          <td style="padding:0"><div style="height:100%;min-height:52px;width:3px;background:${
+            a.severidade === '4' ? 'var(--red)' :
+            a.severidade === '3' ? 'var(--amber)' :
+            a.severidade === '2' ? 'var(--green)' : 'var(--acc)'
+          }"></div></td>
+          <td class="mono" style="font-size:12px;white-space:nowrap"><b>${fmtDT(a.ocorrido_em).split(' ')[0]}</b><br><span style="color:var(--txt-4)">${fmtDT(a.ocorrido_em).split(' ')[1]}</span></td>
+          <td><div style="display:flex;align-items:center;gap:7px"><span style="width:20px;text-align:center">${ico(iconoPorAcao(a.acao),14)}</span><b style="white-space:nowrap">${esc(a.acao)}</b></div></td>
+          <td style="max-width:280px"><span style="color:var(--txt-2);font-size:13px">${esc(a.descricao || '—')}</span></td>
+          <td><b style="display:block">${esc(a.usuario_nome||'—')}</b><span class="mono" style="font-size:11px;color:var(--txt-3)">${esc((a.usuario_email||'').split('@')[0]||'')}</span></td>
+          <td class="mono" style="font-size:12px;color:var(--txt-3);max-width:120px;overflow:hidden;text-overflow:ellipsis" title="${esc(a.alvo||'')}">${esc(a.alvo||'—')}</td>
+          <td class="mono" style="font-size:11px;color:var(--txt-4)">${esc(a.ip||'—')}</td>
+        </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;padding:24px">${vazio('log','Nenhum registro.')}</td></tr>`}
         </tbody></table></div>
         ${pagerHTML(r.total, r.pagina, r.por_pagina, 'audit')}`;
       ligarPager(corpo, 'audit', carregar);
