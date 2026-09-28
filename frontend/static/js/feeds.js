@@ -582,12 +582,13 @@ const FEED={
       if(vivo){
         pintarAoVivo(ctx,t.img,W,H,t.opts.conter);
         if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,sc,W,H);
-        if(t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
-        pintarIdentificacoes(ctx,FEED.identificacoesDe(t.cam.codigo),W,H);
       }else{
         ctx.fillStyle='#0A0E15';
         ctx.fillRect(0,0,W,H);
       }
+      // Detecções (caixas e nomes) são sempre mostradas, independente do vídeo
+      if(t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
+      pintarIdentificacoes(ctx,FEED.identificacoesDe(t.cam.codigo),W,H);
       if(t.opts.osd!==false)drawOSD(ctx,t.cam,W,H);
     });
   },
