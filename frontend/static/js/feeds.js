@@ -578,18 +578,16 @@ const FEED={
       if(!seen.has(t.cam.codigo)){sc.step(dt);seen.add(t.cam.codigo)}
       const ctx=t.ctx,W=t.canvas.width,H=t.canvas.height;
       const vivo=t.img&&t.img.naturalWidth>0;
-      // Sobre vídeo real não há agentes sintéticos: a caixa ali representa o
-      // que o modelo detectou de verdade, e vem do worker pelo WebSocket.
-      const agents=vivo?null:drawScene(ctx,sc,W,H,{noite:FEED.noite});
-      if(vivo)pintarAoVivo(ctx,t.img,W,H,t.opts.conter);
-      if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,sc,W,H);
-      if(t.opts.boxes!==false&&FEED.mostrarCaixas){
-        if(agents)drawBoxes(ctx,sc,agents,W,H,W/640);
-        else pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
+      // Mostra vídeo real quando carregado; enquanto carrega, canvas fica escuro
+      if(vivo){
+        pintarAoVivo(ctx,t.img,W,H,t.opts.conter);
+        if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,sc,W,H);
+        if(t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
+        pintarIdentificacoes(ctx,FEED.identificacoesDe(t.cam.codigo),W,H);
+      }else{
+        ctx.fillStyle='#0A0E15';
+        ctx.fillRect(0,0,W,H);
       }
-      // Renderizar nomes das pessoas identificadas
-      pintarIdentificacoes(ctx,FEED.identificacoesDe(t.cam.codigo),W,H);
-      if(!vivo)drawFx(ctx,sc,W,H,t.opts.noise!==false);
       if(t.opts.osd!==false)drawOSD(ctx,t.cam,W,H);
     });
   },

@@ -276,7 +276,7 @@ async function indicadoresDaMarca(){
    ========================================================== */
 const VIEWS = {
   dash:       {t:'Dashboard operacional', s:'Visão geral em tempo real',              perm:'live'},
-  live:       {t:'Monitoramento ao vivo', s:'Mosaico de câmeras e eventos',           perm:'live'},
+  live:       {t:'Ao vivo', s:'Mosaico de câmeras e eventos',           perm:'live'},
   cams:       {t:'Câmeras',               s:'Cadastro, status e parâmetros de análise',perm:'live'},
   facial:     {t:'Reconhecimento facial', s:'Registros de identificação biométrica',  perm:'facial'},
   objects:    {t:'Detecção de objetos',   s:'Classificação de objetos por câmera',    perm:'facial'},
