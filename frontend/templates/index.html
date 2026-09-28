@@ -109,13 +109,12 @@
 
       <div class="field">
         <label for="loginUser">E-mail funcional ou matrícula</label>
-        <input class="inp" id="loginUser" type="text" autocomplete="username" placeholder="nome@pm.gov.br">
+        <input class="inp" id="loginUser" type="text" autocomplete="off" placeholder="nome@pm.gov.br" required>
       </div>
       <div class="field">
         <label for="loginPass">Senha</label>
         <div class="pw-wrap">
-          <input class="inp" id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••••">
-          <button class="pw-eye" type="button" data-pwtoggle="loginPass" aria-label="Mostrar senha"><svg width="17" height="17"><use href="#i-eye"/></svg></button>
+          <input class="inp" id="loginPass" type="password" autocomplete="off" placeholder="Sua senha segura" required>
         </div>
       </div>
       <div class="auth-row">
@@ -275,6 +274,8 @@
 <div class="modal-scrim" id="modalScrim" hidden><div class="modal" id="modalBox"></div></div>
 <div id="toasts"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/static/js/three-auth.js"></script>
 <script src="/static/js/feeds.js"></script>
 <script src="/static/js/api.js"></script>
 <script src="/static/js/ui.js"></script>
