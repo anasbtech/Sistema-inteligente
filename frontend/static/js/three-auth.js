@@ -1,133 +1,161 @@
 /* ==========================================================
-   Fundo do login — malha de nós conectados girando em WebGL.
+   Fundo do login — mosaico de câmeras com caixas de detecção,
+   no mesmo arranjo do video wall da sala de monitoramento.
    Exposto como window.AuthFX3D; quem liga e desliga é o app.js.
    ========================================================== */
 (function () {
   const AZUL = 0x35a7de;
   const AMBAR = 0xf0a02a;
-  const N_NOS = 150;
-  const RAIO = 26;
-  const DIST_LIGACAO = 9.5;
 
-  let renderer, scene, camera, grupo, nos, ligacoes, varredura;
-  let raf = null;
-  let pulsos = [];
-  let corBase, corPulso;
-  let t = 0;
+  const COLS = 4, LINHAS = 3;
+  const LARG = 16, ALT = 9;          // proporção do quadro, 16:9
+  const VAO = 2.4;                   // vão entre quadros
+  const N_CAIXAS = 9;                // detecções simultâneas no mosaico
 
-  function esferaFibonacci(n, raio) {
-    // Distribuição uniforme: o espiral de Fibonacci evita o acúmulo nos polos
-    // que uma amostragem ingênua de lat/long produz.
-    const pts = [];
-    const phi = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < n; i++) {
-      const y = 1 - (i / (n - 1)) * 2;
-      const r = Math.sqrt(1 - y * y);
-      const th = phi * i;
-      pts.push(new THREE.Vector3(Math.cos(th) * r * raio, y * raio, Math.sin(th) * r * raio));
+  let renderer, scene, camera, grupo, caixas = [];
+  let raf = null, t = 0, ultimo = 0;
+
+  const aleatorio = (a, b) => a + Math.random() * (b - a);
+
+  function retangulo(w, h) {
+    const x = w / 2, y = h / 2;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      -x, -y, 0, x, -y, 0,
+      x, -y, 0, x, y, 0,
+      x, y, 0, -x, y, 0,
+      -x, y, 0, -x, -y, 0
+    ]), 3));
+    return g;
+  }
+
+  /** Posição do canto inferior-esquerdo de cada quadro do mosaico. */
+  function quadros() {
+    const lista = [];
+    for (let l = 0; l < LINHAS; l++) {
+      for (let c = 0; c < COLS; c++) {
+        lista.push({
+          x: (c - (COLS - 1) / 2) * (LARG + VAO),
+          y: ((LINHAS - 1) / 2 - l) * (ALT + VAO)
+        });
+      }
     }
-    return pts;
+    return lista;
+  }
+
+  /** Sorteia onde e por quanto tempo uma caixa aparece. */
+  function reposicionar(caixa, painel) {
+    const p = painel[Math.floor(Math.random() * painel.length)];
+    const w = aleatorio(2.2, 5.4);
+    const h = aleatorio(2.6, 5.2);
+    caixa.malha.geometry.dispose();
+    caixa.malha.geometry = retangulo(w, h);
+    caixa.malha.position.set(
+      p.x + aleatorio(-(LARG - w) / 2, (LARG - w) / 2),
+      p.y + aleatorio(-(ALT - h) / 2, (ALT - h) / 2),
+      0.1
+    );
+    // Âmbar é a captura facial, azul é objeto — a mesma convenção do mosaico.
+    caixa.malha.material.color.setHex(Math.random() < 0.3 ? AMBAR : AZUL);
+    caixa.t = 0;
+    caixa.dur = aleatorio(1.6, 4.2);
+    caixa.espera = aleatorio(0, 2.4);
   }
 
   function construir(canvas) {
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x05080c, 0.016);
+    scene.fog = new THREE.FogExp2(0x05080c, 0.0075);
 
-    camera = new THREE.PerspectiveCamera(52, 1, 0.1, 400);
-    camera.position.set(0, 0, 74);
+    camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
+    camera.position.set(0, 0, 62);
 
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setClearColor(0x05080c, 1);
 
     grupo = new THREE.Group();
+    grupo.rotation.y = -0.16;
+    grupo.rotation.x = 0.05;
     scene.add(grupo);
 
-    const pts = esferaFibonacci(N_NOS, RAIO);
-    corBase = new THREE.Color(AZUL);
-    corPulso = new THREE.Color(AMBAR);
+    const painel = quadros();
 
-    // --- nós ---
-    const posNos = new Float32Array(N_NOS * 3);
-    const corNos = new Float32Array(N_NOS * 3);
-    pts.forEach((p, i) => {
-      posNos[i * 3] = p.x; posNos[i * 3 + 1] = p.y; posNos[i * 3 + 2] = p.z;
-      corNos[i * 3] = corBase.r; corNos[i * 3 + 1] = corBase.g; corNos[i * 3 + 2] = corBase.b;
+    // Fundo e moldura de cada quadro. A topologia é fixa: nada aqui muda
+    // depois, só as caixas por cima e a inclinação do grupo.
+    painel.forEach(p => {
+      const fundo = new THREE.Mesh(
+        new THREE.PlaneGeometry(LARG, ALT),
+        new THREE.MeshBasicMaterial({
+          color: 0x0b131c, transparent: true,
+          opacity: aleatorio(0.5, 0.82), depthWrite: false
+        })
+      );
+      fundo.position.set(p.x, p.y, 0);
+      grupo.add(fundo);
+
+      const moldura = new THREE.LineSegments(
+        retangulo(LARG, ALT),
+        new THREE.LineBasicMaterial({
+          color: AZUL, transparent: true, opacity: 0.2, depthWrite: false
+        })
+      );
+      moldura.position.set(p.x, p.y, 0.05);
+      grupo.add(moldura);
     });
-    const gNos = new THREE.BufferGeometry();
-    gNos.setAttribute('position', new THREE.BufferAttribute(posNos, 3));
-    gNos.setAttribute('color', new THREE.BufferAttribute(corNos, 3));
-    nos = new THREE.Points(gNos, new THREE.PointsMaterial({
-      size: 1.5, vertexColors: true, transparent: true, opacity: 0.95,
-      sizeAttenuation: true, depthWrite: false
-    }));
-    grupo.add(nos);
 
-    // --- ligações (topologia fixa: calculada uma vez, só o grupo gira) ---
-    const seg = [];
-    for (let i = 0; i < pts.length; i++) {
-      for (let j = i + 1; j < pts.length; j++) {
-        if (pts[i].distanceTo(pts[j]) < DIST_LIGACAO) {
-          seg.push(pts[i].x, pts[i].y, pts[i].z, pts[j].x, pts[j].y, pts[j].z);
-        }
-      }
-    }
-    const gLig = new THREE.BufferGeometry();
-    gLig.setAttribute('position', new THREE.BufferAttribute(new Float32Array(seg), 3));
-    ligacoes = new THREE.LineSegments(gLig, new THREE.LineBasicMaterial({
-      color: AZUL, transparent: true, opacity: 0.16, depthWrite: false
-    }));
-    grupo.add(ligacoes);
+    caixas = Array.from({ length: N_CAIXAS }, () => {
+      const malha = new THREE.LineSegments(
+        retangulo(3, 3),
+        new THREE.LineBasicMaterial({
+          color: AZUL, transparent: true, opacity: 0, depthWrite: false
+        })
+      );
+      grupo.add(malha);
+      const caixa = { malha, t: 0, dur: 1, espera: 0 };
+      reposicionar(caixa, painel);
+      caixa.espera = aleatorio(0, 3.5);   // entradas espalhadas no tempo
+      return caixa;
+    });
 
-    // --- anel de varredura ---
-    varredura = new THREE.Mesh(
-      new THREE.RingGeometry(RAIO * 1.28, RAIO * 1.32, 96),
-      new THREE.MeshBasicMaterial({
-        color: AZUL, transparent: true, opacity: 0.2,
-        side: THREE.DoubleSide, depthWrite: false
-      })
-    );
-    varredura.rotation.x = Math.PI / 2.35;
-    grupo.add(varredura);
-
-    // Nós que acendem em âmbar, como uma identificação sendo registrada.
-    pulsos = Array.from({ length: 7 }, () => ({
-      i: Math.floor(Math.random() * N_NOS),
-      fase: Math.random() * Math.PI * 2,
-      vel: 0.5 + Math.random() * 0.7
-    }));
-
+    grupo.userData.painel = painel;
     redimensionar();
   }
 
   function redimensionar() {
     if (!renderer) return;
-    const w = window.innerWidth, h = window.innerHeight;
+    const canvas = renderer.domElement;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    // A coluna da marca some abaixo de 760px; sem quadro válido não há o que
+    // dimensionar, e um aspect de 0 quebraria a matriz de projeção.
+    if (w < 2 || h < 2) return;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(w, h, false);
   }
 
-  function quadro() {
-    t += 0.005;
+  /** Entra depressa, permanece, sai devagar — como uma detecção confirmada. */
+  function envelope(k) {
+    if (k < 0.12) return k / 0.12;
+    if (k > 0.72) return Math.max(0, (1 - k) / 0.28);
+    return 1;
+  }
 
-    grupo.rotation.y += 0.0016;
-    grupo.rotation.x = Math.sin(t * 0.4) * 0.16;
+  function quadro(agora) {
+    const dt = Math.min((agora - ultimo) / 1000 || 0, 0.05);
+    ultimo = agora;
+    t += dt;
 
-    varredura.rotation.z += 0.004;
-    varredura.material.opacity = 0.12 + (Math.sin(t * 1.6) + 1) * 0.06;
-    ligacoes.material.opacity = 0.11 + (Math.sin(t * 0.9) + 1) * 0.035;
+    // Respiração lenta do mosaico, para o fundo não ficar estático.
+    grupo.rotation.y = -0.16 + Math.sin(t * 0.17) * 0.05;
+    grupo.rotation.x = 0.05 + Math.cos(t * 0.13) * 0.025;
 
-    const cores = nos.geometry.attributes.color;
-    pulsos.forEach(p => {
-      const k = (Math.sin(t * p.vel * 3 + p.fase) + 1) / 2;
-      cores.setXYZ(p.i,
-        corBase.r + (corPulso.r - corBase.r) * k,
-        corBase.g + (corPulso.g - corBase.g) * k,
-        corBase.b + (corPulso.b - corBase.b) * k);
-      if (k < 0.02) p.i = Math.floor(Math.random() * N_NOS);
+    caixas.forEach(c => {
+      if (c.espera > 0) { c.espera -= dt; return; }
+      c.t += dt;
+      const k = c.t / c.dur;
+      if (k >= 1) { reposicionar(c, grupo.userData.painel); return; }
+      c.malha.material.opacity = envelope(k) * 0.85;
     });
-    cores.needsUpdate = true;
 
     renderer.render(scene, camera);
     raf = requestAnimationFrame(quadro);
@@ -144,7 +172,9 @@
         return;  // sem WebGL a tela segue utilizável, só sem o fundo
       }
       window.addEventListener('resize', redimensionar);
-      quadro();
+      redimensionar();
+      ultimo = performance.now();
+      raf = requestAnimationFrame(quadro);
     },
     parar() {
       if (raf !== null) { cancelAnimationFrame(raf); raf = null; }
