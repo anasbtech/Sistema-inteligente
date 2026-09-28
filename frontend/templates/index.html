@@ -67,12 +67,23 @@
 
   <div class="auth-pane">
     <!-- LOGIN -->
-    <div class="auth-card" id="viewLogin">
-      <div>
-        <div class="eyebrow" style="margin-bottom:8px">Acesso restrito</div>
-        <h2>Identificação do operador</h2>
+    <div class="auth-card term" id="viewLogin">
+      <div class="term-hd">
+        <span class="term-led" id="authLed" data-estado="checando"></span>
+        <span class="term-estado" id="authEstado">verificando terminal</span>
+        <span class="sp"></span>
+        <span class="mono term-relogio" id="authRelogio">--:--:--</span>
       </div>
-      <p class="lede">Use suas credenciais funcionais. Tentativas são registradas na trilha de auditoria.</p>
+
+      <div class="term-ident">
+        <span class="term-brasao"><svg width="26" height="26"><use href="#i-shield"/></svg></span>
+        <span class="term-nomes">
+          <b>SEGURANÇA</b>
+          <small>Centro Integrado de Videomonitoramento</small>
+        </span>
+      </div>
+
+      <div class="term-sep"><span>Acesso restrito</span></div>
 
       <div id="loginAlert"></div>
 
@@ -82,12 +93,19 @@
       </div>
       <div class="field">
         <label for="loginPass">Senha</label>
-        <input class="inp" id="loginPass" type="password" autocomplete="new-password" placeholder="Sua senha segura" required value="">
+        <input class="inp" id="loginPass" type="password" autocomplete="new-password" placeholder="Sua senha de acesso" required value="">
       </div>
       <div class="auth-row">
         <button class="link-q" id="goRecover">Esqueci minha senha</button>
       </div>
-      <button class="btn btn-primary btn-block" id="btnLogin"><svg width="16" height="16"><use href="#i-lock"/></svg> Entrar no sistema</button>
+      <button class="btn btn-primary btn-block" id="btnLogin"><svg width="16" height="16"><use href="#i-lock"/></svg> Autenticar</button>
+
+      <div class="term-pe">
+        <div class="term-comp mono" id="authComp"><span class="comp-vazio">consultando componentes…</span></div>
+        <p>Terminal monitorado. Toda tentativa de acesso — aceita ou recusada — é registrada na
+           trilha de auditoria com data, origem e identificação. O uso é restrito à finalidade
+           funcional autorizada.</p>
+      </div>
     </div>
 
     <!-- RECUPERAÇÃO DE SENHA -->
