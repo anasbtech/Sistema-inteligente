@@ -41,6 +41,8 @@ const COR_CLASSE={
   motocicleta:'#F0A02A', bicicleta:'#8C6FE0', animal:'#4ED1C5',
   mochila:'#E05F9E', volume:'#E8474D', capacete:'#5FC4F0', placa:'#2FB67C', arma:'#E8474D',
   veiculo:'#2FB67C',   // vocabulário da cena sintética, que não distingue o tipo
+  rosto:'#E05F9E',     // rosto e corpo saem de modelos diferentes sobre a mesma
+                       // pessoa: cores distintas deixam ver as duas caixas
   FACIAL:'#E05F9E'
 };
 /* Precisa cobrir o intervalo entre dois quadros analisados, com folga: se

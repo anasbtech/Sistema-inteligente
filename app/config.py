@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # Caixa menor que isso tem poucos pixels para classificar: o modelo
     # arrisca o rótulo, e é daí que sai a maior parte das trocas de classe.
     INFERENCIA_LADO_MIN_PX: int = 44
+    # Piso do rosto para *enquadrar* no vídeo — bem abaixo do que a
+    # identificação exige (MIN_FACE_PIXELS). Quem entra no campo da câmera
+    # aparece marcado desde longe; só perto o bastante é que vira registro.
+    INFERENCIA_ROSTO_MIN_PX: int = 24
 
     # --- Parque de câmeras -----------------------------------------------
     # O parque é homogêneo (Intelbras/Dahua, mesma credencial), então a URL

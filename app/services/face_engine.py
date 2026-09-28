@@ -134,7 +134,8 @@ def calcular_qualidade(recorte: np.ndarray, det_score: float,
 
 
 def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
-                  min_pixels: Optional[int] = None) -> List[FaceDetectada]:
+                  min_pixels: Optional[int] = None,
+                  min_nitidez: Optional[float] = None) -> List[FaceDetectada]:
     """Detecta rostos no quadro BGR e devolve embeddings normalizados.
 
     Resolução e nitidez têm piso próprio, aplicado antes da nota de
@@ -150,6 +151,10 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
     """
     limite = settings.MIN_FACE_QUALITY if min_qualidade is None else min_qualidade
     piso = settings.MIN_FACE_PIXELS if min_pixels is None else min_pixels
+    # Afrouxável porque nem todo chamador quer identificar: para enquadrar o
+    # rosto no vídeo, um rosto borrado ou pequeno ainda é um rosto que o
+    # operador precisa ver marcado.
+    piso_nitidez = settings.MIN_FACE_SHARPNESS if min_nitidez is None else min_nitidez
     modelo = obter_modelo()
     altura, largura = quadro.shape[:2]
 
@@ -163,7 +168,7 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
         if y2 - y1 < piso:
             continue
         recorte = quadro[y1:y2, x1:x2]
-        if _nitidez(recorte) < settings.MIN_FACE_SHARPNESS:
+        if _nitidez(recorte) < piso_nitidez:
             continue
         lm = getattr(face, "kps", None)
         q = calcular_qualidade(recorte, float(face.det_score), lm, y2 - y1)

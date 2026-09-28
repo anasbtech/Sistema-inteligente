@@ -177,7 +177,15 @@ class Inferencia:
                 self.gerados += 1
 
         if cam.analitico_facial and face_engine.modelos_disponiveis():
-            faces = await asyncio.to_thread(face_engine.extrair_faces, quadro)
+            # Uma passada só, com os pisos afrouxados: os filtros padrão
+            # existem para a identificação 1:N, não para o enquadramento. Um
+            # rosto de perfil, pequeno ou borrado não serve para dizer quem é
+            # — mas é um rosto, e o operador precisa vê-lo marcado no vídeo.
+            # A triagem de qualidade acontece logo abaixo, só para o registro.
+            faces = await asyncio.to_thread(
+                face_engine.extrair_faces, quadro,
+                0.0, settings.INFERENCIA_ROSTO_MIN_PX, 0.0,
+            )
             for face in faces:
                 x1, y1, x2, y2 = face.bbox
                 caixas_do_quadro.append({
@@ -186,6 +194,12 @@ class Inferencia:
                     "bbox": face.bbox_normalizado(largura, altura),
                     "track_id": None,
                 })
+
+                # Só entra no registro o que serve para identificar: capturas
+                # ruins gravadas viram identificação que não se sustenta.
+                if (face.qualidade < settings.MIN_FACE_QUALITY
+                        or (y2 - y1) < settings.MIN_FACE_PIXELS):
+                    continue
                 if self._repetido((cam.codigo, f"face:{x1 // 160}:{y1 // 160}")):
                     continue
 
