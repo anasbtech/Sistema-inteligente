@@ -8,7 +8,7 @@
    ========================================================== */
 async function renderAlertas(alvo){
   const resumo = await API.resumoAlertas();
-  const f = FILTRO.alertas;
+  const f = FILTRO.alertas, hoje = diaISO(new Date());
 
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Central de alertas</h2><span class="sp"></span>
@@ -21,6 +21,13 @@ async function renderAlertas(alvo){
       </div>
       <select class="inp" id="alSev"><option value="">Qualquer severidade</option>
         ${[4,3,2].map(s => `<option value="${s}" ${f.severidade==String(s)?'selected':''}>${SEVERIDADE[s]}</option>`).join('')}</select>
+      <div class="periodo">
+        <label for="alDe">Período</label>
+        <input class="inp" id="alDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || hoje)}">
+        <span class="sep">até</span>
+        <input class="inp" id="alAte" type="date" value="${esc(f.ate)}" min="${esc(f.de)}" max="${hoje}">
+        <button class="btn btn-ghost btn-sm" id="alLimpar" ${f.de||f.ate?'':'hidden'}>Limpar</button>
+      </div>
     </div></div>
   <div class="grid cols-4" style="margin-bottom:14px">
     <div class="kpi k-red"><div class="kpi-top"><span class="kpi-lbl">Abertos</span><span class="kpi-ico">${ico('bell',15)}</span></div><div class="kpi-val">${resumo.abertos||0}</div><div class="kpi-delta dn">aguardando triagem</div></div>
@@ -39,7 +46,9 @@ async function renderAlertas(alvo){
       const r = await API.alertas({
         pagina: PAG.alertas, por_pagina: POR_PAGINA,
         status: FILTRO.alertas.status || undefined,
-        severidade: FILTRO.alertas.severidade || undefined
+        severidade: FILTRO.alertas.severidade || undefined,
+        desde: limiteDia(FILTRO.alertas.de),
+        ate: limiteDia(FILTRO.alertas.ate, true)
       });
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th style="width:8px"></th><th>Alerta</th><th>Tipo</th><th>Câmera</th>
@@ -73,10 +82,13 @@ async function renderAlertas(alvo){
     }catch(e){ corpo.innerHTML = erroBloco(e); }
   };
 
+  const aplicar = () => { PAG.alertas = 1; FILTRO.alertas = {...FILTRO.alertas, de: $('#alDe').value, ate: $('#alAte').value}; $('#alDe').max = FILTRO.alertas.ate || hoje; $('#alAte').min = FILTRO.alertas.de; $('#alLimpar').hidden = !(FILTRO.alertas.de || FILTRO.alertas.ate); carregar(); };
   $$('#alSeg button').forEach(b => b.onclick = () => {
     FILTRO.alertas.status = b.dataset.s; PAG.alertas = 1; irPara('alerts');
   });
   $('#alSev').onchange = e => { FILTRO.alertas.severidade = e.target.value; PAG.alertas = 1; carregar(); };
+  ['alDe','alAte'].forEach(id => $('#'+id).onchange = aplicar);
+  $('#alLimpar').onclick = () => { $('#alDe').value = ''; $('#alAte').value = ''; aplicar(); };
   await carregar();
 }
 

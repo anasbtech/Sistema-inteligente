@@ -5,11 +5,11 @@
 
 const PAG = {facial:1, objetos:1, acoes:1, bio:1, alertas:1, audit:1};
 const FILTRO = {
-  facial:  {q:'', status:'', cam:'', match:''},
-  objetos: {q:'', classe:'', cam:''},
-  acoes:   {q:'', classe:'', cam:''},
+  facial:  {q:'', status:'', cam:'', match:'', de:'', ate:''},
+  objetos: {q:'', classe:'', cam:'', de:'', ate:''},
+  acoes:   {q:'', classe:'', cam:'', de:'', ate:''},
   bio:     {q:'', sexo:'', status:''},
-  alertas: {status:'', severidade:''},
+  alertas: {status:'', severidade:'', de:'', ate:''},
   audit:   {q:'', acao:''}
 };
 const POR_PAGINA = 14;
@@ -30,11 +30,37 @@ const barraConfianca = (v, cor) => `<div class="conf">
   <div class="conf-bar"><i style="width:${Math.round((v||0)*100)}%;background:${cor}"></i></div>
   <b>${pct100(v)}</b></div>`;
 
+/* ---------- Período do calendário ----------
+   O banco guarda UTC e trata como UTC o que chega sem fuso (app/tipos.py), e
+   `new Date('2026-09-22')` também é lido como UTC pelo padrão da linguagem.
+   Por isso a data do calendário é montada campo a campo, em hora local: o dia
+   escolhido vale do primeiro ao último instante do dia de quem está olhando.
+   Os dois extremos importam — parar em 00:00 deixaria o dia final inteiro de
+   fora, e um intervalo de 22 a 25 mostraria só até o 24. */
+const diaISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+const limiteDia = (valor, fim) => {
+  if(!valor) return undefined;
+  const [a, m, d] = valor.split('-').map(Number);
+  return (fim ? new Date(a, m-1, d, 23, 59, 59, 999) : new Date(a, m-1, d)).toISOString();
+};
+
+// Sem passar por Date: o formato do calendário já traz ano, mês e dia prontos,
+// e reinterpretá-los devolveria o deslocamento de fuso que limiteDia evita.
+const fmtDia = v => v ? v.split('-').reverse().join('/') : '';
+
+function rotuloPeriodo(de, ate){
+  if(de && ate) return de === ate ? fmtDia(de) : `${fmtDia(de)} a ${fmtDia(ate)}`;
+  if(de)  return `de ${fmtDia(de)} em diante`;
+  if(ate) return `até ${fmtDia(ate)}`;
+  return 'todo o período registrado';
+}
+
 /* ==========================================================
    RECONHECIMENTO FACIAL
    ========================================================== */
 async function renderFacial(alvo){
-  const f = FILTRO.facial;
+  const f = FILTRO.facial, hoje = diaISO(new Date());
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Registros de reconhecimento facial</h2><span class="sp"></span>
     <div class="toolbar">
@@ -45,6 +71,13 @@ async function renderFacial(alvo){
         <option value="false" ${f.match==='false'?'selected':''}>Não identificadas</option>
       </select>
       <select class="inp" id="fcCam"><option value="">Todas as câmeras</option>${opcoesCameras(c => c.analitico_facial, f.cam)}</select>
+      <div class="periodo">
+        <label for="fcDe">Período</label>
+        <input class="inp" id="fcDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || hoje)}">
+        <span class="sep">até</span>
+        <input class="inp" id="fcAte" type="date" value="${esc(f.ate)}" min="${esc(f.de)}" max="${hoje}">
+        <button class="btn btn-ghost btn-sm" id="fcLimpar" ${f.de||f.ate?'':'hidden'}>Limpar</button>
+      </div>
     </div></div>
   <div class="note" style="margin-bottom:13px">${ico('info',15)}<div>Cada correspondência positiva vincula a captura a um <b>identificador biométrico permanente</b> (BIO-M / BIO-F / BIO-N). O identificador nunca muda entre capturas, e o sexo vem do cadastro da pessoa — não de inferência sobre a imagem.</div></div>
   <div class="panel"><div class="panel-bd tight"><div id="fcCorpo">${carregando()}</div></div></div>`;
@@ -52,13 +85,16 @@ async function renderFacial(alvo){
   const carregar = async () => {
     const corpo = $('#fcCorpo');
     corpo.innerHTML = carregando();
-    FILTRO.facial = {q: $('#fcQ').value.trim(), match: $('#fcMatch').value, cam: $('#fcCam').value};
+    FILTRO.facial = {q: $('#fcQ').value.trim(), match: $('#fcMatch').value, cam: $('#fcCam').value,
+                     de: $('#fcDe').value, ate: $('#fcAte').value};
     try{
       const r = await API.deteccoes({
         tipo: 'FACIAL', pagina: PAG.facial, por_pagina: POR_PAGINA,
         camera: FILTRO.facial.cam || undefined,
         apenas_match: FILTRO.facial.match || undefined,
-        id_biometrico: /^BIO-[MFN]-\d{6}$/i.test(FILTRO.facial.q) ? FILTRO.facial.q.toUpperCase() : undefined
+        id_biometrico: /^BIO-[MFN]-\d{6}$/i.test(FILTRO.facial.q) ? FILTRO.facial.q.toUpperCase() : undefined,
+        desde: limiteDia(FILTRO.facial.de),
+        ate: limiteDia(FILTRO.facial.ate, true)
       });
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th style="width:64px">Captura</th><th>Pessoa identificada</th><th>ID biométrico</th>
@@ -88,8 +124,10 @@ async function renderFacial(alvo){
     }catch(e){ corpo.innerHTML = erroBloco(e); }
   };
 
+  const aplicar = () => { PAG.facial = 1; $('#fcDe').max = FILTRO.facial.ate || hoje; $('#fcAte').min = FILTRO.facial.de; $('#fcLimpar').hidden = !(FILTRO.facial.de || FILTRO.facial.ate); carregar(); };
   $('#fcQ').oninput = debounce(() => { PAG.facial = 1; carregar(); }, 350);
-  ['fcMatch','fcCam'].forEach(id => $('#'+id).onchange = () => { PAG.facial = 1; carregar(); });
+  ['fcMatch','fcCam','fcDe','fcAte'].forEach(id => $('#'+id).onchange = aplicar);
+  $('#fcLimpar').onclick = () => { $('#fcDe').value = ''; $('#fcAte').value = ''; aplicar(); };
   await carregar();
 }
 
@@ -97,40 +135,63 @@ async function renderFacial(alvo){
    OBJETOS
    ========================================================== */
 async function renderObjetos(alvo){
-  const classes = Object.entries(ROTULO_OBJ);
+  // `veiculo` fica fora do filtro: é o rótulo genérico dos registros anteriores
+  // à separação por tipo e da cena sintética, e carro, caminhão, ônibus e
+  // motocicleta já cobrem o caso. Continua em ROTULO_OBJ porque a tabela ainda
+  // precisa saber traduzi-lo onde ele já foi gravado.
+  const classes = Object.entries(ROTULO_OBJ).filter(([k]) => k !== 'veiculo');
+  const o = FILTRO.objetos, hoje = diaISO(new Date());
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Detecção de objetos</h2><span class="sp"></span>
     <div class="toolbar">
       <select class="inp" id="obClasse"><option value="">Todas as classes</option>
-        ${classes.map(([k,v]) => `<option value="${k}" ${FILTRO.objetos.classe===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
-      <select class="inp" id="obCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, FILTRO.objetos.cam)}</select>
+        ${classes.map(([k,v]) => `<option value="${k}" ${o.classe===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
+      <select class="inp" id="obCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, o.cam)}</select>
+      <div class="periodo">
+        <label for="obDe">Período</label>
+        <input class="inp" id="obDe" type="date" value="${esc(o.de)}" max="${esc(o.ate || hoje)}">
+        <span class="sep">até</span>
+        <input class="inp" id="obAte" type="date" value="${esc(o.ate)}" min="${esc(o.de)}" max="${hoje}">
+        <button class="btn btn-ghost btn-sm" id="obLimpar" ${o.de||o.ate?'':'hidden'}>Limpar</button>
+      </div>
     </div></div>
-  <div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Classes detectadas</h3><span class="sub">últimas 24 horas</span></div>
+  <div class="panel" style="margin-bottom:14px"><div class="panel-hd"><h3>Classes detectadas</h3>
+      <span class="sub" id="obGraficoSub">${esc(rotuloPeriodo(o.de, o.ate))}</span></div>
     <div class="panel-bd" id="obGrafico">${carregando()}</div></div>
   <div class="panel"><div class="panel-bd tight"><div id="obCorpo">${carregando()}</div></div></div>`;
 
-  // O gráfico consulta a contagem por classe em paralelo.
-  (async () => {
+  // Uma consulta por classe, todas em paralelo — a contagem vem do `total` da
+  // página, sem trazer os registros.
+  const carregarGrafico = async () => {
+    const g = $('#obGrafico');
+    if(!g) return;
+    g.innerHTML = carregando();
+    const {de, ate} = FILTRO.objetos;
+    const sub = $('#obGraficoSub');
+    if(sub) sub.textContent = rotuloPeriodo(de, ate);
     try{
       const contagens = await Promise.all(classes.map(async ([k]) => {
         const r = await API.deteccoes({tipo:'OBJETO', classe:k, por_pagina:1,
-          desde: new Date(Date.now() - 864e5).toISOString()});
+          desde: limiteDia(de), ate: limiteDia(ate, true)});
         return {k: ROTULO_OBJ[k], v: r.total, cor: COR_CLASSE[k] || 'var(--acc)'};
       }));
-      const g = $('#obGrafico');
-      if(g) g.innerHTML = barsChart(contagens.filter(c => c.v > 0), {h:206});
-    }catch(e){ const g = $('#obGrafico'); if(g) g.innerHTML = erroBloco(e); }
-  })();
+      const visiveis = contagens.filter(c => c.v > 0);
+      g.innerHTML = visiveis.length
+        ? barsChart(visiveis, {h:206})
+        : vazio('box', 'Nenhuma detecção neste período.', 'Escolha outro intervalo no calendário.');
+    }catch(e){ g.innerHTML = erroBloco(e); }
+  };
 
   const carregar = async () => {
     const corpo = $('#obCorpo');
     corpo.innerHTML = carregando();
-    FILTRO.objetos = {classe: $('#obClasse').value, cam: $('#obCam').value, q:''};
     try{
       const r = await API.deteccoes({
         tipo:'OBJETO', pagina: PAG.objetos, por_pagina: POR_PAGINA,
         classe: FILTRO.objetos.classe || undefined,
-        camera: FILTRO.objetos.cam || undefined
+        camera: FILTRO.objetos.cam || undefined,
+        desde: limiteDia(FILTRO.objetos.de),
+        ate: limiteDia(FILTRO.objetos.ate, true)
       });
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th style="width:64px">Captura</th><th>Classe</th><th>Confiança</th><th>Câmera</th>
@@ -144,7 +205,8 @@ async function renderObjetos(alvo){
             <td class="mono">${d.placa ? `<b style="letter-spacing:.08em">${esc(d.placa)}</b>` : '—'}</td>
             <td class="td-ts">${fmtDT(d.ocorrido_em)}</td>
             <td><span class="chip ${CLS_SEV[d.severidade]}">${esc(SEVERIDADE[d.severidade])}</span></td>
-          </tr>`).join('') || `<tr><td colspan="7">${vazio('box','Nenhuma detecção encontrada.')}</td></tr>`}
+          </tr>`).join('') || `<tr><td colspan="7">${vazio('box','Nenhuma detecção encontrada.',
+            `Período: ${esc(rotuloPeriodo(FILTRO.objetos.de, FILTRO.objetos.ate))}.`)}</td></tr>`}
         </tbody></table></div>
         ${pagerHTML(r.total, r.pagina, r.por_pagina, 'objetos')}`;
       pintarSnaps(corpo);
@@ -153,24 +215,46 @@ async function renderObjetos(alvo){
     }catch(e){ corpo.innerHTML = erroBloco(e); }
   };
 
-  ['obClasse','obCam'].forEach(id => $('#'+id).onchange = () => { PAG.objetos = 1; carregar(); });
-  await carregar();
+  const aplicar = () => {
+    PAG.objetos = 1;
+    FILTRO.objetos = {classe: $('#obClasse').value, cam: $('#obCam').value,
+                      de: $('#obDe').value, ate: $('#obAte').value, q:''};
+    // O próprio calendário passa a recusar um fim anterior ao início; sem isto
+    // a busca voltaria vazia sem dizer que o intervalo é que está invertido.
+    $('#obDe').max = FILTRO.objetos.ate || hoje;
+    $('#obAte').min = FILTRO.objetos.de;
+    $('#obLimpar').hidden = !(FILTRO.objetos.de || FILTRO.objetos.ate);
+    carregar();
+    carregarGrafico();
+  };
+
+  ['obClasse','obCam','obDe','obAte'].forEach(id => $('#'+id).onchange = aplicar);
+  $('#obLimpar').onclick = () => { $('#obDe').value = ''; $('#obAte').value = ''; aplicar(); };
+
+  await Promise.all([carregar(), carregarGrafico()]);
 }
 
 /* ==========================================================
    AÇÕES
    ========================================================== */
 async function renderAcoes(alvo){
-  const classes = Object.entries(ROTULO_ACAO_UI);
+  const classes = Object.entries(ROTULO_ACAO_UI), a = FILTRO.acoes, hoje = diaISO(new Date());
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Análise de ações e comportamento</h2><span class="sp"></span>
     <div class="toolbar">
       <select class="inp" id="acClasse"><option value="">Todas as ações</option>
-        ${classes.map(([k,v]) => `<option value="${k}" ${FILTRO.acoes.classe===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
-      <select class="inp" id="acCam"><option value="">Todas as câmeras</option>${opcoesCameras(c => c.analitico_acao, FILTRO.acoes.cam)}</select>
+        ${classes.map(([k,v]) => `<option value="${k}" ${a.classe===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
+      <select class="inp" id="acCam"><option value="">Todas as câmeras</option>${opcoesCameras(c => c.analitico_acao, a.cam)}</select>
+      <div class="periodo">
+        <label for="acDe">Período</label>
+        <input class="inp" id="acDe" type="date" value="${esc(a.de)}" max="${esc(a.ate || hoje)}">
+        <span class="sep">até</span>
+        <input class="inp" id="acAte" type="date" value="${esc(a.ate)}" min="${esc(a.de)}" max="${hoje}">
+        <button class="btn btn-ghost btn-sm" id="acLimpar" ${a.de||a.ate?'':'hidden'}>Limpar</button>
+      </div>
     </div></div>
   <div class="split" style="margin-bottom:14px">
-    <div class="panel"><div class="panel-hd"><h3>Ações por tipo</h3><span class="sub">24h</span></div>
+    <div class="panel"><div class="panel-hd"><h3>Ações por tipo</h3><span class="sub" id="acGraficoSub">${esc(rotuloPeriodo(a.de, a.ate))}</span></div>
       <div class="panel-bd" id="acGrafico">${carregando()}</div></div>
     <div class="panel"><div class="panel-hd"><h3>Modelo de análise</h3></div>
       <div class="panel-bd">
@@ -185,26 +269,34 @@ async function renderAcoes(alvo){
   </div>
   <div class="panel"><div class="panel-bd tight"><div id="acCorpo">${carregando()}</div></div></div>`;
 
-  (async () => {
+  const carregarGrafico = async () => {
+    const g = $('#acGrafico');
+    if(!g) return;
+    g.innerHTML = carregando();
+    const {de, ate} = FILTRO.acoes;
+    const sub = $('#acGraficoSub');
+    if(sub) sub.textContent = rotuloPeriodo(de, ate);
     try{
       const contagens = await Promise.all(classes.map(async ([k]) => {
         const r = await API.deteccoes({tipo:'ACAO', classe:k, por_pagina:1,
-          desde: new Date(Date.now() - 864e5).toISOString()});
+          desde: limiteDia(de), ate: limiteDia(ate, true)});
         return {k: ROTULO_ACAO_UI[k], v: r.total, cor:'var(--violet)'};
       }));
-      const g = $('#acGrafico');
-      if(g) g.innerHTML = barsChart(contagens.filter(c => c.v > 0), {h:206});
-    }catch(e){ const g = $('#acGrafico'); if(g) g.innerHTML = erroBloco(e); }
-  })();
+      const visiveis = contagens.filter(c => c.v > 0);
+      g.innerHTML = visiveis.length ? barsChart(visiveis, {h:206})
+        : vazio('box', 'Nenhuma ação neste período.', 'Escolha outro intervalo no calendário.');
+    }catch(e){ g.innerHTML = erroBloco(e); }
+  };
 
   const carregar = async () => {
     const corpo = $('#acCorpo');
     corpo.innerHTML = carregando();
-    FILTRO.acoes = {classe: $('#acClasse').value, cam: $('#acCam').value, q:''};
     try{
       const r = await API.deteccoes({
         tipo:'ACAO', pagina: PAG.acoes, por_pagina: POR_PAGINA,
-        classe: FILTRO.acoes.classe || undefined, camera: FILTRO.acoes.cam || undefined
+        classe: FILTRO.acoes.classe || undefined, camera: FILTRO.acoes.cam || undefined,
+        desde: limiteDia(FILTRO.acoes.de),
+        ate: limiteDia(FILTRO.acoes.ate, true)
       });
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th style="width:64px">Captura</th><th>Ação detectada</th><th>Confiança</th>
@@ -229,8 +321,11 @@ async function renderAcoes(alvo){
     }catch(e){ corpo.innerHTML = erroBloco(e); }
   };
 
-  ['acClasse','acCam'].forEach(id => $('#'+id).onchange = () => { PAG.acoes = 1; carregar(); });
-  await carregar();
+  const aplicar = () => { PAG.acoes = 1; FILTRO.acoes = {classe: $('#acClasse').value, cam: $('#acCam').value,
+                      de: $('#acDe').value, ate: $('#acAte').value, q:''}; $('#acDe').max = FILTRO.acoes.ate || hoje; $('#acAte').min = FILTRO.acoes.de; $('#acLimpar').hidden = !(FILTRO.acoes.de || FILTRO.acoes.ate); carregar(); carregarGrafico(); };
+  ['acClasse','acCam','acDe','acAte'].forEach(id => $('#'+id).onchange = aplicar);
+  $('#acLimpar').onclick = () => { $('#acDe').value = ''; $('#acAte').value = ''; aplicar(); };
+  await Promise.all([carregar(), carregarGrafico()]);
 }
 
 /* ==========================================================
