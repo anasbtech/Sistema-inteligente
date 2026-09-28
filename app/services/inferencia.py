@@ -31,6 +31,7 @@ from app.database import db_context
 from app.models import Camera, StatusCamera, TipoDeteccao
 from app.schemas import DeteccaoIn
 from app.services import face_engine, video, vision
+from app.services.events import publicar
 
 log = logging.getLogger("seguranca.inferencia")
 
@@ -126,13 +127,32 @@ class Inferencia:
         altura, largura = quadro.shape[:2]
         agora = datetime.now(timezone.utc)
 
+        caixas_do_quadro = []
+
         if cam.analitico_objeto and vision.yolo_disponivel():
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, True
             )
             for obj in objetos:
+                # A sobreposição mostra o que a câmera está vendo agora, no
+                # limiar que o operador configurou nela. Sai antes das podas:
+                # a caixa acompanha o objeto enquanto ele está em cena, e o
+                # registro nasce uma vez por passagem — o carro parado segue
+                # enquadrado no vídeo sem voltar à lista a cada ciclo.
+                caixas_do_quadro.append({
+                    "classe": obj.classe,
+                    "confianca": round(float(obj.confianca), 4),
+                    "bbox": obj.bbox_normalizado(largura, altura),
+                    "track_id": obj.track_id,
+                })
+
+                # O piso extra vale só para o registro: o que fica gravado com
+                # rótulo errado manda o operador atrás da coisa errada, e a
+                # estatística por classe passa a mentir. No vídeo, o mesmo
+                # objeto duvidoso está à vista de quem julga.
                 if not self._confiavel(obj):
                     continue
+
                 # Sem trilha, a posição serve de identidade aproximada. A
                 # célula é grossa de propósito: fina demais, o mesmo objeto
                 # andando alguns pixels vira uma marca nova e volta ao
@@ -160,7 +180,13 @@ class Inferencia:
             faces = await asyncio.to_thread(face_engine.extrair_faces, quadro)
             for face in faces:
                 x1, y1, x2, y2 = face.bbox
-                if self._repetido((cam.codigo, f"face:{x1 // 40}:{y1 // 40}")):
+                caixas_do_quadro.append({
+                    "classe": "rosto",
+                    "confianca": round(float(face.qualidade), 4),
+                    "bbox": face.bbox_normalizado(largura, altura),
+                    "track_id": None,
+                })
+                if self._repetido((cam.codigo, f"face:{x1 // 160}:{y1 // 160}")):
                     continue
 
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, face.bbox)
@@ -174,6 +200,14 @@ class Inferencia:
                     snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
                 ), origem="inferencia")
                 self.gerados += 1
+
+        # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
+        # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem
+        # isso a última caixa ficaria pairando sobre o vídeo até expirar.
+        await publicar("quadro_ao_vivo", {
+            "camera_codigo": cam.codigo,
+            "caixas": caixas_do_quadro,
+        })
 
 
 inferencia = Inferencia(settings.INFERENCIA_INTERVALO, settings.INFERENCIA_JANELA_S)

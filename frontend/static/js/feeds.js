@@ -43,7 +43,10 @@ const COR_CLASSE={
   veiculo:'#2FB67C',   // vocabulário da cena sintética, que não distingue o tipo
   FACIAL:'#E05F9E'
 };
-const CAIXA_VIDA_MS=3000;
+/* Precisa cobrir o intervalo entre dois quadros analisados, com folga: se
+   expirar antes do próximo chegar, a caixa pisca sobre um objeto que continua
+   ali. A inferência roda a cada 3s, daí os 5. */
+const CAIXA_VIDA_MS=5000;
 
 
 const SCENE_CFG={
