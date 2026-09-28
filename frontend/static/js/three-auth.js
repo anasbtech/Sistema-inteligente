@@ -192,10 +192,19 @@ function onWindowResize() {
   renderer.setSize(width, height);
 }
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  // Check if Three.js is loaded
-  if (typeof THREE !== 'undefined') {
-    setTimeout(initThreeAuth, 100);
-  }
-});
+// Initialize when DOM is ready and Three.js is loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+      if (typeof THREE !== 'undefined') {
+        initThreeAuth();
+      }
+    }, 50);
+  });
+} else {
+  setTimeout(() => {
+    if (typeof THREE !== 'undefined') {
+      initThreeAuth();
+    }
+  }, 50);
+}

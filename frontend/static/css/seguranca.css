@@ -137,7 +137,7 @@ a{color:var(--acc);text-decoration:none}
   transition:all 0.2s ease;font-size:15px;font-weight:500;
 }
 .inp::placeholder{color:var(--txt-4)}
-.inp:hover{border-color:var(--line)darker;background:rgba(31,48,64,0.7)}
+.inp:hover{border-color:var(--ink-600);background:rgba(31,48,64,0.7)}
 .inp:focus{
   outline:none;border-color:var(--acc);background:rgba(53,167,222,0.08);
   box-shadow:0 0 12px rgba(53,167,222,0.15), inset 0 0 8px rgba(53,167,222,0.05);
