@@ -165,7 +165,9 @@ def main() -> None:
     # Chave estável entre execuções, para a sessão do navegador sobreviver
     # a um restart. Em produção, defina SECRET_KEY no .env.
     if not os.environ.get("SECRET_KEY"):
-        arq = RAIZ / ".secret_key"
+        secrets_dir = RAIZ / ".secrets"
+        secrets_dir.mkdir(exist_ok=True)
+        arq = secrets_dir / ".secret_key"
         if not arq.exists():
             import secrets
             arq.write_text(secrets.token_urlsafe(48))
