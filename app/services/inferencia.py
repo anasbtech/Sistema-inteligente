@@ -91,6 +91,19 @@ class Inferencia:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
 
+    def _confiavel(self, obj) -> bool:
+        """Descarta o que o modelo classifica sem base suficiente.
+
+        Confiança baixa e caixa pequena são de onde vem a troca de classe: o
+        modelo acerta que há *algo* ali e erra o que é. Um registro com rótulo
+        errado é pior que registro nenhum — manda o operador atrás da coisa
+        errada e contamina a estatística por classe.
+        """
+        if obj.confianca < settings.INFERENCIA_CONFIANCA_MIN:
+            return False
+        x1, y1, x2, y2 = obj.bbox
+        return min(x2 - x1, y2 - y1) >= settings.INFERENCIA_LADO_MIN_PX
+
     def _repetido(self, chave: Tuple[str, str]) -> bool:
         """Mesma trilha dentro da janela — já foi registrada."""
         agora = time.monotonic()
@@ -118,10 +131,14 @@ class Inferencia:
                 vision.detectar_objetos, quadro, cam.limiar_objeto, True
             )
             for obj in objetos:
-                # Sem trilha, a posição serve de identidade aproximada: o
-                # rastreador é quem daria estabilidade, e nem sempre há.
+                if not self._confiavel(obj):
+                    continue
+                # Sem trilha, a posição serve de identidade aproximada. A
+                # célula é grossa de propósito: fina demais, o mesmo objeto
+                # andando alguns pixels vira uma marca nova e volta ao
+                # registro — justamente o que a trilha existe para evitar.
                 marca = str(obj.track_id) if obj.track_id is not None else (
-                    f"{obj.classe}:{obj.bbox[0] // 40}:{obj.bbox[1] // 40}"
+                    f"{obj.classe}:{obj.bbox[0] // 160}:{obj.bbox[1] // 160}"
                 )
                 if self._repetido((cam.codigo, f"obj:{marca}")):
                     continue

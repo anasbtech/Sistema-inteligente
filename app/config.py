@@ -57,9 +57,18 @@ class Settings(BaseSettings):
     # registro. Os dois juntos não fazem sentido — um contamina o outro.
     INFERENCIA: bool = False
     INFERENCIA_INTERVALO: float = 3.0
-    # Mesma trilha só volta ao registro depois disso. Um carro estacionado
-    # geraria uma detecção por ciclo, e o registro viraria mil linhas dele.
-    INFERENCIA_JANELA_S: float = 45.0
+    # Uma passagem, um registro. A trilha do rastreador é a identidade do
+    # objeto enquanto ele está em cena, e meia hora é mais do que qualquer
+    # passagem dura: na prática, cada objeto entra no registro uma vez só.
+    # Um carro estacionado sob janela curta viraria mil linhas dele mesmo.
+    INFERENCIA_JANELA_S: float = 1800.0
+    # Piso de confiança da inferência, aplicado sobre o limiar da câmera.
+    # Abaixo disso o modelo acerta a presença mas erra o rótulo — foi onde
+    # apareceu "motocicleta 44%" sobre um recorte sem moto nenhuma.
+    INFERENCIA_CONFIANCA_MIN: float = 0.70
+    # Caixa menor que isso tem poucos pixels para classificar: o modelo
+    # arrisca o rótulo, e é daí que sai a maior parte das trocas de classe.
+    INFERENCIA_LADO_MIN_PX: int = 44
 
     # --- Parque de câmeras -----------------------------------------------
     # O parque é homogêneo (Intelbras/Dahua, mesma credencial), então a URL
