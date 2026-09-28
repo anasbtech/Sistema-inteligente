@@ -26,3 +26,6 @@ logs/
 logs/*.log
 *.log
 
+
+# Permissões locais do Claude Code (por máquina, não do projeto)
+.claude/
