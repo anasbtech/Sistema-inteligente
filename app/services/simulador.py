@@ -15,6 +15,7 @@ outro ângulo. A busca 1:N então roda de verdade e pode, inclusive, não bater.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import random
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from app.config import settings
 from app.database import db_context
 from app.models import Camera, Pessoa, StatusCamera, StatusPessoa, TipoDeteccao
 from app.schemas import DeteccaoIn
+from app.services import video
 
 log = logging.getLogger("seguranca.simulador")
 
@@ -157,8 +159,31 @@ class Simulador:
             if dados is None:
                 return
 
+            await self._anexar_recorte(cam, dados)
             await processar_deteccao(db, dados, origem="simulador")
             self.gerados += 1
+
+    async def _anexar_recorte(self, cam: Camera, dados: DeteccaoIn) -> None:
+        """Anexa o recorte do que a câmera está vendo agora.
+
+        Sem isso a captura fica sem imagem e a revisão humana não tem o que
+        olhar. O recorte sai do vídeo real; a caixa é que é sintética, então
+        o enquadramento corresponde à câmera, não ao que foi classificado.
+
+        Roda fora do laço de eventos: decodificar e recodificar JPEG segura o
+        event loop, e com ele o WebSocket de eventos e a API inteira.
+        """
+        if not cam.rtsp_url:
+            return
+        try:
+            jpeg = await asyncio.to_thread(
+                video.recorte, cam.codigo, cam.rtsp_url, dados.bbox
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Sem recorte para %s: %s", cam.codigo, exc)
+            return
+        if jpeg:
+            dados.snapshot_jpeg = base64.b64encode(jpeg).decode("ascii")
 
     async def _facial(self, db, cam: Camera, agora: datetime) -> Optional[DeteccaoIn]:
         """Simula uma captura de rosto a partir de alguém já cadastrado."""

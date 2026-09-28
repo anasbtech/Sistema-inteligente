@@ -228,6 +228,57 @@ def obter(codigo: str, url: str) -> Leitor:
         return leitor
 
 
+def recorte(codigo: str, url: str, bbox: Optional[list], margem: float = 0.35) -> Optional[bytes]:
+    """Recorte do quadro corrente da câmera, na região da caixa.
+
+    Devolve ``None`` quando não há quadro ainda — a primeira leitura de uma
+    câmera leva segundos para negociar o RTSP, e travar a ingestão à espera
+    dela pararia o registro inteiro por uma imagem.
+
+    A margem abre o enquadramento em volta da caixa: um recorte colado no
+    contorno não deixa a revisão humana ver onde a pessoa estava.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+
+    try:
+        leitor = obter(codigo, url)
+    except LeitorIndisponivel:
+        return None
+
+    jpeg = leitor.quadro
+    if not jpeg:
+        return None
+    if not bbox or len(bbox) < 4:
+        return jpeg
+
+    try:
+        quadro = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if quadro is None:
+            return jpeg
+        alt, larg = quadro.shape[:2]
+
+        x, y, w, h = (float(v) for v in bbox[:4])
+        mx, my = w * margem, h * margem
+        x1 = max(0, int((x - mx) * larg))
+        y1 = max(0, int((y - my) * alt))
+        x2 = min(larg, int((x + w + mx) * larg))
+        y2 = min(alt, int((y + h + my) * alt))
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            return jpeg
+
+        ok, buf = cv2.imencode(
+            ".jpg", quadro[y1:y2, x1:x2], [int(cv2.IMWRITE_JPEG_QUALITY), 82]
+        )
+        return buf.tobytes() if ok else jpeg
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Falha ao recortar quadro de %s: %s", codigo, exc)
+        return jpeg
+
+
 def encerrar_todos() -> None:
     with _trava:
         leitores = list(_leitores.values())
