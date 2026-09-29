@@ -1,4 +1,4 @@
-"""Worker de inferência sobre o vídeo das câmeras.
+﻿"""Worker de inferência sobre o vídeo das câmeras.
 
 Lê o quadro corrente de cada câmera on-line, roda os modelos que aquela
 câmera tem habilitados e registra pela mesma rota que o worker externo usa —
@@ -148,7 +148,11 @@ class Inferencia:
     async def _processar(self, db, cam: Camera) -> None:
         from app.routers.deteccoes import processar_deteccao
 
-        quadro = await asyncio.to_thread(video.quadro_bgr, cam.codigo, cam.rtsp_url)
+        # Resolução nativa: no fluxo reduzido do mosaico o rosto chega pequeno
+        # demais para qualquer piso de identificação.
+        quadro = await asyncio.to_thread(
+            video.quadro_bgr, cam.codigo, cam.rtsp_url, True
+        )
         if quadro is None:
             return
         altura, largura = quadro.shape[:2]

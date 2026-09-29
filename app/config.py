@@ -123,7 +123,14 @@ class Settings(BaseSettings):
     # antes de qualquer abordagem.
     FACE_THRESHOLD: float = 0.55
     FACE_DET_SIZE: int = 640
-    MIN_FACE_QUALITY: float = 0.55
+    # Nota mínima para a captura entrar no registro. Baixa porque o que sai
+    # destas câmeras é registro de passagem, não identificação: medido na
+    # recepção, o rosto de quem cruza o saguão vem com 0,39 — a câmera está
+    # no teto, e o rosto chega em ângulo. A 0,55 a tela ficava vazia.
+    # O que isso registra é "alguém passou aqui", com o recorte para a
+    # revisão humana olhar. Identificar exige rosto grande e de frente;
+    # abaixo disso a similaridade não sobe, e o alerta não dispara.
+    MIN_FACE_QUALITY: float = 0.35
     # Altura mínima do rosto, em pixels, para o vetor valer alguma coisa.
     # O ArcFace recebe 112x112: o que chega menor é esticado até lá, e o vetor
     # que sai é ruído. Medido nesta instalação, duas capturas da mesma pessoa
@@ -134,11 +141,15 @@ class Settings(BaseSettings):
     # captura: identificar dali é chute, e registrar só enche a revisão.
     # O valor equilibra duas perdas. A 90 não entrava nada nesta câmera —
     # cinco minutos, nenhuma captura — e com isso ia embora também o registro
-    # de passagem, que serve à auditoria mesmo sem identificar ninguém. A 70
-    # metade volta a entrar, e o lixo de 26 a 50 pixels continua de fora.
-    # Identificação, porém, só sai quando o rosto vem grande: abaixe a câmera
-    # ou feche o zoom se o reconhecimento é o objetivo desta posição.
-    MIN_FACE_PIXELS: int = 70
+    # de passagem, que serve à auditoria mesmo sem identificar ninguém.
+    # Está em 48 porque a 70 a recepção seguia sem registrar: medido ali, o
+    # rosto de quem atravessa o saguão chega com 63 pixels. A escolha é
+    # deliberada e tem preço — nesta faixa o vetor não casa nem com outra
+    # captura da mesma pessoa (0,004 de similaridade medidos aqui), então o
+    # que entra é passagem registrada, nunca identificação.
+    # Para reconhecer de verdade nesta posição, a câmera precisa descer ou
+    # fechar o zoom na entrada; nenhum ajuste de piso substitui isso.
+    MIN_FACE_PIXELS: int = 48
     # Nitidez mínima, na mesma escala de 0 a 1 da nota de qualidade.
     # Rosto borrado não tem detalhe para extrair, igual a rosto pequeno — e
     # escapava pela mesma brecha: a nota é média ponderada, então uma captura

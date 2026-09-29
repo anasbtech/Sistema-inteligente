@@ -228,8 +228,14 @@ def obter(codigo: str, url: str) -> Leitor:
         return leitor
 
 
-def quadro_bgr(codigo: str, url: str):
+def quadro_bgr(codigo: str, url: str, detalhe: bool = False):
     """Quadro corrente da câmera como matriz BGR, para alimentar os modelos.
+
+    Com ``detalhe``, pede a resolução nativa. Importa para quem analisa: o
+    fluxo do mosaico sai reduzido a 640px de largura, e num quadro de 1920
+    isso encolhe tudo a um terço — um rosto de 54 pixels chega ao modelo com
+    18, abaixo de qualquer piso de identificação. O que a tela pode perder
+    sem prejuízo, o modelo não pode.
 
     ``None`` enquanto a câmera não entregou nada — a negociação do RTSP leva
     segundos, e quem chama deve simplesmente tentar de novo no ciclo seguinte.
@@ -245,7 +251,12 @@ def quadro_bgr(codigo: str, url: str):
     except LeitorIndisponivel:
         return None
 
-    jpeg = leitor.quadro_detalhe if leitor.detalhe_ativo else leitor.quadro
+    if detalhe:
+        # Mantém o fluxo nativo vivo: ele só é produzido enquanto há quem peça.
+        leitor.tocar_detalhe()
+        jpeg = leitor.quadro_detalhe or leitor.quadro
+    else:
+        jpeg = leitor.quadro_detalhe if leitor.detalhe_ativo else leitor.quadro
     if not jpeg:
         return None
     try:
