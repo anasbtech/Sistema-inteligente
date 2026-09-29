@@ -51,13 +51,15 @@ const COR_CLASSE={
 const CAIXA_VIDA_MS=5000;
 /* Quantos tiles podem manter fluxo MJPEG contínuo. O navegador permite seis
    conexões HTTP por origem, e o MJPEG não devolve a sua enquanto estiver
-   tocando; o resto do sistema ainda precisa de vaga para as chamadas de API.
+   tocando. Três, não seis: o WebSocket de eventos ocupa uma, o rodízio de
+   recarga ocupa outra, e as chamadas de API ainda precisam de vaga — sem
+   essa folga elas ficam presas na fila junto com os tiles.
    Acima deste número os tiles passam a recarregar quadro a quadro. */
-const MAX_MJPEG=4;
-/* Cadência dos tiles que recarregam. A inferência leva mais que isso para
-   voltar à mesma câmera, então o vídeo continua à frente do que o sistema
-   consegue analisar. */
-const POLL_MS=1000;
+const MAX_MJPEG=3;
+/* Intervalo entre um pedido de recarga e o próximo. Não é a taxa de cada
+   tile: os pedidos são feitos um de cada vez, em rodízio, então cada câmera
+   volta a cada POLL_MS vezes o número de tiles em recarga. */
+const POLL_MS=150;
 
 
 const SCENE_CFG={
@@ -560,24 +562,39 @@ const FEED={
       t.img=img;
       return;
     }
-    const url=this.fonteSnapshot?this.fonteSnapshot(t.cam):null;
-    if(!url)return;
     t.modo='poll';
-    const puxar=()=>{
-      if(!t.canvas||!t.canvas.isConnected){clearInterval(t.poll);t.poll=null;return}
+    this.iniciarRodizio();
+  },
+  /* Um pedido por vez, em rodízio pelos tiles sem fluxo contínuo.
+     Um temporizador por tile não resolve: eles disparam juntos e disputam as
+     poucas vagas de conexão que sobram depois dos fluxos, e os que perdem a
+     disputa ficam pretos enquanto os outros seguem. Em fila, cada pedido
+     espera o anterior terminar, então nunca há mais de uma conexão de
+     recarga aberta — e como o servidor responde em cerca de 100ms, a volta
+     inteira pelo parque leva menos de um segundo. */
+  iniciarRodizio(){
+    if(this._rodizio)return;
+    this._rodizio=setInterval(()=>{
+      if(this._puxando)return;
+      const fila=this.tiles.filter(t=>t.modo==='poll'&&t.canvas&&t.canvas.isConnected);
+      if(!fila.length){clearInterval(this._rodizio);this._rodizio=null;return}
+      const t=fila[(this._vez||0)%fila.length];
+      this._vez=((this._vez||0)+1)%fila.length;
+      const url=this.fonteSnapshot?this.fonteSnapshot(t.cam):null;
+      if(!url)return;
+      this._puxando=true;
       const img=new Image();
+      const liberar=()=>{this._puxando=false};
       // Só troca o quadro exibido quando o novo chegou inteiro: atribuir
       // antes deixaria o tile piscar em branco a cada recarga.
-      img.onload=()=>{t.img=img};
-      img.onerror=()=>{};
+      img.onload=()=>{t.img=img;liberar()};
+      img.onerror=liberar;
       img.src=url+'&t='+Date.now();
-    };
-    puxar();
-    t.poll=setInterval(puxar,POLL_MS);
+    },POLL_MS);
   },
   soltar(t){
-    if(t.poll){clearInterval(t.poll);t.poll=null}
     if(t.img){t.img.onerror=null;t.img.onload=null;t.img.src='';t.img=null}
+    t.modo=null;
   },
   /* Tile cujo canvas saiu do documento — modal fechado, lista redesenhada.
      Sem soltar o `src`, a conexão MJPEG continua aberta e o leitor RTSP do
@@ -596,6 +613,8 @@ const FEED={
     // deixaria um leitor RTSP pendurado no servidor.
     this.tiles.forEach(t=>this.soltar(t));
     this.tiles=[];
+    if(this._rodizio){clearInterval(this._rodizio);this._rodizio=null}
+    this._puxando=false;this._vez=0;
   },
   resize(t){
     const r=t.canvas.getBoundingClientRect();
