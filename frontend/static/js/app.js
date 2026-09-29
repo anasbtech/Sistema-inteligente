@@ -426,7 +426,7 @@ EventosAoVivo.ao(msg => {
   }
   if(msg.tipo === 'quadro_ao_vivo'){
     // Sobreposição do mosaico: a cena atual, que não vira registro.
-    FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas);
+    FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas, msg.dados.validade_s);
   }
   if(msg.tipo === 'identificacao'){
     // Pessoa identificada: renderizar o nome sobre a câmera

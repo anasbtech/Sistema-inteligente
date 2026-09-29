@@ -46,6 +46,9 @@ class Inferencia:
         self._visto: Dict[Tuple[str, str], float] = {}
         self._rostos: Dict[str, list] = {}
         self.gerados = 0
+        # Quanto uma volta completa leva de fato. Cresce com o parque, e é o
+        # que o mosaico precisa saber para não apagar a caixa cedo demais.
+        self.ciclo_real = intervalo
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
@@ -69,13 +72,26 @@ class Inferencia:
         # Deixa a API subir antes de disputar CPU com ela.
         await asyncio.sleep(4)
         while True:
+            inicio = time.monotonic()
             try:
                 await self._rodada()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.warning("Falha na rodada de inferência: %s", exc)
-            await asyncio.sleep(self.intervalo)
+            # Dorme o que falta para o intervalo, não o intervalo inteiro: as
+            # câmeras são percorridas em série, e somar a espera ao tempo da
+            # rodada fazia o ciclo crescer junto com o parque. Com nove
+            # câmeras o intervalo pedido de 3s virava 8,5s reais, e a caixa
+            # expirava no vídeo antes do quadro seguinte chegar.
+            gasto = time.monotonic() - inicio
+            if gasto > self.intervalo:
+                self.ciclo_real = gasto
+                log.debug("Rodada levou %.1fs, acima do intervalo de %.1fs",
+                          gasto, self.intervalo)
+            else:
+                self.ciclo_real = self.intervalo
+            await asyncio.sleep(max(0.0, self.intervalo - gasto))
 
     async def _rodada(self) -> None:
         async with db_context() as db:
@@ -256,6 +272,11 @@ class Inferencia:
         await publicar("quadro_ao_vivo", {
             "camera_codigo": cam.codigo,
             "caixas": caixas_do_quadro,
+            # Até quando esta lista ainda vale. Vai daqui porque só o worker
+            # sabe quanto demora uma volta pelo parque, e isso muda a cada
+            # câmera cadastrada: com validade fixa, a caixa apagava entre um
+            # quadro e o seguinte assim que o parque crescia.
+            "validade_s": round(self.ciclo_real * 2.0, 1),
         })
 
 

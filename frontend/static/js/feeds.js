@@ -45,9 +45,9 @@ const COR_CLASSE={
                        // pessoa: cores distintas deixam ver as duas caixas
   FACIAL:'#E05F9E'
 };
-/* Precisa cobrir o intervalo entre dois quadros analisados, com folga: se
-   expirar antes do próximo chegar, a caixa pisca sobre um objeto que continua
-   ali. A inferência roda a cada 3s, daí os 5. */
+/* Só vale enquanto o worker não disser quanto dura a volta dele pelo parque:
+   quem sabe disso é ele, e o número cresce a cada câmera cadastrada. Serve de
+   piso para o primeiro quadro e para quando a mensagem vier sem a validade. */
 const CAIXA_VIDA_MS=5000;
 
 
@@ -501,9 +501,11 @@ const FEED={
   caixas:new Map(),    // código da câmera => caixas reais ainda vivas
   identificacoes:new Map(),  // código da câmera => pessoas identificadas
 
-  definirCaixas(codigo,lista){
+  definirCaixas(codigo,lista,validadeS){
     // Substitui o conjunto inteiro: é a cena atual, não um acúmulo.
-    this.caixas.set(codigo,{ate:Date.now()+CAIXA_VIDA_MS,lista:lista||[]});
+    // A validade vem do worker, que é quem sabe quando volta a esta câmera.
+    const vida=validadeS?validadeS*1000:CAIXA_VIDA_MS;
+    this.caixas.set(codigo,{ate:Date.now()+vida,lista:lista||[]});
   },
   caixasDe(codigo){
     const reg=this.caixas.get(codigo);
