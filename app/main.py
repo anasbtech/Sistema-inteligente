@@ -15,6 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import web
 from app.config import settings
@@ -88,17 +90,48 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-@app.middleware("http")
-async def cabecalhos_e_tempo(request: Request, call_next):
-    inicio = time.perf_counter()
-    resposta = await call_next(request)
-    resposta.headers["X-Tempo-Resposta-ms"] = f"{(time.perf_counter() - inicio) * 1000:.1f}"
-    resposta.headers["X-Content-Type-Options"] = "nosniff"
-    resposta.headers["Referrer-Policy"] = "no-referrer"
-    if settings.ENV != "development":
-        resposta.headers["X-Frame-Options"] = "DENY"
-        resposta.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
-    return resposta
+class CabecalhosETempo:
+    """Carimba a resposta com o tempo de processamento e cabeçalhos de segurança.
+
+    Escrito como middleware ASGI, e não com `@app.middleware("http")`, por
+    causa do vídeo: aquele decorador embrulha tudo no BaseHTTPMiddleware, que
+    não suporta o cliente desistir no meio de uma resposta em streaming — e
+    era o que acontecia a cada troca de tela, com o navegador cortando um
+    fluxo MJPEG. Cada corte desses deixava no log um traceback de
+    `anyio.EndOfStream` ou `RuntimeError: No response returned` sobre uma
+    conexão que terminou normalmente, e com um parque de doze câmeras isso
+    soterra os erros que importam.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        inicio = time.perf_counter()
+
+        async def enviar(mensagem):
+            if mensagem["type"] == "http.response.start":
+                cabecalhos = MutableHeaders(scope=mensagem)
+                cabecalhos["X-Tempo-Resposta-ms"] = (
+                    f"{(time.perf_counter() - inicio) * 1000:.1f}"
+                )
+                cabecalhos["X-Content-Type-Options"] = "nosniff"
+                cabecalhos["Referrer-Policy"] = "no-referrer"
+                if settings.ENV != "development":
+                    cabecalhos["X-Frame-Options"] = "DENY"
+                    cabecalhos["Strict-Transport-Security"] = (
+                        "max-age=63072000; includeSubDomains"
+                    )
+            await send(mensagem)
+
+        await self.app(scope, receive, enviar)
+
+
+app.add_middleware(CabecalhosETempo)
 
 
 @app.exception_handler(RequestValidationError)
