@@ -59,6 +59,8 @@ class Leitor:
         self.quadro: Optional[bytes] = None
         # Quadro em resolução nativa, produzido só enquanto há quem assista.
         self.quadro_detalhe: Optional[bytes] = None
+        # Matriz BGR nativa do último quadro, sem encode — para os modelos.
+        self.bgr_nativo = None
         self.largura_nativa = 0
         self.altura_nativa = 0
         self.erro: str = ""
@@ -143,6 +145,12 @@ class Leitor:
 
             altura, largura = quadro.shape[:2]
             self.largura_nativa, self.altura_nativa = largura, altura
+
+            # Quadro nativo cru, para quem vai analisá-lo. Guardar a matriz
+            # custa uma referência; o caminho do detalhe custaria um encode
+            # JPEG de 1080p por quadro lido, e com três câmeras isso satura a
+            # CPU e derruba a própria leitura do RTSP.
+            self.bgr_nativo = quadro
 
             # O detalhe sai do quadro intacto, antes de qualquer redução — e
             # só quando há espectador, porque é um encode a mais por quadro.
@@ -252,11 +260,14 @@ def quadro_bgr(codigo: str, url: str, detalhe: bool = False):
         return None
 
     if detalhe:
-        # Mantém o fluxo nativo vivo: ele só é produzido enquanto há quem peça.
-        leitor.tocar_detalhe()
-        jpeg = leitor.quadro_detalhe or leitor.quadro
-    else:
-        jpeg = leitor.quadro_detalhe if leitor.detalhe_ativo else leitor.quadro
+        # Direto da matriz que o leitor já tem, sem passar por JPEG. Pedir o
+        # "detalhe" aqui ligaria um encode de 1080p a cada quadro lido, e não
+        # a cada análise: com três câmeras isso consome a CPU que o RTSP
+        # precisa e as imagens param de chegar.
+        nativo = leitor.bgr_nativo
+        if nativo is not None:
+            return nativo
+    jpeg = leitor.quadro_detalhe if leitor.detalhe_ativo else leitor.quadro
     if not jpeg:
         return None
     try:
