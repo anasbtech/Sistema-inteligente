@@ -606,10 +606,19 @@ function drawOSD(ctx,cam,W,H){
   ctx.save();
   ctx.font=`500 ${Math.max(8,9*s)}px "IBM Plex Mono",monospace`;
   ctx.fillStyle='rgba(255,255,255,.85)';
-  ctx.textAlign='left';
+
   // Nome e código da câmera, canto inferior esquerdo
+  ctx.textAlign='left';
   const label = `${cam.nome.toUpperCase()} - ${cam.codigo}`;
   ctx.fillText(label, 8*s, H - 10*s);
+
+  // Data e hora, canto superior direito
+  ctx.textAlign='right';
+  const agora = new Date();
+  const data = agora.toLocaleDateString('pt-BR');
+  const hora = agora.toLocaleTimeString('pt-BR');
+  ctx.fillText(`${data} ${hora}`, W - 8*s, 16*s);
+
   ctx.restore();
 }
 
