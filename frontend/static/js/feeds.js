@@ -49,6 +49,15 @@ const COR_CLASSE={
    quem sabe disso é ele, e o número cresce a cada câmera cadastrada. Serve de
    piso para o primeiro quadro e para quando a mensagem vier sem a validade. */
 const CAIXA_VIDA_MS=5000;
+/* Quantos tiles podem manter fluxo MJPEG contínuo. O navegador permite seis
+   conexões HTTP por origem, e o MJPEG não devolve a sua enquanto estiver
+   tocando; o resto do sistema ainda precisa de vaga para as chamadas de API.
+   Acima deste número os tiles passam a recarregar quadro a quadro. */
+const MAX_MJPEG=4;
+/* Cadência dos tiles que recarregam. A inferência leva mais que isso para
+   voltar à mesma câmera, então o vídeo continua à frente do que o sistema
+   consegue analisar. */
+const POLL_MS=1000;
 
 
 const SCENE_CFG={
@@ -527,15 +536,48 @@ const FEED={
     return this.scenes.get(cam.codigo);
   },
   register(canvas,cam,opts){
-    const t={canvas,ctx:canvas.getContext('2d',{alpha:false}),cam,opts:opts||{},img:null};
-    const url=this.fonteAoVivo?this.fonteAoVivo(cam,t.opts):null;
-    if(url){
+    const t={canvas,ctx:canvas.getContext('2d',{alpha:false}),cam,opts:opts||{},
+             img:null,modo:null,poll:null};
+    this.tiles.push(t);
+    this.ligarFonte(t);
+  },
+  /* O MJPEG segura a conexão HTTP aberta enquanto o vídeo durar, e o
+     navegador só permite seis por origem. Com o parque maior que isso os
+     tiles excedentes ficavam pretos para sempre — a requisição nunca saía da
+     fila, e nada no servidor acusava erro porque ela nunca chegou lá.
+     Os primeiros ficam no fluxo contínuo; os demais recarregam um quadro por
+     vez, em conexões que fecham e devolvem a vaga. */
+  ligarFonte(t){
+    const emFluxo=this.tiles.filter(x=>x.modo==='mjpeg').length;
+    // A ficha e a tela cheia são um tile só, e é onde a fluidez importa.
+    if((t.opts&&t.opts.hd)||emFluxo<MAX_MJPEG){
+      const url=this.fonteAoVivo?this.fonteAoVivo(t.cam,t.opts):null;
+      if(!url)return;
+      t.modo='mjpeg';
       const img=new Image();
       img.onerror=()=>{t.img=null};   // câmera muda: volta para a cena sintética
       img.src=url;
       t.img=img;
+      return;
     }
-    this.tiles.push(t);
+    const url=this.fonteSnapshot?this.fonteSnapshot(t.cam):null;
+    if(!url)return;
+    t.modo='poll';
+    const puxar=()=>{
+      if(!t.canvas||!t.canvas.isConnected){clearInterval(t.poll);t.poll=null;return}
+      const img=new Image();
+      // Só troca o quadro exibido quando o novo chegou inteiro: atribuir
+      // antes deixaria o tile piscar em branco a cada recarga.
+      img.onload=()=>{t.img=img};
+      img.onerror=()=>{};
+      img.src=url+'&t='+Date.now();
+    };
+    puxar();
+    t.poll=setInterval(puxar,POLL_MS);
+  },
+  soltar(t){
+    if(t.poll){clearInterval(t.poll);t.poll=null}
+    if(t.img){t.img.onerror=null;t.img.onload=null;t.img.src='';t.img=null}
   },
   /* Tile cujo canvas saiu do documento — modal fechado, lista redesenhada.
      Sem soltar o `src`, a conexão MJPEG continua aberta e o leitor RTSP do
@@ -545,14 +587,14 @@ const FEED={
     const vivos=[];
     this.tiles.forEach(t=>{
       if(t.canvas&&t.canvas.isConnected){vivos.push(t);return}
-      if(t.img){t.img.onerror=null;t.img.src='';t.img=null}
+      this.soltar(t);
     });
     this.tiles=vivos;
   },
   clear(){
     // Soltar o src encerra a conexão MJPEG. Sem isto cada troca de tela
     // deixaria um leitor RTSP pendurado no servidor.
-    this.tiles.forEach(t=>{if(t.img){t.img.onerror=null;t.img.src='';t.img=null}});
+    this.tiles.forEach(t=>this.soltar(t));
     this.tiles=[];
   },
   resize(t){
