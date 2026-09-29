@@ -605,9 +605,11 @@ function drawOSD(ctx,cam,W,H){
   const s=W/640;
   ctx.save();
   ctx.font=`500 ${Math.max(8,9*s)}px "IBM Plex Mono",monospace`;
-  ctx.fillStyle='rgba(255,255,255,.55)';
-  ctx.textAlign='right';
-  // Overlay de câmera removido
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.textAlign='left';
+  // Nome e código da câmera, canto inferior esquerdo
+  const label = `${cam.nome.toUpperCase()} - ${cam.codigo}`;
+  ctx.fillText(label, 8*s, H - 10*s);
   ctx.restore();
 }
 
