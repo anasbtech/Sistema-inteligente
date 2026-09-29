@@ -477,7 +477,7 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .live-bar{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line-soft);background:var(--ink-850);flex-wrap:wrap;flex:none}
 .live-bar .sp{flex:1}
 /* Parede de vídeo: as células preenchem a área disponível */
-.mosaic{flex:1;display:grid;gap:5px;padding:5px;background:var(--ink-950);min-height:0;overflow:hidden}
+.mosaic{flex:1;display:grid;gap:14px;padding:14px;background:var(--ink-950);min-height:0;overflow:hidden}
 .mosaic.g1{grid-template-columns:1fr;grid-template-rows:1fr}
 .mosaic.g4{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr)}
 .mosaic.g9{grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr)}
