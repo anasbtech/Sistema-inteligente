@@ -792,7 +792,6 @@ async function abrirCamera(codigo){
         <div style="min-width:0">
           <div id="camQuadro" style="position:relative;${medidaCaixa(razaoInicial)};background:#000;border-radius:var(--r-m);overflow:hidden;border:1px solid var(--line)">
             <canvas id="camModalFeed" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
-            <span class="chip c-gray mono" id="camRes" style="position:absolute;right:9px;bottom:9px;font-size:10.5px;opacity:.85">—</span>
           </div>
         </div>
         <div class="cam-ficha-lado">
@@ -873,14 +872,12 @@ async function abrirCamera(codigo){
     // A resolução da ficha é a cadastrada, e ela pode divergir do que a
     // câmera entrega. Quem decide a proporção da caixa é o quadro que chegou:
     // vindo do próprio JPEG, não sobra tarja nem com o cadastro errado.
-    const selo = $('#camRes');
     const quadro = $('#camQuadro');
     const relogio = setInterval(() => {
       if(!cv.isConnected){ clearInterval(relogio); return; }
       const t = FEED.tiles.find(x => x.canvas === cv);
       const img = t && t.img;
       if(img && img.naturalWidth){
-        selo.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
         const real = img.naturalWidth / img.naturalHeight;
         // Propriedade por propriedade, e nao `replace` sobre o cssText: o
         // navegador normaliza o texto do atributo (espacos, ordem), e a

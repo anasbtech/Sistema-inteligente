@@ -657,33 +657,11 @@ const FEED={
       // Detecções (caixas e nomes) são sempre mostradas, independente do vídeo
       if(t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H);
       pintarIdentificacoes(ctx,FEED.identificacoesDe(t.cam.codigo),W,H);
-      if(t.opts.osd!==false)drawOSD(ctx,t.cam,W,H);
     });
   },
   start(){if(this.running)return;this.running=true;this.last=performance.now();requestAnimationFrame(this.loop)},
   stop(){this.running=false}
 };
-
-function drawOSD(ctx,cam,W,H){
-  const s=W/640;
-  ctx.save();
-  ctx.font=`500 ${Math.max(8,9*s)}px "IBM Plex Mono",monospace`;
-  ctx.fillStyle='rgba(255,255,255,.85)';
-
-  // Nome e código da câmera, canto inferior esquerdo
-  ctx.textAlign='left';
-  const label = `${cam.nome.toUpperCase()} - ${cam.codigo}`;
-  ctx.fillText(label, 8*s, H - 10*s);
-
-  // Data e hora, canto superior direito
-  ctx.textAlign='right';
-  const agora = new Date();
-  const data = agora.toLocaleDateString('pt-BR');
-  const hora = agora.toLocaleTimeString('pt-BR');
-  ctx.fillText(`${data} ${hora}`, W - 8*s, 16*s);
-
-  ctx.restore();
-}
 
 /* ---------- Retrato biométrico (template, não fotografia) ---------- */
 function drawBioFace(canvas,seed,sexo,size){
