@@ -456,7 +456,7 @@ function renderOnce(canvas, cam){
     ctx.fillStyle = '#E8474D';
     ctx.font = `600 ${Math.round(w/16)}px "IBM Plex Mono", monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(cam.status === 'OFFLINE' ? 'SEM SINAL' : 'MANUTENÇÃO', w/2, h/2 + 4);
+    ctx.fillText(cam.status === 'OFFLINE' ? 'OFFLINE' : 'MANUTENÇÃO', w/2, h/2 + 4);
     return;
   }
   const sc = FEED.scene(cam);
