@@ -51,15 +51,16 @@ const COR_CLASSE={
 const CAIXA_VIDA_MS=5000;
 /* Quantos tiles podem manter fluxo MJPEG contínuo. O navegador permite seis
    conexões HTTP por origem, e o MJPEG não devolve a sua enquanto estiver
-   tocando. Três, não seis: o WebSocket de eventos ocupa uma, o rodízio de
-   recarga ocupa outra, e as chamadas de API ainda precisam de vaga — sem
-   essa folga elas ficam presas na fila junto com os tiles.
-   Acima deste número os tiles passam a recarregar quadro a quadro. */
-const MAX_MJPEG=3;
+   tocando. Com dezoito câmeras, cinco em fluxo dá espaço para o WebSocket,
+   o rodízio, e as chamadas da API. Acima deste número os tiles passam a
+   recarregar quadro a quadro. */
+const MAX_MJPEG=5;
 /* Intervalo entre um pedido de recarga e o próximo. Não é a taxa de cada
    tile: os pedidos são feitos um de cada vez, em rodízio, então cada câmera
-   volta a cada POLL_MS vezes o número de tiles em recarga. */
-const POLL_MS=150;
+   volta a cada POLL_MS vezes o número de tiles em recarga. Com dezoito
+   câmeras e cinco em fluxo contínuo, treze em rodízio levaria ~1,3s por volta
+   a 100ms. */
+const POLL_MS=100;
 
 
 const SCENE_CFG={
