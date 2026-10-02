@@ -185,7 +185,12 @@ const API = {
      do navegador, atrás do vídeo. */
   deteccoesPorClasse(q){ return this.get('/deteccoes/por-classe', q); },
   deteccao(codigo){ return this.get('/deteccoes/' + codigo); },
-  resumoDeteccoes(horas){ return this.get('/deteccoes/resumo', {horas:horas||24}); },
+  /* Número: janela de N horas até agora. Objeto {desde, ate}: intervalo
+     fechado, que é como o painel olha um dia já encerrado. */
+  resumoDeteccoes(q){
+    const query = (q && typeof q === 'object') ? q : {horas: q || 24};
+    return this.get('/deteccoes/resumo', query);
+  },
   revisar(codigo, veredito, observacao){
     return this.post(`/deteccoes/${codigo}/revisao`, {veredito, observacao:observacao||''});
   },

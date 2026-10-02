@@ -13,43 +13,51 @@ function semSenha(url){
 /* ==========================================================
    PAINEL
    ========================================================== */
-function labels24(){
-  const out = [], agora = new Date();
-  for(let i = 23; i >= 0; i--){
-    const d = new Date(agora.getTime() - i * 36e5);
-    out.push(i % 4 === 0 ? pad(d.getHours()) + 'h' : '');
-  }
-  return out;
-}
+const diaISO = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const diaBR  = s => s.split('-').reverse().join('/');
 
-/** Converte a série do servidor (hora, tipo, total) em 24 baldes por tipo. */
-function serie24(resumo){
-  const vazios = () => new Array(24).fill(0);
-  const out = {FACIAL: vazios(), OBJETO: vazios(), ACAO: vazios()};
-  const agora = new Date();
-  const base = new Date(agora.getTime() - 23 * 36e5);
-  base.setMinutes(0, 0, 0);
+/** Distribui a série do servidor nos baldes do intervalo pedido.
+
+   Acima de dois dias o balde deixa de ser a hora e passa a ser o dia: um mês
+   em barras de hora são 720 pontos espremidos, que não se leem. */
+function seriePeriodo(resumo, inicio, fim){
+  const porHora = (fim - inicio) <= 2 * 864e5;
+  const passo = porHora ? 36e5 : 864e5;
+  const base = porHora
+    ? new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate(), inicio.getHours())
+    : new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate());
+  const n = Math.max(1, Math.ceil((fim - base) / passo));
+
+  const vazios = () => new Array(n).fill(0);
+  const series = {FACIAL: vazios(), OBJETO: vazios(), ACAO: vazios()};
   (resumo.serie_horaria || []).forEach(r => {
-    const i = Math.floor((new Date(r.hora).getTime() - base.getTime()) / 36e5);
-    if(i >= 0 && i < 24 && out[r.tipo]) out[r.tipo][i] += r.total;
+    const i = Math.floor((new Date(r.hora).getTime() - base.getTime()) / passo);
+    if(i >= 0 && i < n && series[r.tipo]) series[r.tipo][i] += r.total;
   });
-  return out;
+
+  const cada = Math.max(1, Math.ceil(n / 8));
+  const labels = Array.from({length: n}, (_, i) => {
+    if(i % cada) return '';
+    const d = new Date(base.getTime() + i * passo);
+    return porHora ? pad(d.getHours()) + 'h' : `${pad(d.getDate())}/${pad(d.getMonth()+1)}`;
+  });
+  return {series, labels};
 }
 
 
 async function renderPainel(alvo){
-  const agora = new Date();
-  const umDiaAtras = new Date(agora.getTime() - 24 * 36e5);
-  const dataDesdeStr = APP.periodoDesde || umDiaAtras.toISOString().split('T')[0];
-  const dataAteStr = APP.periodoAte || agora.toISOString().split('T')[0];
-
-  const dataDesde = new Date(dataDesdeStr + 'T00:00:00Z');
-  const dataAte = new Date(dataAteStr + 'T23:59:59Z');
-  const horasDecimais = (dataAte.getTime() - dataDesde.getTime()) / 36e5;
-  const periodoHoras = Math.max(1, Math.round(horasDecimais));
+  const hojeStr = diaISO(new Date());
+  const dataDesdeStr = APP.periodoDesde || hojeStr;
+  const dataAteStr = APP.periodoAte || hojeStr;
+  // Sem o sufixo Z: a data escolhida no calendário é o dia de quem olha a
+  // tela, não o dia em UTC — o toISOString() adiante faz a conversão.
+  const inicio = new Date(dataDesdeStr + 'T00:00:00');
+  const fim = new Date(dataAteStr + 'T23:59:59.999');
+  const retencao = ((APP.cfg || {}).config || {}).retencao_dias || 90;
+  const minStr = diaISO(new Date(Date.now() - retencao * 864e5));
 
   const [resumo, resumoAlertas, esquema, ultimas, alertasAbertos] = await Promise.all([
-    API.resumoDeteccoes(periodoHoras),
+    API.resumoDeteccoes({desde: inicio.toISOString(), ate: fim.toISOString()}),
     API.pode('alerts') ? API.resumoAlertas() : Promise.resolve({}),
     API.pode('biometrics') ? API.esquemaIds() : Promise.resolve({prefixos:{}}),
     API.deteccoes({tipo:'FACIAL', apenas_match:true, por_pagina:6}),
@@ -59,7 +67,10 @@ async function renderPainel(alvo){
   const t = resumo.por_tipo || {};
   const fac = t.FACIAL || 0, obj = t.OBJETO || 0, act = t.ACAO || 0;
   const total = resumo.total || 0;
-  const series = serie24(resumo);
+  const {series, labels} = seriePeriodo(resumo, inicio, fim);
+  const rotuloPeriodo = dataDesdeStr === dataAteStr
+    ? diaBR(dataDesdeStr)
+    : `${diaBR(dataDesdeStr)} – ${diaBR(dataAteStr)}`;
   const online = APP.cameras.filter(c => c.status === 'ONLINE').length;
   const abertos = (resumoAlertas.abertos || 0) + (resumoAlertas.em_andamento || 0);
   const pref = esquema.prefixos || {};
@@ -70,21 +81,21 @@ async function renderPainel(alvo){
   const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1]).slice(0,6)
     .map(([k,v]) => ({k, v, cor:'var(--acc)'}));
 
-  const agora = new Date();
-  const umDiaAtras = new Date(agora.getTime() - 24 * 36e5);
-  const formatData = (d) => d.toISOString().split('T')[0];
-  const dataAte = formatData(agora);
-  const dataDesde = APP.periodoDesde || formatData(umDiaAtras);
+  const diasAtras = d => diaISO(new Date(Date.now() - d * 864e5));
+  const atalhoAtivo = dataAteStr !== hojeStr ? ''
+    : {[hojeStr]:'hoje', [diasAtras(6)]:'7d', [diasAtras(29)]:'30d'}[dataDesdeStr] || '';
 
   alvo.innerHTML = `
-  <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-    <div style="display:flex;gap:8px;align-items:center">
-      <label style="font-size:12.5px;color:var(--txt-2);font-weight:500">Desde:</label>
-      <input type="date" id="inpDesde" value="${dataDesde}" style="font-size:12.5px;padding:5px 8px">
+  <div class="toolbar" style="margin-bottom:14px">
+    <div class="periodo">
+      <label for="inpDesde">Período</label>
+      <input class="inp" id="inpDesde" type="date" value="${dataDesdeStr}" min="${minStr}" max="${dataAteStr}">
+      <span class="sep">até</span>
+      <input class="inp" id="inpAte" type="date" value="${dataAteStr}" min="${dataDesdeStr}" max="${hojeStr}">
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <label style="font-size:12.5px;color:var(--txt-2);font-weight:500">Até:</label>
-      <input type="date" id="inpAte" value="${dataAte}" style="font-size:12.5px;padding:5px 8px">
+    <div class="segm" id="periodoAtalhos">
+      ${[['hoje','Hoje'],['7d','7 dias'],['30d','30 dias']].map(([k,l]) =>
+        `<button data-atalho="${k}" class="${atalhoAtivo === k ? 'on' : ''}">${l}</button>`).join('')}
     </div>
   </div>
 
@@ -95,7 +106,7 @@ async function renderPainel(alvo){
       <div class="kpi-delta ${online === APP.cameras.length ? 'up' : 'nt'}">${APP.cameras.length ? fmtPct(online/APP.cameras.length*100) : '—'} de disponibilidade</div>
     </div>
     <div class="kpi">
-      <div class="kpi-top"><span class="kpi-lbl">Detecções · ${periodoHoras}h</span><span class="kpi-ico">${ico('box',15)}</span></div>
+      <div class="kpi-top"><span class="kpi-lbl">Detecções no período</span><span class="kpi-ico">${ico('box',15)}</span></div>
       <div class="kpi-val" id="kpiTotal">${fmtNum(total)}</div>
       <div class="kpi-delta up">${ico('up',11)} ${fmtNum(fac)} faciais · ${fmtNum(obj)} objetos · ${fmtNum(act)} ações</div>
     </div>
@@ -113,7 +124,7 @@ async function renderPainel(alvo){
 
   <div class="grid" style="grid-template-columns:${window.innerWidth < 1100 ? '1fr' : '1.55fr 1fr'};gap:14px;margin-bottom:14px" id="dashRow1">
     <div class="panel">
-      <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">${dataDesdeStr} a ${dataAteStr}</span><span class="sp"></span>
+      <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">${rotuloPeriodo}</span><span class="sp"></span>
         <div class="legend">
           <span><i style="background:var(--acc)"></i>Facial</span>
           <span><i style="background:var(--green)"></i>Objetos</span>
@@ -123,10 +134,10 @@ async function renderPainel(alvo){
         {data: series.OBJETO, cor:'var(--green)'},
         {data: series.FACIAL, cor:'var(--acc)'},
         {data: series.ACAO,   cor:'var(--violet)'}
-      ], {labels: labels24(), h:214})}</div>
+      ], {labels, h:214})}</div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Composição</h3><span class="sub">${periodoHoras}h</span></div>
+      <div class="panel-hd"><h3>Composição</h3><span class="sub">${rotuloPeriodo}</span></div>
       <div class="panel-bd" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center">
         ${donut([
           {v:obj, cor:'var(--green)'}, {v:fac, cor:'var(--acc)'}, {v:act, cor:'var(--violet)'}
@@ -146,7 +157,7 @@ async function renderPainel(alvo){
 
   <div class="grid cols-3" style="margin-bottom:14px">
     <div class="panel">
-      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${periodoHoras}h</span></div>
+      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${rotuloPeriodo}</span></div>
       <div class="rank">
         ${(resumo.top_cameras || []).slice(0,6).map((c, i) => `
           <div class="rank-row">
@@ -160,7 +171,7 @@ async function renderPainel(alvo){
       </div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${periodoHoras}h</span></div>
+      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${rotuloPeriodo}</span></div>
       <div class="panel-bd">${barsChart(setores, {h:224})}</div>
     </div>
     <div class="panel">
@@ -196,18 +207,20 @@ async function renderPainel(alvo){
 
   $$('[data-ir]', alvo).forEach(b => b.onclick = () => irPara(b.dataset.ir));
 
-  // Seletor de período
-  const inpDesde = $('#inpDesde');
-  const inpAte = $('#inpAte');
-  [inpDesde, inpAte].forEach(inp => {
-    if(inp){
-      inp.onchange = () => {
-        APP.periodoDesde = inpDesde ? inpDesde.value : null;
-        APP.periodoAte = inpAte ? inpAte.value : null;
-        irPara('dash');
-      };
-    }
-  });
+  // Seletor de período. Por irPara, e não por renderPainel direto: o
+  // tratamento de erro do carregamento está lá, e o painel não pode ficar
+  // mudo se a consulta falhar.
+  const aplicarPeriodo = (desde, ate) => {
+    APP.periodoDesde = desde;
+    APP.periodoAte = ate;
+    irPara('dash');
+  };
+  const inpDesde = $('#inpDesde'), inpAte = $('#inpAte');
+  // O calendário vazia o campo quando se apaga a data; aí vale o dia de hoje.
+  inpDesde.onchange = () => aplicarPeriodo(inpDesde.value || hojeStr, dataAteStr);
+  inpAte.onchange = () => aplicarPeriodo(dataDesdeStr, inpAte.value || hojeStr);
+  $$('#periodoAtalhos button').forEach(b => b.onclick = () =>
+    aplicarPeriodo(diasAtras({hoje:0, '7d':6, '30d':29}[b.dataset.atalho]), hojeStr));
 
   // Identificações recentes
   const itens = ultimas.itens || [];

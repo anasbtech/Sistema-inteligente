@@ -469,13 +469,29 @@ async def por_classe(
 
 
 @router.get("/resumo", summary="Agregados para o painel")
-async def resumo(horas: int = Query(24, ge=1, le=168), db: AsyncSession = Depends(get_db),
+async def resumo(horas: int = Query(24, ge=1, le=168),
+                 desde: Optional[datetime] = Query(None, description="Início da janela (ISO)"),
+                 ate: Optional[datetime] = Query(None, description="Fim da janela (ISO)"),
+                 db: AsyncSession = Depends(get_db),
                  usuario: Usuario = Depends(exige("facial"))):
-    desde = datetime.now(timezone.utc) - timedelta(hours=horas)
+    """Agregados da janela pedida.
+
+    Com `desde`/`ate` a janela é esse intervalo — é o que permite olhar um dia
+    fechado no passado. Sem eles, vale `horas` contadas de agora para trás.
+    """
+    inicio = como_utc(desde) if desde else datetime.now(timezone.utc) - timedelta(hours=horas)
+    fim = como_utc(ate) if ate else None
+    if fim is not None and fim < inicio:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "A data final é anterior à inicial.")
+
+    janela = [Deteccao.ocorrido_em >= inicio]
+    if fim is not None:
+        janela.append(Deteccao.ocorrido_em <= fim)
 
     por_tipo = dict((t, n) for t, n in (
         await db.execute(
-            select(Deteccao.tipo, func.count()).where(Deteccao.ocorrido_em >= desde)
+            select(Deteccao.tipo, func.count()).where(*janela)
             .group_by(Deteccao.tipo)
         )
     ).all())
@@ -484,8 +500,7 @@ async def resumo(horas: int = Query(24, ge=1, le=168), db: AsyncSession = Depend
     # sistema também roda em SQLite.
     brutos = (
         await db.execute(
-            select(Deteccao.ocorrido_em, Deteccao.tipo)
-            .where(Deteccao.ocorrido_em >= desde)
+            select(Deteccao.ocorrido_em, Deteccao.tipo).where(*janela)
         )
     ).all()
     baldes: dict[tuple, int] = {}
@@ -498,7 +513,7 @@ async def resumo(horas: int = Query(24, ge=1, le=168), db: AsyncSession = Depend
         await db.execute(
             select(Camera.codigo, Camera.nome, Camera.setor, func.count(Deteccao.id).label("n"))
             .join(Deteccao, Deteccao.camera_id == Camera.id)
-            .where(Deteccao.ocorrido_em >= desde)
+            .where(*janela)
             .group_by(Camera.codigo, Camera.nome, Camera.setor)
             .order_by(func.count(Deteccao.id).desc()).limit(10)
         )
@@ -509,12 +524,13 @@ async def resumo(horas: int = Query(24, ge=1, le=168), db: AsyncSession = Depend
             select(func.count()).select_from(Deteccao)
             .where(Deteccao.tipo == TipoDeteccao.FACIAL,
                    Deteccao.pessoa_id.isnot(None),
-                   Deteccao.ocorrido_em >= desde)
+                   *janela)
         )
     ).scalar_one()
 
     return {
-        "janela_horas": horas,
+        "desde": inicio,
+        "ate": fim,
         "total": sum(por_tipo.values()),
         "por_tipo": {t.value: n for t, n in por_tipo.items()},
         "identificacoes_positivas": identificacoes,
