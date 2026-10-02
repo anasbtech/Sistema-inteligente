@@ -180,6 +180,10 @@ const API = {
 
   /* ---------- Detecções ---------- */
   deteccoes(q){ return this.get('/deteccoes', q); },
+  /* Contagem por classe no período, numa requisição só — o gráfico antes
+     pedia uma por classe, e as excedentes ficavam na fila de seis conexões
+     do navegador, atrás do vídeo. */
+  deteccoesPorClasse(q){ return this.get('/deteccoes/por-classe', q); },
   deteccao(codigo){ return this.get('/deteccoes/' + codigo); },
   resumoDeteccoes(horas){ return this.get('/deteccoes/resumo', {horas:horas||24}); },
   revisar(codigo, veredito, observacao){

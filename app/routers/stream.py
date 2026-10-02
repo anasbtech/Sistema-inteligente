@@ -122,7 +122,7 @@ async def _quadros(leitor: video.Leitor, detalhe: bool = False):
     while leitor.vivo and not leitor.erro:
         # `tocar_detalhe` é o que mantém o encode em resolução nativa ligado:
         # o leitor o desliga sozinho quando o último espectador fecha a aba.
-        leitor.tocar_detalhe() if detalhe else leitor.tocar()
+        leitor.tocar_detalhe() if detalhe else leitor.tocar_exibicao()
         atual = leitor.quadro_detalhe if detalhe else leitor.quadro
         if atual is not None and atual is not anterior:
             anterior = atual
@@ -208,11 +208,21 @@ async def snapshot(codigo: str, token: str = Query(..., description="Access toke
         return Response(content=quadro, media_type="image/jpeg",
                         headers={"Cache-Control": "no-store"})
 
+    # Este é o caminho do rodízio do mosaico, que pede um quadro por vez para
+    # os tiles fora do fluxo contínuo. Sem avisar o leitor de que há tela
+    # pedindo, ele seguiria no ritmo ocioso e devolveria o mesmo quadro várias
+    # vezes seguidas — o tile parecia congelado.
+    emprego = video._leitores.get(codigo)
+    if emprego is not None:
+        emprego.tocar_exibicao()
+
     # Um quadro de alguns segundos atrás serve para uma miniatura, e evita
     # reabrir o RTSP — que custa segundos — cada vez que a lista é aberta.
     quadro = video.ultimo_quadro(codigo, IDADE_MAXIMA_SNAPSHOT_S)
     if quadro is None:
-        quadro = (await _leitor_da_camera(codigo, db)).quadro
+        leitor = await _leitor_da_camera(codigo, db)
+        leitor.tocar_exibicao()
+        quadro = leitor.quadro
     if quadro is None:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"{codigo}: nenhum quadro disponível.")
 

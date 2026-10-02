@@ -49,6 +49,11 @@ class Inferencia:
         # Quanto uma volta completa leva de fato. Cresce com o parque, e é o
         # que o mosaico precisa saber para não apagar a caixa cedo demais.
         self.ciclo_real = intervalo
+        self.ultimo_total = 0
+        # Um analisador por câmera: as trilhas são a memória daquela cena, e
+        # misturá-las entre câmeras faria a mesma pessoa "saltar" de uma para
+        # outra e disparar corrida.
+        self._acoes: Dict[str, vision.AnalisadorAcoes] = {}
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
@@ -85,12 +90,23 @@ class Inferencia:
             # câmeras o intervalo pedido de 3s virava 8,5s reais, e a caixa
             # expirava no vídeo antes do quadro seguinte chegar.
             gasto = time.monotonic() - inicio
-            if gasto > self.intervalo:
-                self.ciclo_real = gasto
-                log.debug("Rodada levou %.1fs, acima do intervalo de %.1fs",
-                          gasto, self.intervalo)
-            else:
-                self.ciclo_real = self.intervalo
+            anterior = self.ciclo_real
+            medido = max(gasto, self.intervalo)
+            # Sobe na hora, desce devagar. A validade publicada vale para a
+            # volta seguinte, e uma volta pode ser bem mais lenta que a
+            # anterior quando a máquina enche: medido de fato, o ciclo pulou
+            # de 28s para 169s, e as caixas emitidas com a validade dos 28s
+            # morreram deixando quase dois minutos de vídeo sem marcação.
+            # Encolher aos poucos custa uma caixa parada por alguns segundos
+            # depois que o parque alivia; o contrário custa o vídeo limpo.
+            self.ciclo_real = max(medido, anterior * 0.7 + medido * 0.3)
+            # Em info, e não debug, porque é o número que explica a sobreposição
+            # ficar parada: a caixa de uma câmera só se renova quando o worker
+            # volta a ela. Logar só a mudança relevante evita uma linha por
+            # volta sem esconder o parque passando do aceitável.
+            if abs(self.ciclo_real - anterior) > max(1.0, anterior * 0.25):
+                log.info("Volta completa em %.1fs (%d câmeras)",
+                         self.ciclo_real, self.ultimo_total)
             await asyncio.sleep(max(0.0, self.intervalo - gasto))
 
     async def _rodada(self) -> None:
@@ -100,6 +116,7 @@ class Inferencia:
                     select(Camera).where(Camera.status == StatusCamera.ONLINE)
                 )
             ).scalars().unique().all()
+            self.ultimo_total = len(cameras)
 
             for cam in cameras:
                 if not cam.rtsp_url:
@@ -161,6 +178,78 @@ class Inferencia:
             self._visto = {k: v for k, v in self._visto.items() if v > corte}
         return False
 
+    async def _registrar_acoes(self, db, cam: Camera, objetos, quadro,
+                               largura: int, altura: int, agora) -> None:
+        """Eventos comportamentais a partir das trilhas desta câmera.
+
+        O que sai daqui depende de quantas vezes por minuto a câmera é vista.
+        Aglomeração é contada num quadro só e sai correta; permanência e
+        abandono precisam da trilha sobreviver entre uma volta e a seguinte, e
+        é por isso que o tempo de vida dela acompanha o ciclo medido. Já
+        corrida, queda e contrafluxo medem movimento entre quadros próximos —
+        com o parque em série, dois quadros da mesma câmera estão a dezenas de
+        segundos de distância, e nessa escala o movimento não se mede. Essas
+        três só valem com a câmera analisada de forma contínua.
+        """
+        from app.routers.deteccoes import processar_deteccao
+
+        analisador = self._acoes.get(cam.codigo)
+        if analisador is None:
+            analisador = vision.AnalisadorAcoes()
+            self._acoes[cam.codigo] = analisador
+        # A trilha precisa durar mais que o intervalo entre duas visitas, senão
+        # é descartada antes de a câmera ser vista de novo e nada acumula.
+        analisador.ttl_trilha = max(8.0, self.ciclo_real * 2.5)
+
+        try:
+            eventos = analisador.atualizar(objetos, largura, altura,
+                                           zonas=self._zonas(cam))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Análise de ações falhou em %s: %s", cam.codigo, exc)
+            return
+
+        for ev in eventos:
+            caixa = None
+            if ev.bbox:
+                x1, y1, x2, y2 = ev.bbox
+                caixa = [x1 / largura, y1 / altura,
+                         (x2 - x1) / largura, (y2 - y1) / altura]
+
+            # Sem a imagem, a linha do registro diz que algo aconteceu e não
+            # deixa conferir o quê — e evento comportamental é indício, que
+            # existe justamente para alguém olhar. Aglomeração não tem caixa,
+            # porque é da cena inteira: ali o recorte é o quadro todo.
+            recorte = ev.bbox or (0, 0, largura, altura)
+            jpeg = await asyncio.to_thread(
+                video.recortar_bgr, quadro, recorte, 0.25 if ev.bbox else 0.0
+            )
+
+            await processar_deteccao(db, DeteccaoIn(
+                tipo=TipoDeteccao.ACAO,
+                camera_codigo=cam.codigo,
+                ocorrido_em=agora,
+                classe=ev.classe,
+                confianca=round(float(ev.confianca), 4),
+                duracao_s=ev.duracao_s,
+                envolvidos=ev.envolvidos,
+                bbox=caixa,
+                track_id=ev.track_id,
+                snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
+            ), origem="inferencia")
+            self.gerados += 1
+            log.info("%s: ação detectada — %s (%d envolvidos)",
+                     cam.codigo, ev.rotulo, ev.envolvidos)
+
+    @staticmethod
+    def _zonas(cam: Camera) -> list:
+        """Zonas da câmera no formato que o analisador espera."""
+        return [
+            {"tipo": getattr(z.tipo, "value", z.tipo),
+             "pontos": z.pontos or [],
+             "regras": z.regras or {}}
+            for z in (cam.zonas or [])
+        ]
+
     async def _processar(self, db, cam: Camera) -> None:
         from app.routers.deteccoes import processar_deteccao
 
@@ -175,11 +264,20 @@ class Inferencia:
         agora = datetime.now(timezone.utc)
 
         caixas_do_quadro = []
+        # `None` enquanto não se sabe: a câmera pode não ter análise de objeto,
+        # e aí não há o que consultar antes de procurar rosto.
+        tem_pessoa = None
 
         if cam.analitico_objeto and vision.yolo_disponivel():
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, True
             )
+            tem_pessoa = any(o.classe == "pessoa" for o in objetos)
+
+            if cam.analitico_acao:
+                await self._registrar_acoes(db, cam, objetos, quadro,
+                                            largura, altura, agora)
+
             for obj in objetos:
                 # A sobreposição mostra o que a câmera está vendo agora, no
                 # limiar que o operador configurou nela. Sai antes das podas:
@@ -223,7 +321,15 @@ class Inferencia:
                 ), origem="inferencia")
                 self.gerados += 1
 
-        if cam.analitico_facial and face_engine.modelos_disponiveis():
+        # Rosto só existe onde há pessoa, e procurar por um num quadro vazio
+        # custava 0,97s contra 0,17s do detector de objeto — com o parque em
+        # série, era 85% da volta gasto em corredores e garagens sem ninguém.
+        # Pular o quadro vazio é o que mantém a sobreposição acompanhando a
+        # cena. Quando a câmera não tem análise de objeto, `tem_pessoa` fica
+        # em None e o rosto é procurado como antes: sem detector de pessoa,
+        # não há informação que justifique pular.
+        if (cam.analitico_facial and face_engine.modelos_disponiveis()
+                and tem_pessoa is not False):
             # Uma passada só, com os pisos afrouxados: os filtros padrão
             # existem para a identificação 1:N, não para o enquadramento. Um
             # rosto de perfil, pequeno ou borrado não serve para dizer quem é

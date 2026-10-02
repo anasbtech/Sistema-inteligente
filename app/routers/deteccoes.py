@@ -428,6 +428,46 @@ async def listar(
                   itens=[DeteccaoOut.model_validate(d) for d in linhas])
 
 
+@router.get("/por-classe", summary="Contagem por classe no período")
+async def por_classe(
+    tipo: TipoDeteccao = Query(..., description="OBJETO, FACIAL ou ACAO"),
+    camera: Optional[str] = Query(None, description="Código da câmera"),
+    desde: Optional[datetime] = None,
+    ate: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("facial")),
+):
+    """Quantas detecções de cada classe no intervalo, numa consulta só.
+
+    O gráfico pedia isso com uma requisição por classe, uma dezena delas a
+    cada vez que a data mudava. O navegador abre seis conexões por origem, e
+    as excedentes esperavam na fila atrás do próprio vídeo do mosaico: o
+    gráfico continuava exibindo o intervalo anterior por segundos, o que
+    parecia filtro que não pega.
+    """
+    filtros = [Deteccao.tipo == tipo]
+    if camera:
+        cam = (await db.execute(
+            select(Camera).where(Camera.codigo == camera)
+        )).scalar_one_or_none()
+        if cam is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Câmera não encontrada.")
+        filtros.append(Deteccao.camera_id == cam.id)
+    if desde:
+        filtros.append(Deteccao.ocorrido_em >= desde)
+    if ate:
+        filtros.append(Deteccao.ocorrido_em <= ate)
+
+    linhas = (await db.execute(
+        select(Deteccao.classe, func.count())
+        .where(*filtros)
+        .group_by(Deteccao.classe)
+    )).all()
+
+    return {"total": sum(n for _, n in linhas),
+            "classes": {c: n for c, n in linhas if c}}
+
+
 @router.get("/resumo", summary="Agregados para o painel")
 async def resumo(horas: int = Query(24, ge=1, le=168), db: AsyncSession = Depends(get_db),
                  usuario: Usuario = Depends(exige("facial"))):

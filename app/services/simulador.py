@@ -42,7 +42,7 @@ CLASSES_OBJETO = [
 CLASSES_ACAO = [
     ("corrida", 14), ("queda", 4), ("aglomeracao", 8), ("briga", 3),
     ("permanencia", 16), ("invasao", 4), ("contrafluxo", 9),
-    ("abandono", 6), ("vandalismo", 3),
+    ("abandono", 6), ("vandalismo", 3), ("fogo", 2),
 ]
 LETRAS = "ABCDEFGHJKLMNPQRSTUVWX"
 

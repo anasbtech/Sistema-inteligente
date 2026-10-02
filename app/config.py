@@ -174,7 +174,20 @@ class Settings(BaseSettings):
     # Ultralytics procura no diretório de trabalho, não encontra e baixa de
     # novo — passando a carregar uma cópia na raiz em vez do peso versionado.
     OBJECT_MODEL: str = str(RAIZ / "models" / "yolov8n.pt")
-    OBJECT_THRESHOLD: float = 0.65
+    # Medido na Produção 02, uma sala com quatro pessoas sentadas: a 0,65 o
+    # modelo marcava só a pessoa da frente, e as três ao fundo ficavam sem
+    # caixa nenhuma. A 0,25 saem as quatro. Mais abaixo começa a inventar —
+    # a 0,15 a mesma cena ganhou uma caixa sobre uma caixa de papelão.
+    # Este piso vale para o que aparece no vídeo. O que entra no registro
+    # passa ainda por INFERENCIA_CONFIANCA_MIN, bem mais alto de propósito.
+    OBJECT_THRESHOLD: float = 0.25
+    # Lado a que o YOLO reduz o quadro antes de analisar, e que manda mais que
+    # o limiar em quem está longe. O padrão do Ultralytics é 640: nele a sala
+    # acima entregava uma pessoa só, porque quem senta ao fundo chega ao
+    # modelo com menos de 30 pixels. A 960 saem as quatro, e medindo na mesma
+    # cena 1280 e 1600 não acharam mais ninguém — só custaram mais. Num parque
+    # analisado em série, o excedente sai do tempo de todas as outras câmeras.
+    OBJECT_IMGSZ: int = 960
     DEVICE: str = "cpu"
 
     # --- Retenção / privacidade -----------------------------------------

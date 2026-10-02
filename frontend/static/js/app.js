@@ -9,11 +9,11 @@ const APP = {
   cfg: {},          // preenchido por /api/info
   mosaico: 9,
   paginaMosaico: 0,
-  setorMosaico: '',
   camSelecionada: null,
   pausado: false,
   cameras: [],      // catálogo carregado uma vez por sessão
-  relogio: null
+  relogio: null,
+  periodoHoras: 24
 };
 
 /* ==========================================================

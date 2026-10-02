@@ -160,22 +160,23 @@ async function renderObjetos(alvo){
     <div class="panel-bd" id="obGrafico">${carregando()}</div></div>
   <div class="panel"><div class="panel-bd tight"><div id="obCorpo">${carregando()}</div></div></div>`;
 
-  // Uma consulta por classe, todas em paralelo — a contagem vem do `total` da
-  // página, sem trazer os registros.
+  // Uma consulta só, agrupada no banco. O filtro de câmera entra junto: o
+  // gráfico tem de falar do mesmo recorte que a tabela abaixo dele, senão
+  // mostra o parque inteiro enquanto a lista mostra uma câmera.
   const carregarGrafico = async () => {
     const g = $('#obGrafico');
     if(!g) return;
     g.innerHTML = carregando();
-    const {de, ate} = FILTRO.objetos;
+    const {de, ate, cam} = FILTRO.objetos;
     const sub = $('#obGraficoSub');
     if(sub) sub.textContent = rotuloPeriodo(de, ate);
     try{
-      const contagens = await Promise.all(classes.map(async ([k]) => {
-        const r = await API.deteccoes({tipo:'OBJETO', classe:k, por_pagina:1,
-          desde: limiteDia(de), ate: limiteDia(ate, true)});
-        return {k: ROTULO_OBJ[k], v: r.total, cor: COR_CLASSE[k] || 'var(--acc)'};
-      }));
-      const visiveis = contagens.filter(c => c.v > 0);
+      const r = await API.deteccoesPorClasse({tipo:'OBJETO', camera: cam || undefined,
+        desde: limiteDia(de), ate: limiteDia(ate, true)});
+      const visiveis = classes
+        .map(([k]) => ({k: ROTULO_OBJ[k], v: (r.classes || {})[k] || 0,
+                        cor: COR_CLASSE[k] || 'var(--acc)'}))
+        .filter(c => c.v > 0);
       g.innerHTML = visiveis.length
         ? barsChart(visiveis, {h:206})
         : vazio('box', 'Nenhuma detecção neste período.', 'Escolha outro intervalo no calendário.');
@@ -273,16 +274,16 @@ async function renderAcoes(alvo){
     const g = $('#acGrafico');
     if(!g) return;
     g.innerHTML = carregando();
-    const {de, ate} = FILTRO.acoes;
+    const {de, ate, cam} = FILTRO.acoes;
     const sub = $('#acGraficoSub');
     if(sub) sub.textContent = rotuloPeriodo(de, ate);
     try{
-      const contagens = await Promise.all(classes.map(async ([k]) => {
-        const r = await API.deteccoes({tipo:'ACAO', classe:k, por_pagina:1,
-          desde: limiteDia(de), ate: limiteDia(ate, true)});
-        return {k: ROTULO_ACAO_UI[k], v: r.total, cor:'var(--violet)'};
-      }));
-      const visiveis = contagens.filter(c => c.v > 0);
+      const r = await API.deteccoesPorClasse({tipo:'ACAO', camera: cam || undefined,
+        desde: limiteDia(de), ate: limiteDia(ate, true)});
+      const visiveis = classes
+        .map(([k]) => ({k: ROTULO_ACAO_UI[k], v: (r.classes || {})[k] || 0,
+                        cor:'var(--violet)'}))
+        .filter(c => c.v > 0);
       g.innerHTML = visiveis.length ? barsChart(visiveis, {h:206})
         : vazio('box', 'Nenhuma ação neste período.', 'Escolha outro intervalo no calendário.');
     }catch(e){ g.innerHTML = erroBloco(e); }

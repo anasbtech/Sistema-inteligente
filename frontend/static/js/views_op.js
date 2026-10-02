@@ -36,9 +36,16 @@ function serie24(resumo){
   return out;
 }
 
+function labelPeriodo(horas){
+  if(horas === 24) return 'últimas 24 horas';
+  if(horas === 48) return 'últimas 48 horas';
+  if(horas === 168) return 'últimos 7 dias';
+  return `últimas ${horas} horas`;
+}
+
 async function renderPainel(alvo){
   const [resumo, resumoAlertas, esquema, ultimas, alertasAbertos] = await Promise.all([
-    API.resumoDeteccoes(24),
+    API.resumoDeteccoes(APP.periodoHoras),
     API.pode('alerts') ? API.resumoAlertas() : Promise.resolve({}),
     API.pode('biometrics') ? API.esquemaIds() : Promise.resolve({prefixos:{}}),
     API.deteccoes({tipo:'FACIAL', apenas_match:true, por_pagina:6}),
@@ -59,7 +66,18 @@ async function renderPainel(alvo){
   const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1]).slice(0,6)
     .map(([k,v]) => ({k, v, cor:'var(--acc)'}));
 
+  const periodoLabel = labelPeriodo(APP.periodoHoras);
+
   alvo.innerHTML = `
+  <div style="margin-bottom:14px;display:flex;gap:9px;align-items:center">
+    <label style="font-size:12.5px;color:var(--txt-2);font-weight:500">Período:</label>
+    <select id="selPeriodo" style="font-size:12.5px;padding:5px 8px">
+      <option value="24" ${APP.periodoHoras === 24 ? 'selected' : ''}>Últimas 24h</option>
+      <option value="48" ${APP.periodoHoras === 48 ? 'selected' : ''}>Últimas 48h</option>
+      <option value="168" ${APP.periodoHoras === 168 ? 'selected' : ''}>Últimos 7 dias</option>
+    </select>
+  </div>
+
   <div class="grid cols-4" style="margin-bottom:14px">
     <div class="kpi k-green">
       <div class="kpi-top"><span class="kpi-lbl">Câmeras on-line</span><span class="kpi-ico">${ico('cam',15)}</span></div>
@@ -67,7 +85,7 @@ async function renderPainel(alvo){
       <div class="kpi-delta ${online === APP.cameras.length ? 'up' : 'nt'}">${APP.cameras.length ? fmtPct(online/APP.cameras.length*100) : '—'} de disponibilidade</div>
     </div>
     <div class="kpi">
-      <div class="kpi-top"><span class="kpi-lbl">Detecções · 24h</span><span class="kpi-ico">${ico('box',15)}</span></div>
+      <div class="kpi-top"><span class="kpi-lbl">Detecções · ${APP.periodoHoras}h</span><span class="kpi-ico">${ico('box',15)}</span></div>
       <div class="kpi-val" id="kpiTotal">${fmtNum(total)}</div>
       <div class="kpi-delta up">${ico('up',11)} ${fmtNum(fac)} faciais · ${fmtNum(obj)} objetos · ${fmtNum(act)} ações</div>
     </div>
@@ -85,7 +103,7 @@ async function renderPainel(alvo){
 
   <div class="grid" style="grid-template-columns:${window.innerWidth < 1100 ? '1fr' : '1.55fr 1fr'};gap:14px;margin-bottom:14px" id="dashRow1">
     <div class="panel">
-      <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">últimas 24 horas</span><span class="sp"></span>
+      <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">${periodoLabel}</span><span class="sp"></span>
         <div class="legend">
           <span><i style="background:var(--acc)"></i>Facial</span>
           <span><i style="background:var(--green)"></i>Objetos</span>
@@ -98,7 +116,7 @@ async function renderPainel(alvo){
       ], {labels: labels24(), h:214})}</div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Composição</h3><span class="sub">24h</span></div>
+      <div class="panel-hd"><h3>Composição</h3><span class="sub">${APP.periodoHoras}h</span></div>
       <div class="panel-bd" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center">
         ${donut([
           {v:obj, cor:'var(--green)'}, {v:fac, cor:'var(--acc)'}, {v:act, cor:'var(--violet)'}
@@ -118,7 +136,7 @@ async function renderPainel(alvo){
 
   <div class="grid cols-3" style="margin-bottom:14px">
     <div class="panel">
-      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">24h</span></div>
+      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${APP.periodoHoras}h</span></div>
       <div class="rank">
         ${(resumo.top_cameras || []).slice(0,6).map((c, i) => `
           <div class="rank-row">
@@ -132,7 +150,7 @@ async function renderPainel(alvo){
       </div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">24h</span></div>
+      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${APP.periodoHoras}h</span></div>
       <div class="panel-bd">${barsChart(setores, {h:224})}</div>
     </div>
     <div class="panel">
@@ -167,6 +185,15 @@ async function renderPainel(alvo){
   </div>`;
 
   $$('[data-ir]', alvo).forEach(b => b.onclick = () => irPara(b.dataset.ir));
+
+  // Seletor de período
+  const selPeriodo = $('#selPeriodo');
+  if(selPeriodo){
+    selPeriodo.onchange = () => {
+      APP.periodoHoras = +selPeriodo.value;
+      irPara('dash');
+    };
+  }
 
   // Identificações recentes
   const itens = ultimas.itens || [];
@@ -209,8 +236,6 @@ function painelNovoEvento(){
    MONITORAMENTO AO VIVO
    ========================================================== */
 async function renderAoVivo(alvo){
-  const setores = [...new Set(APP.cameras.map(c => c.setor))].sort();
-
   alvo.innerHTML = `
   <div class="live-shell">
     <div class="live-bar">
@@ -218,10 +243,6 @@ async function renderAoVivo(alvo){
         ${[[1,'1×1'],[4,'2×2'],[9,'3×3'],[16,'4×4']].map(([n,l]) =>
           `<button data-n="${n}" class="${APP.mosaico === n ? 'on' : ''}">${l}</button>`).join('')}
       </div>
-      <select class="inp" id="liveSetor" style="min-width:150px">
-        <option value="">Todos os setores</option>
-        ${setores.map(s => `<option value="${esc(s)}" ${APP.setorMosaico === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
-      </select>
       <div style="display:flex;align-items:center;gap:5px">
         <button class="btn btn-ghost btn-sm btn-icon" id="pgPrev" aria-label="Página anterior">${ico('lt',14)}</button>
         <span class="mono" id="pgInfo" style="font-size:11.5px;color:var(--txt-3);min-width:56px;text-align:center"></span>
@@ -245,10 +266,10 @@ async function renderAoVivo(alvo){
   $$('#layoutSeg button').forEach(b => b.onclick = () => {
     APP.mosaico = +b.dataset.n; APP.paginaMosaico = 0; irPara('live');
   });
-  $('#liveSetor').onchange = e => { APP.setorMosaico = e.target.value; APP.paginaMosaico = 0; montarMosaico(); };
   $('#pgPrev').onclick = () => { if(APP.paginaMosaico > 0){ APP.paginaMosaico--; montarMosaico(); } };
   $('#pgNext').onclick = () => {
-    if((APP.paginaMosaico+1) * APP.mosaico < camerasFiltradas().length){ APP.paginaMosaico++; montarMosaico(); }
+    if(!APP.mosaico) return;   // com todas na tela não há página seguinte
+    if((APP.paginaMosaico+1) * APP.mosaico < APP.cameras.length){ APP.paginaMosaico++; montarMosaico(); }
   };
   $('#btnPause').onclick = () => {
     APP.pausado = !APP.pausado;
@@ -258,12 +279,42 @@ async function renderAoVivo(alvo){
     toast(APP.pausado ? 'Mosaico pausado' : 'Mosaico retomado',
       APP.pausado ? 'A gravação nos servidores continua ativa.' : '', 'info', 2600);
   };
+  // A casca inteira, e não só o mosaico: em tela cheia a barra tem de vir
+  // junto, senão não há como paginar nem trocar o arranjo sem sair.
   $('#btnFs').onclick = () => {
-    const el = $('#mosaic');
+    const el = $('.live-shell');
     if(!document.fullscreenElement){
-      if(el.requestFullscreen) el.requestFullscreen().catch(() =>
+      if(el && el.requestFullscreen) el.requestFullscreen().catch(() =>
         toast('Tela cheia indisponível', 'O navegador bloqueou a solicitação.', 'warn'));
     }else document.exitFullscreen();
+  };
+  // Vale também para a saída pelo Esc, que não passa pelo botão.
+  let sumir = null;
+  document.onfullscreenchange = () => {
+    const shell = $('.live-shell');
+    const barra = $('.live-bar');
+    const ativo = !!document.fullscreenElement;
+    if(shell) shell.classList.toggle('wall', ativo);
+    const b = $('#btnFs');
+    if(b) b.innerHTML = `${ico('expand',13)} ${ativo ? 'Sair' : 'Tela cheia'}`;
+
+    clearTimeout(sumir);
+    if(!ativo){
+      if(barra) barra.classList.remove('aparece');
+      if(shell) shell.onmousemove = null;
+      return;
+    }
+    // Faixa de 70px no alto: perto o bastante para ser intencional, longe o
+    // bastante para não piscar a cada vez que o ponteiro cruza a primeira
+    // fileira de câmeras.
+    if(shell) shell.onmousemove = ev => {
+      const perto = ev.clientY < 70;
+      const b2 = $('.live-bar');
+      if(!b2) return;
+      clearTimeout(sumir);
+      if(perto){ b2.classList.add('aparece'); return; }
+      sumir = setTimeout(() => b2.classList.remove('aparece'), 1200);
+    };
   };
 
   montarMosaico();
@@ -271,18 +322,32 @@ async function renderAoVivo(alvo){
   renderPTZ();
 }
 
-const camerasFiltradas = () =>
-  APP.cameras.filter(c => !APP.setorMosaico || c.setor === APP.setorMosaico);
 
+// `APP.mosaico` é quantas células o arranjo tem por página; zero significa
+// "todas numa tela só", e aí a grade é calculada a partir do parque.
 function camerasVisiveis(){
-  const t = camerasFiltradas();
+  const t = APP.cameras;
+  if(!APP.mosaico) return t;
   return t.slice(APP.paginaMosaico * APP.mosaico, APP.paginaMosaico * APP.mosaico + APP.mosaico);
 }
 
+/* O arranjo que faz as câmeras saírem maiores dentro da área disponível.
+
+   Não basta dividir por raiz quadrada: a célula tem de ficar em 16:9, que é o
+   formato do que a câmera entrega, senão a imagem é cortada nas bordas para
+   preencher um retângulo de outro feitio — era o que deixava o mosaico
+   desalinhado, com metade de uma pessoa na borda de uma célula e sobra preta
+   em outra. Então testa-se cada número de colunas e fica o que dá a maior
+   célula sem estourar nem a largura nem a altura. */
 function montarMosaico(){
   const m = $('#mosaic'); if(!m) return;
+  const todas = APP.cameras, vis = camerasVisiveis();
+  const celulas = APP.mosaico;
+
   m.className = 'mosaic g' + APP.mosaico;
-  const todas = camerasFiltradas(), vis = camerasVisiveis();
+  m.style.gridTemplateColumns = '';
+  m.style.gridTemplateRows = '';
+
   const paginas = Math.max(1, Math.ceil(todas.length / APP.mosaico));
   $('#pgInfo').textContent = `${APP.paginaMosaico+1} / ${paginas}`;
   $('#pgPrev').disabled = APP.paginaMosaico === 0;
@@ -294,12 +359,12 @@ function montarMosaico(){
     APP.camSelecionada = primeira ? primeira.codigo : null;
   }
 
-  m.innerHTML = Array.from({length: APP.mosaico}).map((_, i) => {
+  m.innerHTML = Array.from({length: celulas}).map((_, i) => {
     const c = vis[i];
     if(!c) return `<div class="tile"><div class="tile-empty">Sem sinal atribuído</div></div>`;
     const off = c.status !== 'ONLINE';
     return `<div class="tile ${off ? 'offline' : ''} ${c.codigo === APP.camSelecionada ? 'sel' : ''}" data-cam="${esc(c.codigo)}">
-      ${off ? `<div class="tile-off">${ico('alert',22)}<span>${c.status === 'OFFLINE' ? 'Sem sinal' : 'Em manutenção'}</span>
+      ${off ? `<div class="tile-off">${ico('alert',22)}<span>${c.status === 'OFFLINE' ? 'Offline' : 'Em manutenção'}</span>
                <span style="color:var(--txt-4);font-size:9.5px">${esc(c.codigo)}</span></div>`
             : `<canvas data-feed="${esc(c.codigo)}"></canvas>`}
     </div>`;
@@ -307,7 +372,10 @@ function montarMosaico(){
 
   $$('#mosaic canvas[data-feed]').forEach(cv => {
     const cam = camPorCodigo(cv.dataset.feed);
-    if(cam) FEED.register(cv, cam, {zonas: APP.mosaico <= 4, noise: APP.mosaico <= 9});
+    // Zona e ruído sobre uma célula pequena viram sujeira: quem decide é o
+    // tamanho real da célula, e com o parque inteiro na tela ela é mínima.
+    if(cam) FEED.register(cv, cam,
+      {zonas: celulas <= 4, noise: celulas <= 9});
   });
   $$('#mosaic .tile[data-cam]').forEach(t => {
     t.onclick = () => {
@@ -321,6 +389,7 @@ function montarMosaico(){
 
   if(!APP.pausado) FEED.start();
 }
+
 
 function renderPTZ(){
   const box = $('#ptzBox'); if(!box) return;
@@ -480,7 +549,7 @@ async function renderCameras(alvo){
       <select class="inp" id="camStatus">
         <option value="">Todos os status</option>
         <option value="ONLINE" ${CAM_FILTRO.status==='ONLINE'?'selected':''}>On-line</option>
-        <option value="OFFLINE" ${CAM_FILTRO.status==='OFFLINE'?'selected':''}>Sem sinal</option>
+        <option value="OFFLINE" ${CAM_FILTRO.status==='OFFLINE'?'selected':''}>Offline</option>
         <option value="MANUTENCAO" ${CAM_FILTRO.status==='MANUTENCAO'?'selected':''}>Manutenção</option>
       </select>
       ${API.pode('edit') && API.pode('cams') ? `<button class="btn btn-primary btn-sm" id="camNova">${ico('plus',14)} Nova câmera</button>` : ''}
@@ -488,7 +557,7 @@ async function renderCameras(alvo){
   </div>
   <div class="grid cols-4" style="margin-bottom:14px">
     <div class="kpi k-green"><div class="kpi-top"><span class="kpi-lbl">On-line</span><span class="kpi-ico">${ico('cam',15)}</span></div><div class="kpi-val">${cont('ONLINE')}</div><div class="kpi-delta nt">transmitindo agora</div></div>
-    <div class="kpi k-red"><div class="kpi-top"><span class="kpi-lbl">Sem sinal</span><span class="kpi-ico">${ico('alert',15)}</span></div><div class="kpi-val">${cont('OFFLINE')}</div><div class="kpi-delta dn">requer verificação em campo</div></div>
+    <div class="kpi k-red"><div class="kpi-top"><span class="kpi-lbl">Offline</span><span class="kpi-ico">${ico('alert',15)}</span></div><div class="kpi-val">${cont('OFFLINE')}</div><div class="kpi-delta dn">requer verificação em campo</div></div>
     <div class="kpi k-amber"><div class="kpi-top"><span class="kpi-lbl">Manutenção</span><span class="kpi-ico">${ico('cog',15)}</span></div><div class="kpi-val">${cont('MANUTENCAO')}</div><div class="kpi-delta nt">fora de operação programada</div></div>
     <div class="kpi k-violet"><div class="kpi-top"><span class="kpi-lbl">Com análise facial</span><span class="kpi-ico">${ico('face',15)}</span></div><div class="kpi-val">${APP.cameras.filter(c => c.analitico_facial).length}</div><div class="kpi-delta nt">de ${APP.cameras.length} dispositivos</div></div>
   </div>
@@ -851,11 +920,6 @@ async function abrirCamera(codigo){
           <div class="rank-bd"><b>${esc(tituloDeteccao(d))}</b><span class="sub">${fmtDT(d.ocorrido_em)}</span></div>
           <span class="chip ${d.tipo === 'FACIAL' ? 'c-blue' : d.tipo === 'OBJETO' ? 'c-green' : 'c-violet'}">${d.tipo}</span>
         </div>`).join('')}</div>` : '<p class="hint">Sem eventos registrados.</p>'}
-    </div>
-    <div class="modal-ft">
-      <button class="btn btn-ghost" data-close>Fechar</button>
-      ${API.pode('edit') && API.pode('cams') ? `<button class="btn btn-soft" id="camGoEdit">${ico('cog',14)} Configurar</button>` : ''}
-      <button class="btn btn-primary" id="camGoLive">${ico('live',14)} Ver ao vivo</button>
     </div>`;
 
   $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
@@ -891,11 +955,4 @@ async function abrirCamera(codigo){
   }
   else renderOnce(cv, c);
 
-  const ed = $('#camGoEdit'); if(ed) ed.onclick = () => { fecharModal(); editarCamera(c.codigo); };
-  $('#camGoLive').onclick = () => {
-    fecharModal();
-    APP.camSelecionada = c.codigo; APP.setorMosaico = c.setor;
-    APP.mosaico = 4; APP.paginaMosaico = 0;
-    irPara('live');
-  };
 }

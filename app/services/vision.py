@@ -78,7 +78,7 @@ SEVERIDADE_OBJETO: Dict[str, int] = {
 SEVERIDADE_ACAO: Dict[str, int] = {
     "corrida": 2, "permanencia": 2, "contrafluxo": 2,
     "aglomeracao": 3, "abandono": 3, "vandalismo": 3,
-    "queda": 4, "briga": 4, "invasao": 4,
+    "queda": 4, "briga": 4, "invasao": 4, "fogo": 4,
 }
 
 ROTULO_ACAO: Dict[str, str] = {
@@ -91,6 +91,7 @@ ROTULO_ACAO: Dict[str, str] = {
     "contrafluxo": "Deslocamento em contrafluxo",
     "abandono": "Abandono de objeto",
     "vandalismo": "Dano ao patrimônio",
+    "fogo": "Fogo",
 }
 
 
@@ -164,11 +165,17 @@ def detectar_objetos(quadro: np.ndarray, limiar: Optional[float] = None,
     lim = settings.OBJECT_THRESHOLD if limiar is None else limiar
     modelo = obter_yolo()
 
+    # `imgsz` manda mais que o limiar em quem está longe. O YOLO reduz o quadro
+    # a este lado antes de olhar: a 640, uma pessoa sentada ao fundo de uma sala
+    # 1920x1080 chega ao modelo com menos de 30 pixels de altura, e sai com
+    # confiança baixa demais para qualquer limiar razoável. É por isso que a
+    # mesma cena marcava quem está perto e ignorava o restante da sala.
+    tam = settings.OBJECT_IMGSZ
     if rastrear:
-        resultados = modelo.track(quadro, persist=True, conf=lim, verbose=False,
-                                  tracker="bytetrack.yaml")
+        resultados = modelo.track(quadro, persist=True, conf=lim, imgsz=tam,
+                                  verbose=False, tracker="bytetrack.yaml")
     else:
-        resultados = modelo(quadro, conf=lim, verbose=False)
+        resultados = modelo(quadro, conf=lim, imgsz=tam, verbose=False)
 
     saida: List[ObjetoDetectado] = []
     for r in resultados:
@@ -290,6 +297,11 @@ class AnalisadorAcoes:
         self.cooldown_s = cooldown_s
         self.trilhas: Dict[int, Trilha] = {}
         self._aglomeracao_em: Optional[float] = None
+        # Quanto uma trilha sobrevive sem ser vista. Oito segundos servem para
+        # quem analisa a câmera quadro a quadro; quem a visita de tempos em
+        # tempos precisa esticar isto até além do intervalo entre as visitas,
+        # ou a trilha é descartada antes da próxima e nada acumula.
+        self.ttl_trilha = 8.0
 
     # -- utilidades internas ------------------------------------------
     def _pode_alertar(self, trilha: Trilha, classe: str, agora: float) -> bool:
@@ -299,7 +311,8 @@ class AnalisadorAcoes:
         trilha.alertou[classe] = agora
         return True
 
-    def _limpar(self, agora: float, ttl: float = 8.0) -> None:
+    def _limpar(self, agora: float, ttl: Optional[float] = None) -> None:
+        ttl = self.ttl_trilha if ttl is None else ttl
         mortos = [tid for tid, t in self.trilhas.items() if agora - t.visto_em > ttl]
         for tid in mortos:
             del self.trilhas[tid]

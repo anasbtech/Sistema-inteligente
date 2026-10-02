@@ -41,8 +41,27 @@ QUALIDADE_DETALHE = 92
 # mosaico.
 OCIOSO_DETALHE_S = 6.0
 
-FPS_SAIDA = 10
-OCIOSO_S = 30.0
+# Cada quadro que sai custa um decode de H.264/H.265, e o parque inteiro
+# decodifica ao mesmo tempo, na mesma máquina que roda os modelos. A 10, com
+# 26 câmeras, a CPU ficava em 100% e a análise de uma câmera passava de 0,2s
+# para mais de 7s — a volta completa chegou a dois minutos, e a caixa só
+# aparecia quando o worker enfim voltava àquela câmera. Seis é fluido o
+# bastante para vigilância e devolve o tempo que a inferência precisa.
+FPS_SAIDA = 6
+# Ritmo de quem não tem ninguém assistindo. A inferência consome um quadro por
+# volta, não seis por segundo: manter o parque inteiro em FPS_SAIDA gastava a
+# CPU dos modelos para produzir quadros que ninguém olhava. O leitor sobe para
+# FPS_SAIDA assim que uma tela pede, e volta a este ritmo quando ela fecha.
+FPS_OCIOSO = 1
+# Quanto tempo, sem pedido de tela, o leitor continua no ritmo cheio. Cobre a
+# troca de página do mosaico sem fazer o vídeo engasgar a cada navegação.
+EXIBINDO_S = 8.0
+# Precisa ser maior que uma volta completa da inferência, porque o worker é um
+# espectador como qualquer outro: ele toca a câmera uma vez por ciclo. A 30s,
+# com o parque em 26 câmeras, o leitor expirava antes da volta seguinte e o
+# log virava um vaivém de "encerrando leitor" / "fluxo RTSP aberto" — e cada
+# reabertura custa segundos negociando RTSP, que saem do tempo de análise.
+OCIOSO_S = 180.0
 FALHAS_ATE_DESISTIR = 60
 
 
@@ -69,6 +88,9 @@ class Leitor:
         self._ultimo_uso = time.monotonic()
         # Zero, e não `monotonic()`: ninguém pediu detalhe ainda.
         self._ultimo_uso_detalhe = 0.0
+        # Idem para a exibição: o worker tocando a câmera não conta como tela
+        # aberta, e é essa diferença que decide o ritmo de decodificação.
+        self._ultimo_uso_exibicao = 0.0
         self._parar = threading.Event()
         self._thread = threading.Thread(
             target=self._rodar, daemon=True, name=f"rtsp-{codigo}"
@@ -83,15 +105,26 @@ class Leitor:
         """Marca que alguém ainda está assistindo."""
         self._ultimo_uso = time.monotonic()
 
+    def tocar_exibicao(self) -> None:
+        """Marca que há uma tela aberta — não apenas o worker analisando."""
+        agora = time.monotonic()
+        self._ultimo_uso = agora
+        self._ultimo_uso_exibicao = agora
+
     def tocar_detalhe(self) -> None:
         """Marca que alguém está assistindo em resolução nativa."""
         agora = time.monotonic()
         self._ultimo_uso = agora
+        self._ultimo_uso_exibicao = agora
         self._ultimo_uso_detalhe = agora
 
     @property
     def detalhe_ativo(self) -> bool:
         return (time.monotonic() - self._ultimo_uso_detalhe) <= OCIOSO_DETALHE_S
+
+    @property
+    def exibindo(self) -> bool:
+        return (time.monotonic() - self._ultimo_uso_exibicao) <= EXIBINDO_S
 
     def parar(self) -> None:
         self._parar.set()
@@ -112,7 +145,6 @@ class Leitor:
             return
 
         log.info("[%s] fluxo RTSP aberto", self.codigo)
-        intervalo = 1.0 / FPS_SAIDA
         proximo = 0.0
         falhas = 0
 
@@ -134,10 +166,18 @@ class Leitor:
             agora = time.monotonic()
             if agora < proximo:
                 # `grab` tira o quadro do buffer sem decodificar. É isso que
-                # permite acompanhar os 30fps da câmera gastando CPU só nos 10
+                # permite acompanhar os 30fps da câmera gastando CPU só nos
                 # que realmente saem — decodificar todos saturava a máquina.
+                # Mas `grab` também não é de graça: ele ainda lê e separa o
+                # stream, e girar aqui sem pausa em 24 câmeras custava CPU que
+                # fazia falta aos modelos. Com a tela aberta o giro continua
+                # apertado, para o vídeo não atrasar; sem ninguém olhando, uma
+                # pausa curta derruba a leitura a um quinto do ritmo, e o
+                # atraso que ela acumula não incomoda quem não está vendo.
+                if not self.exibindo:
+                    time.sleep(0.2)
                 continue
-            proximo = agora + intervalo
+            proximo = agora + 1.0 / (FPS_SAIDA if self.exibindo else FPS_OCIOSO)
 
             ok, quadro = cap.retrieve()
             if not ok or quadro is None:

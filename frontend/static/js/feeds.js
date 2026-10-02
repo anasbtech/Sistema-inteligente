@@ -160,35 +160,6 @@ function drawScene(ctx,sc,W,H,opts){
   const cam=sc.cam, cfg=sc.cfg, hy=cfg.hy*H;
   const noite = opts.noite;
 
-  // Céu / fundo
-  const g=ctx.createLinearGradient(0,0,0,hy*1.5);
-  g.addColorStop(0,(CENAS[cam.cena]||CENAS.rua).ceu); g.addColorStop(1,cfg.amb);
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,hy+1);
-  // Chão
-  const g2=ctx.createLinearGradient(0,hy,0,H);
-  g2.addColorStop(0,cfg.amb); g2.addColorStop(1,(CENAS[cam.cena]||CENAS.rua).chao);
-  ctx.fillStyle=g2; ctx.fillRect(0,hy,W,H-hy);
-
-  // Skyline / paredes
-  ctx.save();
-  if(cam.cena==='corredor'){
-    ctx.fillStyle='rgba(255,255,255,.035)';
-    ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(W*.3,hy*.55);ctx.lineTo(W*.3,H);ctx.lineTo(0,H);ctx.fill();
-    ctx.beginPath();ctx.moveTo(W,0);ctx.lineTo(W*.7,hy*.55);ctx.lineTo(W*.7,H);ctx.lineTo(W,H);ctx.fill();
-    ctx.strokeStyle='rgba(255,255,255,.08)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(W*.3,hy*.55);ctx.moveTo(W,0);ctx.lineTo(W*.7,hy*.55);
-    ctx.moveTo(0,H);ctx.lineTo(W*.3,hy*.55);ctx.moveTo(W,H);ctx.lineTo(W*.7,hy*.55);ctx.stroke();
-  }else{
-    const rr=mulberry(hash32(cam.codigo+'sky'));
-    ctx.fillStyle='rgba(255,255,255,.045)';
-    let x=0;
-    while(x<W){const w=W*(.05+rr()*.09),h=hy*(.25+rr()*.7);ctx.fillRect(x,hy-h,w-1,h);
-      if(noite){ctx.fillStyle='rgba(240,200,110,.30)';
-        for(let wy=hy-h+3;wy<hy-3;wy+=5)for(let wx=x+2;wx<x+w-4;wx+=5)if(rr()>.62)ctx.fillRect(wx,wy,1.6,2.2);
-        ctx.fillStyle='rgba(255,255,255,.045)';}
-      x+=w;}
-  }
-  ctx.restore();
 
   // Pista / marcações
   if(cfg.lanes>0){
@@ -552,6 +523,9 @@ const FEED={
      vez, em conexões que fecham e devolvem a vaga. */
   ligarFonte(t){
     const emFluxo=this.tiles.filter(x=>x.modo==='mjpeg').length;
+    // Com o parque inteiro na tela, cinco fluxos contínuos consomem quase
+    // todas as vagas de conexão e deixam uma só para o rodízio atender as
+    // outras vinte e uma — uma volta de mais de dois segundos.
     // A ficha e a tela cheia são um tile só, e é onde a fluidez importa.
     if((t.opts&&t.opts.hd)||emFluxo<MAX_MJPEG){
       const url=this.fonteAoVivo?this.fonteAoVivo(t.cam,t.opts):null;
@@ -576,16 +550,21 @@ const FEED={
   iniciarRodizio(){
     if(this._rodizio)return;
     this._rodizio=setInterval(()=>{
-      if(this._puxando)return;
       const fila=this.tiles.filter(t=>t.modo==='poll'&&t.canvas&&t.canvas.isConnected);
       if(!fila.length){clearInterval(this._rodizio);this._rodizio=null;return}
+      // Tantos pedidos quantas vagas o fluxo contínuo deixou livres, guardando
+      // uma para o WebSocket e as chamadas da própria interface. Um pedido só
+      // de cada vez deixava as demais vagas paradas enquanto a fila crescia.
+      const emFluxo=this.tiles.filter(x=>x.modo==='mjpeg').length;
+      const vagas=Math.max(1,5-emFluxo);
+      if((this._puxando||0)>=vagas)return;
       const t=fila[(this._vez||0)%fila.length];
       this._vez=((this._vez||0)+1)%fila.length;
       const url=this.fonteSnapshot?this.fonteSnapshot(t.cam):null;
       if(!url)return;
-      this._puxando=true;
+      this._puxando=(this._puxando||0)+1;
       const img=new Image();
-      const liberar=()=>{this._puxando=false};
+      const liberar=()=>{this._puxando=Math.max(0,(this._puxando||1)-1)};
       // Só troca o quadro exibido quando o novo chegou inteiro: atribuir
       // antes deixaria o tile piscar em branco a cada recarga.
       img.onload=()=>{t.img=img;liberar()};
@@ -615,7 +594,7 @@ const FEED={
     this.tiles.forEach(t=>this.soltar(t));
     this.tiles=[];
     if(this._rodizio){clearInterval(this._rodizio);this._rodizio=null}
-    this._puxando=false;this._vez=0;
+    this._puxando=0;this._vez=0;
   },
   resize(t){
     const r=t.canvas.getBoundingClientRect();
@@ -721,12 +700,7 @@ function drawSnapshot(canvas,det,size){
   const cena=det.cena||'rua';
   const r=mulberry(hash32(det.codigo||'x'));
   const cfg=SCENE_CFG[cena]||SCENE_CFG.rua, hy=cfg.hy*H;
-  const cores=CENAS[cena]||CENAS.rua;
-  const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,cores.ceu);g.addColorStop(.45,cfg.amb);g.addColorStop(1,cores.chao);
-  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
-  ctx.fillStyle='rgba(255,255,255,.05)';
-  let x=0;while(x<W){const w=W*(.1+r()*.16),h=hy*(.3+r()*.7);ctx.fillRect(x,hy-h,w-.7,h);x+=w}
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
   const bx=det.bbox?det.bbox[0]*W:W*.35, by=det.bbox?det.bbox[1]*H:H*.35;
   const bw=Math.max(10,(det.bbox?det.bbox[2]:.2)*W), bh=Math.max(12,(det.bbox?det.bbox[3]:.3)*H);
   if(det.tipo==='FACIAL'){

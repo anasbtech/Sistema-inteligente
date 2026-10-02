@@ -47,7 +47,7 @@ const STATUS_PESSOA = {
 };
 const STATUS_CAMERA = {
   ONLINE:     {lbl:'On-line',     cls:'c-green'},
-  OFFLINE:    {lbl:'Sem sinal',   cls:'c-red'},
+  OFFLINE:    {lbl:'Offline',     cls:'c-red'},
   MANUTENCAO: {lbl:'Manutenção',  cls:'c-amber'}
 };
 const STATUS_ALERTA = {
@@ -66,7 +66,7 @@ const ROTULO_ACAO_UI = {
   corrida:'Corrida súbita', queda:'Queda de pessoa', aglomeracao:'Aglomeração',
   briga:'Agressão física', permanencia:'Permanência prolongada',
   invasao:'Invasão de perímetro', contrafluxo:'Deslocamento em contrafluxo',
-  abandono:'Abandono de objeto', vandalismo:'Dano ao patrimônio'
+  abandono:'Abandono de objeto', vandalismo:'Dano ao patrimônio', fogo:'Fogo'
 };
 const SEVERIDADE = ['', 'Informativo', 'Baixa', 'Média', 'Crítica'];
 const CLS_SEV = ['', 'c-gray', 'c-blue', 'c-amber', 'c-red'];
