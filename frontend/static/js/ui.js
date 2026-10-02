@@ -17,6 +17,9 @@ const pad = (n, l = 2) => String(n).padStart(l, '0');
 const dt = v => (v instanceof Date ? v : new Date(v));
 const fmtTime = v => { const d = dt(v); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
 const fmtDate = v => { const d = dt(v); return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`; };
+/* O que <input type="date"> lê e devolve. Pelos campos locais, e não por
+   toISOString(): perto da meia-noite o UTC já virou o dia seguinte. */
+const diaISO = v => { const d = dt(v); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
 const fmtDT = v => `${fmtDate(v)} ${fmtTime(v)}`;
 const fmtNum = n => Number(n || 0).toLocaleString('pt-BR');
 const fmtPct = n => Number(n || 0).toFixed(1).replace('.', ',') + '%';

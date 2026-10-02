@@ -13,9 +13,6 @@ function semSenha(url){
 /* ==========================================================
    PAINEL
    ========================================================== */
-const diaISO = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-const diaBR  = s => s.split('-').reverse().join('/');
-
 /** Distribui a série do servidor nos baldes do intervalo pedido.
 
    Acima de dois dias o balde deixa de ser a hora e passa a ser o dia: um mês
@@ -69,8 +66,8 @@ async function renderPainel(alvo){
   const total = resumo.total || 0;
   const {series, labels} = seriePeriodo(resumo, inicio, fim);
   const rotuloPeriodo = dataDesdeStr === dataAteStr
-    ? diaBR(dataDesdeStr)
-    : `${diaBR(dataDesdeStr)} – ${diaBR(dataAteStr)}`;
+    ? fmtDate(inicio)
+    : `${fmtDate(inicio)} – ${fmtDate(fim)}`;
   const online = APP.cameras.filter(c => c.status === 'ONLINE').length;
   const abertos = (resumoAlertas.abertos || 0) + (resumoAlertas.em_andamento || 0);
   const pref = esquema.prefixos || {};

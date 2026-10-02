@@ -37,7 +37,6 @@ const barraConfianca = (v, cor) => `<div class="conf">
    escolhido vale do primeiro ao último instante do dia de quem está olhando.
    Os dois extremos importam — parar em 00:00 deixaria o dia final inteiro de
    fora, e um intervalo de 22 a 25 mostraria só até o 24. */
-const diaISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
 const limiteDia = (valor, fim) => {
   if(!valor) return undefined;
