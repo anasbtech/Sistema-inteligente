@@ -163,7 +163,7 @@ const API = {
   pessoa(id){ return this.get('/pessoas/' + id); },
   criarPessoa(dados){ return this.post('/pessoas', dados); },
   salvarPessoa(id, dados){ return this.patch('/pessoas/' + id, dados); },
-  desativarPessoa(id, motivo){ return this.del('/pessoas/' + id, {motivo}); },
+  excluirPessoa(id, motivo){ return this.del('/pessoas/' + id, {motivo}); },
   esquemaIds(){ return this.get('/pessoas/esquema-ids'); },
   proximoId(sexo){ return this.get('/pessoas/proximo-id', {sexo}); },
   capturasDaPessoa(id, limite){ return this.get(`/pessoas/${id}/capturas`, {limite:limite||30}); },

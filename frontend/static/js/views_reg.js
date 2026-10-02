@@ -784,7 +784,7 @@ async function editarPessoa(idBio, opcoes){
       <div class="note" style="margin-top:15px">${ico('shield',15)}<div>O cadastro armazena um <b>template vetorial irreversível</b> (512 dimensões), não a fotografia original. O tratamento é registrado na trilha de auditoria com finalidade, base legal e responsável.</div></div>
     </div>
     <div class="modal-ft">
-      ${!novo ? `<button class="btn btn-danger" id="pDel">${ico('trash',14)} Desativar registro</button>` : ''}
+      ${!novo ? `<button class="btn btn-danger" id="pDel">${ico('trash',14)} Excluir registro</button>` : ''}
       <span style="flex:1"></span>
       <button class="btn btn-ghost" data-close>Cancelar</button>
       <button class="btn btn-primary" id="pSave">${ico('check',14)} ${novo ? 'Emitir identificador' : 'Salvar alterações'}</button>
@@ -814,14 +814,23 @@ async function editarPessoa(idBio, opcoes){
 
   const bd = $('#pDel');
   if(bd) bd.onclick = async () => {
-    const motivo = await confirmar('Desativar registro',
-      `Desativar <b>${esc(p.id_biometrico)}</b> — ${esc(p.nome)}?<br><br>O identificador não será reutilizado, o template biométrico é apagado e o histórico de capturas permanece íntegro.`,
-      {rotulo:'Desativar', perigo:true, exigeTexto:'Motivo da desativação'});
+    const capturas = p.total_deteccoes || 0;
+    const motivo = await confirmar('Excluir registro biométrico',
+      `Apagar <b>${esc(p.id_biometrico)}</b> — ${esc(p.nome)} — em definitivo?<br><br>` +
+      `O cadastro, as ${p.amostras || 0} amostra(s) e o template são removidos do banco. ` +
+      (capturas ? `As ${fmtNum(capturas)} captura(s) dela voltam a constar como <b>não identificadas</b> ` +
+                  `e permanecem no histórico. ` : '') +
+      `O identificador <b>${esc(p.id_biometrico)}</b> volta a ficar livre para reemissão.` +
+      `<br><br>Isto não se desfaz.`,
+      {rotulo:'Excluir em definitivo', perigo:true, exigeTexto:'Motivo da exclusão'});
     if(!motivo) return;
     try{
-      await API.desativarPessoa(p.id_biometrico, motivo);
+      const r = await API.excluirPessoa(p.id_biometrico, motivo);
       fecharModal();
-      toast('Registro desativado', `${p.id_biometrico} removido das buscas 1:N.`, 'warn');
+      toast('Registro excluído',
+        `${r.id_biometrico} apagado` +
+        (r.capturas_desvinculadas ? ` · ${fmtNum(r.capturas_desvinculadas)} captura(s) desvinculada(s)` : '') +
+        '.', 'warn');
       irPara('biometrics');
     }catch(e){ erroToast(e); }
   };

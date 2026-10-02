@@ -220,30 +220,48 @@ async def atualizar(id_biometrico: str, dados: PessoaUpdate, request: Request,
     return _saida(pessoa, usuario)
 
 
-@router.delete("/{id_biometrico}", status_code=status.HTTP_204_NO_CONTENT,
-               summary="Desativar registro")
-async def desativar(id_biometrico: str, request: Request, motivo: str = Query(..., min_length=8),
-                    db: AsyncSession = Depends(get_db),
-                    usuario: Usuario = Depends(exige("biometrics", "edit"))):
-    """Exclusão lógica: o identificador não é reutilizado, e o histórico de
-    capturas permanece íntegro. O template biométrico é apagado."""
+@router.delete("/{id_biometrico}", summary="Excluir registro biométrico")
+async def excluir(id_biometrico: str, request: Request, motivo: str = Query(..., min_length=8),
+                  db: AsyncSession = Depends(get_db),
+                  usuario: Usuario = Depends(exige("biometrics", "edit"))):
+    """Apaga a pessoa, suas amostras e o template, em definitivo.
+
+    O que a pessoa deixa para trás não é apagado junto: as capturas e os
+    alertas dela voltam a ser "não identificados" e seguem no histórico. O
+    registro de que ela passou por ali é da operação, não do cadastro — e a
+    trilha de auditoria guarda quem apagou, quando e por quê.
+
+    O identificador volta a ficar livre. Era por isso que a exclusão aqui
+    era lógica; quem precisar da garantia de que um BIO-* nunca se repete
+    deve desativar em vez de excluir.
+    """
     pessoa = (
         await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))
     ).scalar_one_or_none()
     if pessoa is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro biométrico não encontrado.")
 
-    pessoa.ativo = False
-    pessoa.embedding = None          # deixa de participar de buscas 1:N
-    for a in pessoa.amostras_rel:
-        await db.delete(a)
-    pessoa.amostras = 0
+    # Contados antes: depois do delete o vínculo já não existe para ser visto,
+    # e é isto que a auditoria precisa registrar sobre o alcance da exclusão.
+    capturas = (await db.execute(
+        select(func.count()).select_from(Deteccao).where(Deteccao.pessoa_id == pessoa.id)
+    )).scalar_one()
+    nome, bio, amostras = pessoa.nome, pessoa.id_biometrico, pessoa.amostras
+
+    # As amostras saem por CASCADE e as capturas viram órfãs por SET NULL,
+    # ambos declarados nas chaves estrangeiras e com PRAGMA foreign_keys=ON.
+    await db.delete(pessoa)
+    await db.flush()
 
     await audit.registrar(
-        db, acao="PESSOA_DEL", descricao="Registro biométrico desativado e template removido",
-        severidade="warn", usuario=usuario, alvo=pessoa.id_biometrico,
+        db, acao="PESSOA_DEL", severidade="warn", usuario=usuario, alvo=bio,
+        descricao=f"Registro biométrico excluído em definitivo ({nome})",
         finalidade=motivo, request=request,
+        metadados={"amostras_removidas": amostras,
+                   "capturas_desvinculadas": capturas},
     )
+    return {"id_biometrico": bio, "nome": nome,
+            "amostras_removidas": amostras, "capturas_desvinculadas": capturas}
 
 
 # ======================================================================
