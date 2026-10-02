@@ -331,6 +331,85 @@ async function renderAcoes(alvo){
 /* ==========================================================
    DETALHE DA DETECÇÃO
    ========================================================== */
+/* Vincula uma captura a quem já está cadastrado, usando-a como amostra.
+
+   O template feito de foto de documento casa mal com o rosto de 80 pixels
+   que a câmera do corredor entrega — ângulo, lente e luz são outros. Daí
+   cadastrar pelo próprio material que se vai reconhecer. Quem diz de quem é
+   o rosto é quem está olhando o recorte; o servidor só refaz o vetor. */
+async function vincularCapturaAPessoa(d){
+  const box = abrirModal(`<div class="modal-bd">${carregando('Carregando cadastros…')}</div>`);
+  let pessoas = [];
+  try{ pessoas = (await API.pessoas({por_pagina: 200})).itens || []; }
+  catch(e){ box.innerHTML = `<div class="modal-bd">${erroBloco(e)}</div>`; return; }
+
+  box.innerHTML = `
+    <div class="modal-hd"><h3>Vincular captura a um cadastro</h3>
+      <span class="chip c-blue mono">${esc(d.codigo)}</span>
+      <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
+    <div class="modal-bd">
+      <div class="note" style="margin-bottom:13px">${ico('info',15)}<div>
+        O rosto desta captura passa a ser <b>uma amostra do template</b> da pessoa
+        escolhida, e as próximas passagens dela tendem a ser reconhecidas.
+        Vincular a pessoa errada ensina o sistema a errar — confira o recorte antes.
+      </div></div>
+      <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:14px">
+        <canvas id="vincSnap" width="132" height="132"
+                style="border:1px solid var(--line);border-radius:var(--r-m);background:#000;flex:none"></canvas>
+        <div style="min-width:0">
+          <div class="eyebrow" style="margin-bottom:5px">Captura</div>
+          <div class="mono" style="font-size:11.5px;color:var(--txt-3);line-height:1.7">
+            ${esc(d.camera ? d.camera.nome : '—')}<br>${fmtDT(d.ocorrido_em)}<br>
+            qualidade ${pct100(d.qualidade_face)}</div>
+        </div>
+      </div>
+      <div class="search" style="margin-bottom:9px">${ico('search',14)}
+        <input class="inp" id="vincQ" placeholder="Filtrar por nome ou ID biométrico…"></div>
+      <div id="vincLista" class="rank" style="max-height:260px;overflow:auto"></div>
+    </div>
+    <div class="modal-ft"><button class="btn btn-ghost" data-close>Cancelar</button></div>`;
+
+  $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
+  carregarRecorte($('#vincSnap'), d.codigo);
+
+  const pintar = () => {
+    const q = $('#vincQ').value.trim().toLowerCase();
+    const vis = pessoas.filter(p => !q || p.nome.toLowerCase().includes(q)
+                                 || p.id_biometrico.toLowerCase().includes(q));
+    $('#vincLista').innerHTML = vis.map(p => {
+      const st = STATUS_PESSOA[p.status] || {};
+      return `<div class="rank-row clickable" data-bio="${esc(p.id_biometrico)}" style="cursor:pointer">
+        <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="34" height="34"></canvas>
+        <div class="rank-bd"><b>${esc(p.nome)}</b>
+          <span class="sub">${esc(p.id_biometrico)} · ${p.amostras || 0} amostra(s)</span></div>
+        <span class="chip ${st.cls}">${esc(st.lbl)}</span>
+      </div>`;
+    }).join('') || vazio('face','Nenhum cadastro encontrado.');
+    pintarFaces($('#vincLista'));
+    $$('#vincLista .rank-row').forEach(r => r.onclick = () => vincular(r.dataset.bio));
+  };
+
+  const vincular = async bio => {
+    const p = pessoas.find(x => x.id_biometrico === bio);
+    const ok = await confirmar('Vincular captura',
+      `Esta captura passa a ser amostra do template de <b>${esc(p.nome)}</b> ` +
+      `(${esc(bio)}).<br><br>O vínculo fica na trilha de auditoria com a sua matrícula.`,
+      {rotulo:'Vincular'});
+    // `confirmar` toma o lugar deste modal; desistindo, a lista volta.
+    if(!ok) return vincularCapturaAPessoa(d);
+    try{
+      const r = await API.amostrasDeCapturas(bio, [d.codigo]);
+      fecharModal();
+      toast('Captura vinculada',
+        `${esc(p.nome)} — ${r.amostras} amostra(s) no template.`, 'ok');
+      irPara(APP.view);
+    }catch(e){ erroToast(e); }
+  };
+
+  $('#vincQ').oninput = debounce(pintar, 200);
+  pintar();
+}
+
 async function abrirDeteccao(codigo){
   const box = abrirModal(`<div class="modal-bd">${carregando()}</div>`, true);
   let d;
@@ -401,7 +480,8 @@ async function abrirDeteccao(codigo){
       ${podeDescartar ? `<button class="btn btn-ghost" id="detDel">${ico('trash',14)} Descartar</button>` : ''}
       ${p && API.pode('biometrics') ? `<button class="btn btn-soft" id="detPessoa">${ico('db',14)} Abrir ficha</button>` : ''}
       ${naoIdentificada && API.pode('biometrics') && API.pode('edit')
-        ? `<button class="btn btn-soft" id="detCadastrar">${ico('db',14)} Cadastrar na base</button>` : ''}
+        ? `<button class="btn btn-soft" id="detVincular">${ico('face',14)} Vincular a cadastro</button>
+           <button class="btn btn-soft" id="detCadastrar">${ico('db',14)} Cadastrar na base</button>` : ''}
       ${d.camera ? `<button class="btn btn-soft" id="detCam">${ico('live',14)} Ver câmera</button>` : ''}
       ${podeRevisar ? `<button class="btn btn-danger" id="detFalso">Falso positivo</button>
                        <button class="btn btn-primary" id="detConf">${ico('check',14)} Confirmar</button>` : ''}
@@ -426,6 +506,8 @@ async function abrirDeteccao(codigo){
   if(bc) bc.onclick = () => { fecharModal(); abrirCamera(d.camera.codigo); };
   const bcad = $('#detCadastrar');
   if(bcad) bcad.onclick = () => { fecharModal(); editarPessoa(null, {deteccao: d.codigo}); };
+  const bvinc = $('#detVincular');
+  if(bvinc) bvinc.onclick = () => vincularCapturaAPessoa(d);
 
   const bdel = $('#detDel');
   if(bdel) bdel.onclick = async () => {

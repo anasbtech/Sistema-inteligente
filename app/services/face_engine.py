@@ -185,6 +185,35 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
 # ----------------------------------------------------------------------
 # Álgebra
 # ----------------------------------------------------------------------
+def extrair_de_recorte(jpeg: bytes) -> Optional[FaceDetectada]:
+    """Refaz o embedding a partir do recorte gravado de uma captura.
+
+    O recorte vem enquadrado no rosto, e aí o detector erra: o SCRFD foi
+    treinado em cenas, não em retratos que ocupam o quadro inteiro, e perde
+    metade dos recortes desta instalação. Uma borda replicada devolve ao
+    rosto a proporção que o detector espera — medido aqui, 50% de acerto
+    passa a 97%. Ampliar não ajuda: não cria detalhe e piora o embedding.
+    """
+    try:
+        import cv2
+    except ImportError:
+        raise ModelosIndisponiveis("OpenCV não instalado.")
+
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    alt, larg = img.shape[:2]
+    mx, my = int(larg * 0.4), int(alt * 0.4)
+    emoldurado = cv2.copyMakeBorder(img, my, my, mx, mx, cv2.BORDER_REPLICATE)
+
+    # Pisos zerados: o que decide se a captura serve de amostra é o
+    # operador que a reconheceu na tela, não a nota automática.
+    faces = extrair_faces(emoldurado, 0.0, 0, 0.0)
+    if not faces:
+        return None
+    return max(faces, key=lambda f: f.qualidade)
+
+
 def normalizar(v: Sequence[float]) -> np.ndarray:
     arr = np.asarray(v, dtype=np.float32)
     norma = float(np.linalg.norm(arr))

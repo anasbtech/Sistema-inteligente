@@ -172,6 +172,11 @@ const API = {
     fd.append('imagem', arquivo);
     return this.req('POST', `/pessoas/${id}/amostras`, {formData: fd});
   },
+  /* Capturas da própria câmera viram amostra do template: é o material que
+     mais se parece com o que se vai reconhecer depois. */
+  amostrasDeCapturas(id, codigos){
+    return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
+  },
   async buscarPorImagem(arquivo, limiar){
     const fd = new FormData();
     fd.append('imagem', arquivo);

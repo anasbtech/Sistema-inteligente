@@ -298,6 +298,91 @@ async def adicionar_amostra(
     }
 
 
+@router.post("/{id_biometrico}/amostras-de-capturas",
+             summary="Promover capturas das câmeras a amostras do cadastro")
+async def amostras_de_capturas(
+    id_biometrico: str, request: Request, codigos: List[str],
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("biometrics", "edit")),
+):
+    """Usa capturas já gravadas como amostras do template.
+
+    Uma foto de documento casa mal com o rosto de 80 pixels que a câmera do
+    corredor entrega: ângulo, lente e iluminação são outros. O template que
+    reconhece bem é o feito do mesmo material que se vai reconhecer — daí
+    cadastrar pela própria captura.
+
+    Quem diz que a captura é daquela pessoa é o operador, olhando o recorte;
+    o servidor só recalcula o vetor e registra quem afirmou o quê.
+    """
+    pessoa = (
+        await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))
+    ).scalar_one_or_none()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro biométrico não encontrado.")
+    if not codigos:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Informe ao menos uma captura.")
+
+    deteccoes = (
+        await db.execute(
+            select(Deteccao).where(Deteccao.codigo.in_(codigos),
+                                   Deteccao.tipo == TipoDeteccao.FACIAL)
+        )
+    ).scalars().unique().all()
+    achadas = {d.codigo for d in deteccoes}
+    recusadas = [{"codigo": c, "motivo": "captura não encontrada"}
+                 for c in codigos if c not in achadas]
+
+    aceitas = []
+    for det in deteccoes:
+        jpeg = evidencias.ler(det.snapshot_key)
+        if jpeg is None:
+            recusadas.append({"codigo": det.codigo, "motivo": "recorte não está mais em disco"})
+            continue
+        face = face_engine.extrair_de_recorte(jpeg)
+        if face is None:
+            recusadas.append({"codigo": det.codigo,
+                              "motivo": "nenhum rosto legível no recorte"})
+            continue
+        db.add(AmostraFacial(
+            pessoa_id=pessoa.id, embedding=face.embedding.tolist(),
+            qualidade=round(float(face.qualidade), 4), origem="captura",
+        ))
+        # A captura passa a apontar para a pessoa: ela deixa de ser uma
+        # passagem anônima e some do expurgo curto das não identificadas.
+        det.pessoa_id = pessoa.id
+        det.similaridade = 1.0
+        det.expurgo_em = None
+        aceitas.append(det.codigo)
+
+    if not aceitas:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Nenhuma das capturas rendeu um rosto legível: " +
+            "; ".join(f"{r['codigo']}: {r['motivo']}" for r in recusadas),
+        )
+
+    await db.flush()
+    await face_engine.recalcular_template(db, pessoa)
+
+    await audit.registrar(
+        db, acao="BIO_AMOSTRA", severidade="warn", usuario=usuario,
+        alvo=pessoa.id_biometrico, finalidade="Cadastro biométrico por captura",
+        descricao=f"{len(aceitas)} captura(s) vinculada(s) ao template",
+        request=request,
+        metadados={"capturas": aceitas, "recusadas": recusadas,
+                   "amostras_totais": pessoa.amostras},
+    )
+    return {
+        "id_biometrico": pessoa.id_biometrico,
+        "aceitas": aceitas,
+        "recusadas": recusadas,
+        "amostras": pessoa.amostras,
+        "qualidade_template": pessoa.qualidade,
+    }
+
+
 @router.delete("/{id_biometrico}/amostras/{amostra_id}", status_code=status.HTTP_204_NO_CONTENT,
                summary="Remover amostra")
 async def remover_amostra(id_biometrico: str, amostra_id: uuid.UUID, request: Request,
