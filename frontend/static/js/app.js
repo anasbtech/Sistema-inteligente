@@ -13,7 +13,8 @@ const APP = {
   pausado: false,
   cameras: [],      // catálogo carregado uma vez por sessão
   relogio: null,
-  periodoHoras: 24
+  periodoDesde: null,
+  periodoAte: null
 };
 
 /* ==========================================================

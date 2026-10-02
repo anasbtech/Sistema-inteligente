@@ -36,16 +36,20 @@ function serie24(resumo){
   return out;
 }
 
-function labelPeriodo(horas){
-  if(horas === 24) return 'últimas 24 horas';
-  if(horas === 48) return 'últimas 48 horas';
-  if(horas === 168) return 'últimos 7 dias';
-  return `últimas ${horas} horas`;
-}
 
 async function renderPainel(alvo){
+  const agora = new Date();
+  const umDiaAtras = new Date(agora.getTime() - 24 * 36e5);
+  const dataDesdeStr = APP.periodoDesde || umDiaAtras.toISOString().split('T')[0];
+  const dataAteStr = APP.periodoAte || agora.toISOString().split('T')[0];
+
+  const dataDesde = new Date(dataDesdeStr + 'T00:00:00Z');
+  const dataAte = new Date(dataAteStr + 'T23:59:59Z');
+  const horasDecimais = (dataAte.getTime() - dataDesde.getTime()) / 36e5;
+  const periodoHoras = Math.max(1, Math.round(horasDecimais));
+
   const [resumo, resumoAlertas, esquema, ultimas, alertasAbertos] = await Promise.all([
-    API.resumoDeteccoes(APP.periodoHoras),
+    API.resumoDeteccoes(periodoHoras),
     API.pode('alerts') ? API.resumoAlertas() : Promise.resolve({}),
     API.pode('biometrics') ? API.esquemaIds() : Promise.resolve({prefixos:{}}),
     API.deteccoes({tipo:'FACIAL', apenas_match:true, por_pagina:6}),
@@ -66,16 +70,22 @@ async function renderPainel(alvo){
   const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1]).slice(0,6)
     .map(([k,v]) => ({k, v, cor:'var(--acc)'}));
 
-  const periodoLabel = labelPeriodo(APP.periodoHoras);
+  const agora = new Date();
+  const umDiaAtras = new Date(agora.getTime() - 24 * 36e5);
+  const formatData = (d) => d.toISOString().split('T')[0];
+  const dataAte = formatData(agora);
+  const dataDesde = APP.periodoDesde || formatData(umDiaAtras);
 
   alvo.innerHTML = `
-  <div style="margin-bottom:14px;display:flex;gap:9px;align-items:center">
-    <label style="font-size:12.5px;color:var(--txt-2);font-weight:500">Período:</label>
-    <select id="selPeriodo" style="font-size:12.5px;padding:5px 8px">
-      <option value="24" ${APP.periodoHoras === 24 ? 'selected' : ''}>Últimas 24h</option>
-      <option value="48" ${APP.periodoHoras === 48 ? 'selected' : ''}>Últimas 48h</option>
-      <option value="168" ${APP.periodoHoras === 168 ? 'selected' : ''}>Últimos 7 dias</option>
-    </select>
+  <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;align-items:center">
+      <label style="font-size:12.5px;color:var(--txt-2);font-weight:500">Desde:</label>
+      <input type="date" id="inpDesde" value="${dataDesde}" style="font-size:12.5px;padding:5px 8px">
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label style="font-size:12.5px;color:var(--txt-2);font-weight:500">Até:</label>
+      <input type="date" id="inpAte" value="${dataAte}" style="font-size:12.5px;padding:5px 8px">
+    </div>
   </div>
 
   <div class="grid cols-4" style="margin-bottom:14px">
@@ -85,7 +95,7 @@ async function renderPainel(alvo){
       <div class="kpi-delta ${online === APP.cameras.length ? 'up' : 'nt'}">${APP.cameras.length ? fmtPct(online/APP.cameras.length*100) : '—'} de disponibilidade</div>
     </div>
     <div class="kpi">
-      <div class="kpi-top"><span class="kpi-lbl">Detecções · ${APP.periodoHoras}h</span><span class="kpi-ico">${ico('box',15)}</span></div>
+      <div class="kpi-top"><span class="kpi-lbl">Detecções · ${periodoHoras}h</span><span class="kpi-ico">${ico('box',15)}</span></div>
       <div class="kpi-val" id="kpiTotal">${fmtNum(total)}</div>
       <div class="kpi-delta up">${ico('up',11)} ${fmtNum(fac)} faciais · ${fmtNum(obj)} objetos · ${fmtNum(act)} ações</div>
     </div>
@@ -103,7 +113,7 @@ async function renderPainel(alvo){
 
   <div class="grid" style="grid-template-columns:${window.innerWidth < 1100 ? '1fr' : '1.55fr 1fr'};gap:14px;margin-bottom:14px" id="dashRow1">
     <div class="panel">
-      <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">${periodoLabel}</span><span class="sp"></span>
+      <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">${dataDesdeStr} a ${dataAteStr}</span><span class="sp"></span>
         <div class="legend">
           <span><i style="background:var(--acc)"></i>Facial</span>
           <span><i style="background:var(--green)"></i>Objetos</span>
@@ -116,7 +126,7 @@ async function renderPainel(alvo){
       ], {labels: labels24(), h:214})}</div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Composição</h3><span class="sub">${APP.periodoHoras}h</span></div>
+      <div class="panel-hd"><h3>Composição</h3><span class="sub">${periodoHoras}h</span></div>
       <div class="panel-bd" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center">
         ${donut([
           {v:obj, cor:'var(--green)'}, {v:fac, cor:'var(--acc)'}, {v:act, cor:'var(--violet)'}
@@ -136,7 +146,7 @@ async function renderPainel(alvo){
 
   <div class="grid cols-3" style="margin-bottom:14px">
     <div class="panel">
-      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${APP.periodoHoras}h</span></div>
+      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${periodoHoras}h</span></div>
       <div class="rank">
         ${(resumo.top_cameras || []).slice(0,6).map((c, i) => `
           <div class="rank-row">
@@ -150,7 +160,7 @@ async function renderPainel(alvo){
       </div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${APP.periodoHoras}h</span></div>
+      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${periodoHoras}h</span></div>
       <div class="panel-bd">${barsChart(setores, {h:224})}</div>
     </div>
     <div class="panel">
@@ -187,13 +197,17 @@ async function renderPainel(alvo){
   $$('[data-ir]', alvo).forEach(b => b.onclick = () => irPara(b.dataset.ir));
 
   // Seletor de período
-  const selPeriodo = $('#selPeriodo');
-  if(selPeriodo){
-    selPeriodo.onchange = () => {
-      APP.periodoHoras = +selPeriodo.value;
-      irPara('dash');
-    };
-  }
+  const inpDesde = $('#inpDesde');
+  const inpAte = $('#inpAte');
+  [inpDesde, inpAte].forEach(inp => {
+    if(inp){
+      inp.onchange = () => {
+        APP.periodoDesde = inpDesde ? inpDesde.value : null;
+        APP.periodoAte = inpAte ? inpAte.value : null;
+        irPara('dash');
+      };
+    }
+  });
 
   // Identificações recentes
   const itens = ultimas.itens || [];
