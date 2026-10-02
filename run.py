@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -127,6 +128,64 @@ def abrir_navegador(url: str, atraso: float = 2.0) -> None:
     threading.Thread(target=_abrir, daemon=True).start()
 
 
+# Chrome e Edge, onde o instalador os deixa no Windows, mais o nome solto
+# para quando estiverem no PATH (Linux inclusive).
+NAVEGADORES_QUIOSQUE = (
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    "chrome", "google-chrome", "chromium", "msedge",
+)
+
+
+def achar_navegador_quiosque() -> str | None:
+    import shutil
+    for cand in NAVEGADORES_QUIOSQUE:
+        if os.path.isfile(cand):
+            return cand
+        achado = shutil.which(cand)
+        if achado:
+            return achado
+    return None
+
+
+def abrir_quiosque(url: str, atraso: float = 2.0) -> bool:
+    """Abre o mosaico em tela cheia pelo próprio navegador.
+
+    A tela cheia pedida pela página dispara o aviso de "prima Esc para sair",
+    que o navegador não deixa suprimir — e num videowall ligado o dia inteiro
+    ele reaparece a cada vez que alguém expande. Entrando por --kiosk a tela
+    cheia é do navegador, não da página, e o aviso não existe.
+    """
+    exe = achar_navegador_quiosque()
+    if not exe:
+        return False
+
+    # Perfil próprio: com o perfil padrão, se já houver uma janela do Chrome
+    # aberta, a nova invocação vira apenas mais uma aba nela e o --kiosk é
+    # ignorado. O diretório também guarda a sessão entre reinícios.
+    perfil = RAIZ / "data" / "navegador-quiosque"
+    perfil.mkdir(parents=True, exist_ok=True)
+
+    def _abrir():
+        time.sleep(atraso)
+        try:
+            subprocess.Popen([
+                exe, "--kiosk", f"--app={url}",
+                f"--user-data-dir={perfil}",
+                "--no-first-run", "--no-default-browser-check",
+                # Numa parede de vídeo não há quem responda a um diálogo.
+                "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
+                "--autoplay-policy=no-user-gesture-required",
+            ])
+        except Exception:
+            webbrowser.open(url)
+
+    threading.Thread(target=_abrir, daemon=True).start()
+    return True
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description="SEGURANÇA — Centro Integrado de Videomonitoramento",
@@ -137,6 +196,8 @@ def main() -> None:
     p.add_argument("--reset", action="store_true", help="apaga o banco e recomeça")
     p.add_argument("--sem-simulador", action="store_true", help="não gera detecções automáticas")
     p.add_argument("--sem-navegador", action="store_true", help="não abre o navegador")
+    p.add_argument("--quiosque", action="store_true",
+                   help="abre em tela cheia pelo navegador, sem o aviso do Esc (videowall)")
     p.add_argument("--recarregar", action="store_true", help="recarrega ao editar o código")
     args = p.parse_args()
 
@@ -195,7 +256,14 @@ def main() -> None:
     print()
 
     if not args.sem_navegador:
-        abrir_navegador(url)
+        if args.quiosque and abrir_quiosque(url):
+            print(f"  {CINZA}Modo quiosque: Alt+F4 fecha a parede de vídeo.{FIM}")
+            print()
+        else:
+            if args.quiosque:
+                print(f"  {CINZA}Chrome ou Edge não encontrado — abrindo em janela normal.{FIM}")
+                print()
+            abrir_navegador(url)
 
     import uvicorn
     uvicorn.run(
