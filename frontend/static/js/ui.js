@@ -211,6 +211,40 @@ function barsChart(items, opts){
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" role="img">${out}</svg>`;
 }
 
+/* Barras deitadas, para quando as categorias são muitas e têm nome.
+
+   Em pé, dezessete setores viram tiras de dois dígitos de largura com o
+   rótulo cortado na diagonal; deitadas, o nome fica numa linha legível e a
+   altura cresce com a quantidade em vez de espremer. */
+function barrasH(items, opts){
+  // viewBox estreito de propósito: o SVG escala pela largura do painel, e
+  // num terço de tela um viewBox de 720 encolheria a fonte à metade. Em 360
+  // a unidade do desenho equivale quase ao pixel, e o rótulo fica legível.
+  const o = Object.assign({w: 360, linha: 20, rotulo: 106, pad: {t: 4, r: 32, b: 4}},
+                          opts || {});
+  if(!items.length) return `<div class="empty"><p>Sem dados no período.</p></div>`;
+  const h = o.pad.t + o.pad.b + items.length * o.linha;
+  const iw = o.w - o.rotulo - o.pad.r;
+  const max = Math.max(1, ...items.map(i => i.v));
+  const alt = Math.min(o.linha - 7, 13);
+
+  const out = items.map((it, i) => {
+    const y = o.pad.t + i * o.linha;
+    const larg = Math.max(2, (it.v / max) * iw);
+    const nome = String(it.k);
+    return `<text x="${o.rotulo - 8}" y="${y + alt / 2 + 4}" text-anchor="end" font-size="10.5"
+                  fill="var(--txt-2)">${esc(nome.length > 19 ? nome.slice(0, 18) + '…' : nome)}</text>
+      <rect x="${o.rotulo}" y="${y}" width="${iw}" height="${alt}" rx="2" fill="var(--ink-700)" opacity=".5"/>
+      <rect x="${o.rotulo}" y="${y}" width="${larg.toFixed(1)}" height="${alt}" rx="2"
+            fill="${it.cor || 'var(--acc)'}" opacity=".9"/>
+      <text x="${(o.rotulo + larg + 7).toFixed(1)}" y="${y + alt / 2 + 4}" font-size="10"
+            font-weight="600" font-family="IBM Plex Mono, monospace"
+            fill="var(--txt-2)">${it.v}</text>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${o.w} ${h}" style="width:100%;height:auto;display:block" role="img">${out}</svg>`;
+}
+
 function donut(parts, opts){
   const o = Object.assign({size:176, thick:24, centro:'', sub:''}, opts || {});
   const S = o.size, R = S/2 - 4, r = R - o.thick, cx = S/2, cy = S/2;

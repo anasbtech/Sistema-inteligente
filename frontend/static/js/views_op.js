@@ -68,7 +68,7 @@ async function renderPainel(alvo){
   const maxTop = Math.max(1, ...(resumo.top_cameras || []).map(c => c.total));
   const porSetor = {};
   (resumo.top_cameras || []).forEach(c => { porSetor[c.setor] = (porSetor[c.setor] || 0) + c.total; });
-  const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1]).slice(0,6)
+  const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1])
     .map(([k,v]) => ({k, v, cor:'var(--acc)'}));
 
   const diasAtras = d => diaISO(new Date(Date.now() - d * 864e5));
@@ -163,8 +163,10 @@ async function renderPainel(alvo){
       </div>
     </div>
     <div class="panel">
-      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${rotuloPeriodo}</span></div>
-      <div class="panel-bd">${barsChart(setores, {h:224})}</div>
+      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${rotuloPeriodo}</span>
+        <span class="sp" style="flex:1"></span>
+        <span class="chip c-gray">${setores.length} setor(es)</span></div>
+      <div class="panel-bd rank-rolavel">${barrasH(setores)}</div>
     </div>
     <div class="panel">
       <div class="panel-hd"><h3>Base biométrica</h3><span class="sp"></span>
