@@ -147,9 +147,11 @@ async function renderPainel(alvo){
 
   <div class="grid cols-3" style="margin-bottom:14px">
     <div class="panel">
-      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${rotuloPeriodo}</span></div>
-      <div class="rank">
-        ${(resumo.top_cameras || []).slice(0,6).map((c, i) => `
+      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${rotuloPeriodo}</span>
+        <span class="sp" style="flex:1"></span>
+        <span class="chip c-gray">${(resumo.top_cameras || []).length} de ${APP.cameras.length}</span></div>
+      <div class="rank rank-rolavel">
+        ${(resumo.top_cameras || []).map((c, i) => `
           <div class="rank-row">
             <span class="rank-n">${pad(i+1)}</span>
             <div class="rank-bd"><b>${esc(c.nome)}</b>

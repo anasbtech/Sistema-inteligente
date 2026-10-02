@@ -509,13 +509,17 @@ async def resumo(horas: int = Query(24, ge=1, le=168),
         baldes[(hora, tipo)] = baldes.get((hora, tipo), 0) + 1
     por_hora = sorted(((h, t, n) for (h, t), n in baldes.items()), key=lambda r: r[0])
 
+    # Todas as câmeras que registraram algo, não as dez primeiras: o painel
+    # soma os setores a partir desta lista, e com ela cortada os setores de
+    # fora sumiam do gráfico — o 2º, 3º e 4º andar constavam com zero tendo
+    # movimento. O parque é de dezenas de câmeras, então a lista inteira cabe.
     por_camera = (
         await db.execute(
             select(Camera.codigo, Camera.nome, Camera.setor, func.count(Deteccao.id).label("n"))
             .join(Deteccao, Deteccao.camera_id == Camera.id)
             .where(*janela)
             .group_by(Camera.codigo, Camera.nome, Camera.setor)
-            .order_by(func.count(Deteccao.id).desc()).limit(10)
+            .order_by(func.count(Deteccao.id).desc())
         )
     ).all()
 

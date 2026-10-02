@@ -573,6 +573,9 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 
 /* Listas compactas */
 .rank{display:flex;flex-direction:column}
+/* Com o parque inteiro listado, a altura acompanha o gráfico ao lado em vez
+   de esticar a linha e empurrar o resto do painel para fora da tela. */
+.rank-rolavel{max-height:268px;overflow-y:auto;overscroll-behavior:contain}
 .rank-row{display:flex;align-items:center;gap:11px;padding:9px 15px;border-bottom:1px solid var(--line-soft)}
 .rank-row:last-child{border-bottom:0}
 .rank-n{font-family:var(--f-mono);font-size:11px;color:var(--txt-4);width:17px;font-weight:600}
