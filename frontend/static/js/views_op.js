@@ -3,13 +3,6 @@
    ========================================================== */
 'use strict';
 
-/* A URL RTSP carrega a senha da câmera. Quem cadastra não precisa mais
-   conhecê-la — o servidor a monta a partir do IP —, então a ficha não tem
-   por que entregá-la a todo perfil que possa abrir uma câmera. */
-function semSenha(url){
-  return String(url || '').replace(/(rtsp:\/\/[^:@/]*):[^@/]*@/i, '$1:••••@');
-}
-
 /* ==========================================================
    PAINEL
    ========================================================== */
@@ -915,7 +908,6 @@ async function abrirCamera(codigo){
             <div class="eyebrow" style="margin-bottom:8px">Rede</div>
             <dl class="kv">
               <dt>IP</dt><dd class="mono">${esc(c.ip) || '—'}</dd>
-              <dt>RTSP</dt><dd class="mono" style="font-size:10.5px;word-break:break-all;line-height:1.4">${esc(semSenha(c.rtsp_url))}</dd>
               <dt>Coordenadas</dt><dd class="mono">${c.latitude != null ? c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) : '—'}</dd>
             </dl>
           </div>
