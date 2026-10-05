@@ -108,6 +108,20 @@ class Settings(BaseSettings):
     OTP_TTL_SECONDS: int = 600
     OTP_MAX_ATTEMPTS: int = 3
 
+    # --- Envio de e-mail -------------------------------------------------
+    # Sem SMTP_HOST o código de recuperação só vai para o log, que é o modo
+    # de quem está desenvolvendo. Preenchidos, o e-mail sai de verdade.
+    # Gmail: smtp.gmail.com:587, usuário é o endereço e a senha precisa ser
+    # uma "senha de app" de 16 caracteres — a senha da conta não é aceita.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""          # vazio: usa SMTP_USER
+    SMTP_FROM_NOME: str = "SEGURANÇA"
+    SMTP_STARTTLS: bool = True   # 587 usa STARTTLS; 465 é TLS direto
+    SMTP_TIMEOUT: int = 20
+
     # --- CORS ------------------------------------------------------------
     # O front-end é servido pela própria API, então CORS só importa se você
     # hospedar a interface em outro domínio.
@@ -219,6 +233,14 @@ class Settings(BaseSettings):
         if len(v) < 32:
             raise ValueError("SECRET_KEY precisa de pelo menos 32 caracteres")
         return v
+
+    @property
+    def email_configurado(self) -> bool:
+        return bool(self.SMTP_HOST and self.SMTP_USER)
+
+    @property
+    def smtp_remetente(self) -> str:
+        return self.SMTP_FROM or self.SMTP_USER
 
     @property
     def url_local(self) -> str:

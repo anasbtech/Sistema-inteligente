@@ -35,7 +35,7 @@ from app.security import (
     conferir_otp, criar_access_token, criar_refresh_token, decodificar_token,
     gerar_codigo_otp, hash_otp, hash_senha, precisa_rehash, verificar_senha,
 )
-from app.services.notificacoes import enviar_codigo_recuperacao
+from app.services.notificacoes import FalhaNoEnvio, enviar_codigo_recuperacao
 from app.tipos import como_utc
 
 log = logging.getLogger("seguranca.auth")
@@ -212,17 +212,30 @@ async def recuperar(dados: RecuperarIn, request: Request, db: AsyncSession = Dep
         ip_solicitante=ip,
     ))
 
-    await enviar_codigo_recuperacao(usuario.email, usuario.nome, codigo,
-                                    settings.OTP_TTL_SECONDS // 60)
+    entregue, falha = True, ""
+    try:
+        await enviar_codigo_recuperacao(usuario.email, usuario.nome, codigo,
+                                        settings.OTP_TTL_SECONDS // 60)
+    except FalhaNoEnvio as exc:
+        # Não vira erro HTTP: o endpoint responde igual exista ou não a conta,
+        # e um 500 só aqui diria ao curioso que este e-mail está cadastrado.
+        # Quem precisa saber da falha é quem opera, pelo log e pela trilha.
+        entregue, falha = False, str(exc)
+        log.error("Código gerado mas não entregue a %s: %s", usuario.email, falha)
 
     await audit.registrar(
-        db, acao="SENHA_RESET", descricao="Código de redefinição solicitado",
-        severidade="warn", usuario=usuario, alvo=usuario.email, request=request,
+        db, acao="SENHA_RESET", severidade="warn", usuario=usuario,
+        alvo=usuario.email, request=request,
+        descricao="Código de redefinição solicitado" if entregue
+                  else "Código de redefinição solicitado, mas o e-mail falhou",
+        metadados={"entregue": entregue, "erro": falha} if not entregue else None,
     )
 
     if settings.ENV == "development":
         # Conveniência de desenvolvimento — nunca ativa fora dele.
         resposta["codigo_debug"] = codigo
+        if not entregue:
+            resposta["erro_envio"] = falha
     return resposta
 
 
