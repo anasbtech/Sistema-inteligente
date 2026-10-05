@@ -234,7 +234,7 @@ def main() -> None:
 
     semeou = asyncio.run(preparar_banco(args.reset))
 
-    url = f"http://{args.host}:{args.porta}"
+    url = settings.url_local
     print()
     faixa()
     print(f"  Interface     {NEGRITO}{AZUL}{url}{FIM}")

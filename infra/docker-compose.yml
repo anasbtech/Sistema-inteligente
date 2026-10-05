@@ -63,6 +63,9 @@ services:
     container_name: seguranca-mediamtx
     environment:
       MTX_PROTOCOLS: tcp
+      # Candidato ICE, e não endereço de navegador: o WebRTC anuncia por aqui
+      # onde o par pode ser alcançado, e isso é um IP. Um nome não resolve do
+      # outro lado da negociação, então este fica em 127.0.0.1.
       MTX_WEBRTCADDITIONALHOSTS: 127.0.0.1
     ports:
       - "8554:8554"   # RTSP

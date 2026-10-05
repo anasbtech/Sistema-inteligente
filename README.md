@@ -9,7 +9,7 @@ pip install -r config/requirements-min.txt
 python run.py
 ```
 
-O navegador abre em `http://127.0.0.1:8000`. Sem Docker, sem PostgreSQL, sem
+O navegador abre em `http://localhost:8000`. Sem Docker, sem PostgreSQL, sem
 Redis, sem npm.
 
 | E-mail | Senha | Perfil |

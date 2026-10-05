@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     APP_VERSION: str = "4.0.0"
     ENV: str = "development"
     DEBUG: bool = False
+    # Por IP, que é determinístico: `localhost` resolve ora para 127.0.0.1,
+    # ora para ::1, e um cliente preso ao outro ficaria sem resposta. O nome
+    # entra só na URL que as pessoas leem — veja `url_local`.
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 
@@ -216,6 +219,18 @@ class Settings(BaseSettings):
         if len(v) < 32:
             raise ValueError("SECRET_KEY precisa de pelo menos 32 caracteres")
         return v
+
+    @property
+    def url_local(self) -> str:
+        """Endereço para ler, copiar e abrir no navegador.
+
+        O laço local aparece como `localhost` — é o que a pessoa reconhece,
+        e o que mantém a barra de endereço igual em toda a instalação. Um
+        host de verdade, quando configurado, aparece como está.
+        """
+        laco = {"127.0.0.1", "0.0.0.0", "::1", "::", "localhost", ""}
+        nome = "localhost" if self.HOST in laco else self.HOST
+        return f"http://{nome}:{self.PORT}"
 
     @property
     def cors_list(self) -> List[str]:

@@ -53,8 +53,8 @@ async def ciclo_de_vida(app: FastAPI):
     elif settings.SIMULADOR:
         await simulador.iniciar()
 
-    log.info("Interface em http://%s:%s", settings.HOST, settings.PORT)
-    log.info("Documentação da API em http://%s:%s/docs", settings.HOST, settings.PORT)
+    log.info("Interface em %s", settings.url_local)
+    log.info("Documentação da API em %s/docs", settings.url_local)
     yield
 
     log.info("Encerrando…")
