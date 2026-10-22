@@ -23,4 +23,8 @@ os.environ["SECRET_KEY"] = "chave-de-teste-com-mais-de-32-caracteres-ok"
 os.environ["SIMULADOR"] = "false"
 os.environ["ENV"] = "development"
 os.environ["REDIS_URL"] = ""
+# Desabilita SMTP nos testes para evitar tentativas reais de envio de email
+# aos endereços de teste. Testes que precisam validar comportamento de envio
+# configuram SMTP_HOST manualmente com monkeypatch.
+os.environ["SMTP_HOST"] = ""
 
