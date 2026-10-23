@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.services.biometrics import (
-    PREFIXO, IdentificadorInvalido, sexo_do_id, validar_id,
+    PREFIXO, IdentificadorInvalido, sem_nome, sexo_do_id, validar_id,
 )
 from app.models import Sexo
 from app.security import (
@@ -59,6 +59,21 @@ def test_sexo_vem_do_prefixo_nao_da_imagem():
     # Mesmo número, prefixos diferentes: são pessoas diferentes.
     assert validar_id("BIO-M-000100")[1] == validar_id("BIO-F-000100")[1]
     assert sexo_do_id("BIO-M-000100") is not sexo_do_id("BIO-F-000100")
+
+
+def test_so_o_bio_n_e_registro_sem_nome():
+    """Quem pergunta "esta pessoa tem nome?" pergunta ao identificador.
+
+    O BIO-N guarda o literal "Não identificado" no campo `nome`, e quem
+    comparasse com essa frase teria um teste que passa hoje e quebra calado
+    no dia em que ela mudar. Foi esse literal que apareceu escrito sobre o
+    vídeo, na mesma tarja de quem tem nome de verdade.
+    """
+    assert sem_nome("BIO-N-000042")
+    assert not sem_nome("BIO-M-000042"), "cadastrado tem nome"
+    assert not sem_nome("BIO-F-000042"), "cadastrado tem nome"
+    assert not sem_nome(None), "sem casamento nenhum não é BIO-N"
+    assert not sem_nome(""), "sem casamento nenhum não é BIO-N"
 
 
 # ----------------------------------------------------------------------

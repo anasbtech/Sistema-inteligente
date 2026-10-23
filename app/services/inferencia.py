@@ -30,7 +30,9 @@ from app.config import settings
 from app.database import db_context
 from app.models import Camera, StatusCamera, TipoDeteccao
 from app.schemas import DeteccaoIn
-from app.services import chama, extras, face_engine, placa, video, vision
+from app.services import (
+    biometrics, chama, extras, face_engine, placa, video, vision,
+)
 from app.services.events import publicar
 
 log = logging.getLogger("seguranca.inferencia")
@@ -255,13 +257,38 @@ class Inferencia:
             }
         return False
 
+    @staticmethod
+    def _rotular(caixa_rosto: dict, nome: str, no_corpo: bool,
+                 nomes_no_quadro: list) -> None:
+        """Um nome por pessoa na tela, na maior das duas caixas dela.
+
+        Rosto e corpo da mesma pessoa são duas caixas, e escrever o nome nas
+        duas o repetia empilhado no vídeo. Fica com o corpo quando há corpo —
+        é a caixa que se lê no mosaico —, e só sobra para o rosto quando o
+        detector de objeto não achou o corpo, que é quando o rosto é tudo o
+        que há dela em cena.
+
+        Sem nome não há tarja: a caixa volta a ser a de qualquer um em cena,
+        que é o que ela de fato sabe dizer do BIO-N.
+        """
+        if not nome:
+            return
+        if not no_corpo:
+            caixa_rosto["pessoa_nome"] = nome
+        if nome not in nomes_no_quadro:
+            nomes_no_quadro.append(nome)
+
     async def _alinhar_corpo(self, db, cena: dict, bbox_rosto, corpos: list,
-                             nome: str, pessoa_id) -> None:
+                             nome: str, pessoa_id) -> bool:
         """Leva a identidade do rosto para o corpo que o contém.
 
         Duas coisas de uma vez: o nome passa para a caixa grande, que é a que
         se lê no mosaico — a do rosto tem uns sessenta pixels —, e o corpo
         deixa de ser uma "pessoa" anônima na trajetória.
+
+        Devolve se o corpo ficou com o rótulo. Quem chama precisa saber: o
+        nome é um por pessoa, e deixá-lo também na caixa do rosto é o que
+        escrevia duas vezes o mesmo nome, uma sobre a outra, no vídeo.
 
         Quando o corpo ainda não tem linha, ela nasce aqui. Parece rodeio mas
         é o ponto: o registro de objeto é represado por 30 minutos, porque
@@ -279,19 +306,22 @@ class Inferencia:
 
         alvo = self._corpo_do_rosto(bbox_rosto, corpos)
         if alvo is None:
-            return
-        alvo["caixa"]["pessoa_nome"] = nome
+            return False
+        # Sem nome o corpo não ganha tarja, mas ainda assim é dele a caixa da
+        # pessoa: é o BIO-N, que tem registro e trajetória e não tem nome.
+        if nome:
+            alvo["caixa"]["pessoa_nome"] = nome
         corpos.remove(alvo)
         if not pessoa_id:
-            return
+            return True
 
         if alvo["codigo"]:
             await vincular_corpo(db, alvo["codigo"], pessoa_id)
             self._corpos_identificados[(cena["cam"].codigo, pessoa_id)] = time.monotonic()
-            return
+            return True
 
         if self._corpo_ja_registrado(cena["cam"].codigo, pessoa_id):
-            return
+            return True
 
         cam, quadro = cena["cam"], cena["quadro"]
         jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, tuple(alvo["bbox"]))
@@ -310,6 +340,7 @@ class Inferencia:
         if codigo:
             alvo["codigo"] = codigo
             await vincular_corpo(db, codigo, pessoa_id)
+        return True
 
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
@@ -688,9 +719,6 @@ class Inferencia:
         if quadro is None:
             return
         altura, largura = quadro.shape[:2]
-        if altura <= 0 or largura <= 0:
-            print(f"[BOXES-ERROR] {cam.codigo}: invalid frame dimensions: {largura}x{altura}")
-            return
         agora = datetime.now(timezone.utc)
 
         caixas_do_quadro = []
@@ -729,15 +757,6 @@ class Inferencia:
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, False, fora
             )
-            if len(objetos) > 0:
-                print(f"[BOXES-OBJ] {cam.codigo}: detected {len(objetos)} objects")
-            else:
-                print(f"[BOXES-EMPTY] {cam.codigo}: no objects detected")
-        else:
-            if not cam.analitico_objeto:
-                print(f"[BOXES-SKIP] {cam.codigo}: analitico_objeto=False")
-            elif not vision.yolo_disponivel():
-                print(f"[BOXES-SKIP] {cam.codigo}: yolo_disponivel()=False")
 
             # Capacete e arma de fogo não existem no COCO: quando a câmera os
             # pede e há modelo configurado, vêm de uma passada à parte. O custo
@@ -795,14 +814,10 @@ class Inferencia:
                 # enquadrado no vídeo sem voltar à lista a cada ciclo.
                 # Guardada por referência: a placa só se conhece depois da
                 # leitura, lá embaixo, e é nesta mesma caixa que ela entra.
-                bbox = obj.bbox_normalizado(largura, altura)
-                if not bbox or len(bbox) < 4 or not all(isinstance(v, (int, float)) and -1000 <= v <= 2000 for v in bbox):
-                    print(f"[BOXES-WARN] {cam.codigo}: invalid bbox for {obj.classe}: {bbox}")
-                    continue
                 caixa_obj = {
                     "classe": obj.classe,
                     "confianca": round(float(obj.confianca), 4),
-                    "bbox": bbox,
+                    "bbox": obj.bbox_normalizado(largura, altura),
                     "track_id": obj.track_id,
                 }
                 caixas_do_quadro.append(caixa_obj)
@@ -876,13 +891,6 @@ class Inferencia:
         # cena. Quando a câmera não tem análise de objeto, `tem_pessoa` fica
         # em None e o rosto é procurado como antes: sem detector de pessoa,
         # não há informação que justifique pular.
-        if not cam.analitico_facial:
-            print(f"[BOXES-SKIP] {cam.codigo}: analitico_facial=False")
-        elif not face_engine.modelos_disponiveis():
-            print(f"[BOXES-SKIP] {cam.codigo}: modelos_disponiveis()=False")
-        elif tem_pessoa is False:
-            print(f"[BOXES-SKIP] {cam.codigo}: tem_pessoa=False (no people detected)")
-
         if (cam.analitico_facial and face_engine.modelos_disponiveis()
                 and tem_pessoa is not False):
             # Uma passada só, com os pisos afrouxados: os filtros padrão
@@ -894,10 +902,6 @@ class Inferencia:
                 face_engine.extrair_faces, quadro,
                 0.0, settings.INFERENCIA_ROSTO_MIN_PX, 0.0,
             )
-            if len(faces) > 0:
-                print(f"[BOXES-FACE] {cam.codigo}: detected {len(faces)} faces")
-            else:
-                print(f"[BOXES-EMPTY-FACE] {cam.codigo}: no faces detected")
             # O que o alinhamento precisa saber da cena para, se for o caso,
             # fazer nascer a linha do corpo que recebe a identidade.
             cena = {"cam": cam, "quadro": quadro, "agora": agora}
@@ -905,14 +909,10 @@ class Inferencia:
                 x1, y1, x2, y2 = face.bbox
                 # Guardada por referência: a identidade só se conhece depois da
                 # busca 1:N, lá embaixo, e é nesta mesma caixa que o nome entra.
-                bbox = face.bbox_normalizado(largura, altura)
-                if not bbox or len(bbox) < 4 or not all(isinstance(v, (int, float)) and -1000 <= v <= 2000 for v in bbox):
-                    print(f"[BOXES-WARN] {cam.codigo}: invalid bbox for face: {bbox}")
-                    continue
                 caixa_rosto = {
                     "classe": "rosto",
                     "confianca": round(float(face.qualidade), 4),
-                    "bbox": bbox,
+                    "bbox": face.bbox_normalizado(largura, altura),
                     "track_id": None,
                 }
                 caixas_do_quadro.append(caixa_rosto)
@@ -928,17 +928,19 @@ class Inferencia:
                 # esteve ali. O embedding separa uma da outra; a posição não.
                 repetido, entrada = self._rosto_recente(cam.codigo, face.embedding)
                 if repetido:
-                    if entrada[2]:
-                        caixa_rosto["pessoa_nome"] = entrada[2]
-                        if entrada[2] not in nomes_no_quadro:
-                            nomes_no_quadro.append(entrada[2])
+                    # Pelo `pessoa_id`, não pelo nome: o BIO-N não tem nome e
+                    # mesmo assim é alguém, com corpo para ligar e trajetória
+                    # para alimentar.
+                    if entrada[3] or entrada[2]:
                         # Também aqui, e não só quando o registro nasce: é
                         # esta a volta comum — a pessoa segue em cena e o
                         # rosto já foi identificado antes. Sem alinhar aqui, a
                         # caixa grande ficaria anônima na maioria dos quadros.
-                        await self._alinhar_corpo(db, cena, face.bbox,
-                                                  corpos_no_quadro,
-                                                  entrada[2], entrada[3])
+                        no_corpo = await self._alinhar_corpo(
+                            db, cena, face.bbox, corpos_no_quadro,
+                            entrada[2], entrada[3])
+                        self._rotular(caixa_rosto, entrada[2], no_corpo,
+                                      nomes_no_quadro)
                     continue
 
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, face.bbox)
@@ -953,18 +955,21 @@ class Inferencia:
                 ), origem="inferencia")
                 self.gerados += 1
 
-                nome = resultado.get("nome")
-                if nome:
+                # O BIO-N casa como qualquer cadastrado — tem amostras e
+                # template —, só não tem nome para pôr na tela.
+                nome = resultado.get("nome") or ""
+                if biometrics.sem_nome(resultado.get("id_biometrico")):
+                    nome = ""
+                pessoa_id = resultado.get("pessoa_id")
+                if nome or pessoa_id:
                     entrada[2] = nome
-                    entrada[3] = resultado.get("pessoa_id")
-                    caixa_rosto["pessoa_nome"] = nome
+                    entrada[3] = pessoa_id
                     caixa_rosto["similaridade"] = resultado.get("similaridade")
-                    await self._alinhar_corpo(db, cena, face.bbox,
-                                              corpos_no_quadro,
-                                              nome, entrada[3])
-                    if nome not in nomes_no_quadro:
-                        nomes_no_quadro.append(nome)
-                    log.info("%s: %s reconhecido (%.0f%%)", cam.codigo, nome,
+                    no_corpo = await self._alinhar_corpo(
+                        db, cena, face.bbox, corpos_no_quadro, nome, pessoa_id)
+                    self._rotular(caixa_rosto, nome, no_corpo, nomes_no_quadro)
+                    log.info("%s: %s reconhecido (%.0f%%)", cam.codigo,
+                             nome or resultado.get("id_biometrico"),
                              (resultado.get("similaridade") or 0) * 100)
 
         # Sala vigiada: compara a ocupação com a da volta anterior — o fato é
@@ -981,23 +986,15 @@ class Inferencia:
         # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
         # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem
         # isso a última caixa ficaria pairando sobre o vídeo até expirar.
-        if len(caixas_do_quadro) > 0:
-            print(f"[BOXES] {cam.codigo}: {len(caixas_do_quadro)} boxes "
-                  f"(obj: {len([c for c in caixas_do_quadro if c['classe'] != 'rosto'])}, "
-                  f"face: {len([c for c in caixas_do_quadro if c['classe'] == 'rosto'])})")
-        try:
-            await publicar("quadro_ao_vivo", {
-                "camera_codigo": cam.codigo,
-                "caixas": caixas_do_quadro,
-                # Até quando esta lista ainda vale. Vai daqui porque só o worker
-                # sabe quanto demora uma volta pelo parque, e isso muda a cada
-                # câmera cadastrada: com validade fixa, a caixa apagava entre um
-                # quadro e o seguinte assim que o parque crescia.
-                "validade_s": round(self.ciclo_real * 2.0, 1),
-            })
-        except Exception as exc:
-            print(f"[BOXES-PUBLISH-ERROR] {cam.codigo}: {exc}")
-            raise
+        await publicar("quadro_ao_vivo", {
+            "camera_codigo": cam.codigo,
+            "caixas": caixas_do_quadro,
+            # Até quando esta lista ainda vale. Vai daqui porque só o worker
+            # sabe quanto demora uma volta pelo parque, e isso muda a cada
+            # câmera cadastrada: com validade fixa, a caixa apagava entre um
+            # quadro e o seguinte assim que o parque crescia.
+            "validade_s": round(self.ciclo_real * 2.0, 1),
+        })
 
 
 inferencia = Inferencia(settings.INFERENCIA_INTERVALO, settings.INFERENCIA_JANELA_S)
