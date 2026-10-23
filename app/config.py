@@ -615,10 +615,15 @@ class Settings(BaseSettings):
     # `AnalisadorAcoes._avaliar_briga`: nenhum deles sozinho significa
     # briga, e é a coincidência dos três que vira indício.
     #
-    # A velocidade é menor que a de corrida de propósito: numa luta
-    # corporal ninguém percorre a cena, o deslocamento é curto e
-    # repetido.
-    ACAO_BRIGA_VEL: float = 0.12
+    # Caminho *percorrido*, não deslocamento líquido: quem luta vai e volta
+    # no mesmo lugar, e medido pelo deslocamento daria zero. Em alturas de
+    # corpo por segundo, como a corrida e a queda — em fração de quadro, dois
+    # corpos se agarrando rente à lente percorrem muito mais que os mesmos
+    # dois no fundo da sala.
+    #
+    # Fica abaixo do ritmo de quem anda, e é de propósito: numa luta corporal
+    # ninguém atravessa a cena. Quem separa daí para baixo é a agitação.
+    ACAO_BRIGA_RITMO: float = 0.45
     # 0 é andar reto, 1 é inverter o sentido a cada passo. Acima de 0,45
     # o movimento deixou de ter direção — é o que separa de corrida.
     ACAO_BRIGA_AGITACAO: float = 0.45

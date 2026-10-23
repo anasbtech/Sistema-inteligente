@@ -380,7 +380,24 @@ def test_condicao_de_disparo_sai_da_configuracao():
     texto = detalhe_acao("permanencia")
     assert str(int(round(settings.ACAO_PERMANENCIA_S / 60))) in texto
     assert detalhe_acao("aglomeracao").count(str(settings.ACAO_AGLOMERACAO_N)) == 1
-    assert detalhe_acao("briga") == ""      # sem detector, nada a prometer
+    # Briga ganhou detector em 15/10, e a linha aqui dizia "sem detector,
+    # nada a prometer" desde antes disso. A tela mostrava a única ação
+    # disponível sem explicar o que a dispara — e esta é justamente a que o
+    # operador precisa saber que não afirma nada sozinha.
+    assert "confirmação" in detalhe_acao("briga")
+
+
+def test_a_acao_de_briga_nao_afirma_agressao():
+    """O rótulo é o que o operador lê no alerta e na lista de ocorrências.
+
+    Afirmar "Agressão física" é afirmar intenção a partir de vídeo, que é o
+    que este sistema não faz — e um alerta assim, entre duas pessoas
+    identificadas, tem consequência real para elas. O que existe são três
+    sinais de trajetória que coincidiram.
+    """
+    from app.services.vision import ROTULO_ACAO
+
+    assert ROTULO_ACAO["briga"].lower().startswith("possível")
 
 
 # ----------------------------------------------------------------------
@@ -961,3 +978,59 @@ def test_esbarrao_curto_nao_e_briga():
         quadros.append([(1, (600 + d, 300, 700 + d, 500)),
                         (2, (660 - d, 305, 760 - d, 505))])
     assert "briga" not in [e.classe for e in _alimentar(analisador, quadros)]
+
+
+def test_a_mesma_luta_no_fundo_da_sala_tambem_dispara():
+    """A razão de o ritmo ser medido em alturas de corpo, e não em quadro.
+
+    Mesmo vaivém, mesma proporção, corpos com um terço do tamanho porque
+    estão longe da lente. Em fração de quadro esta luta percorre 0,05 por
+    segundo contra o piso antigo de 0,12 — ficava muda, e o operador só era
+    avisado de brigas que acontecessem perto da câmera.
+    """
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"briga"}
+    quadros = []
+    for i in range(22):
+        d = 7 if i % 2 == 0 else -7
+        quadros.append([(1, (600 + d, 300, 633 + d, 366)),
+                        (2, (607 - d, 302, 640 - d, 368))])
+
+    eventos = _alimentar(analisador, quadros)
+    assert "briga" in [e.classe for e in eventos]
+    trilha = analisador.trilhas[1]
+    assert trilha.caminho() < 0.12, "em fração de quadro não passaria do piso antigo"
+    assert trilha.caminho_corporal() >= analisador.ritmo_briga
+
+
+def test_tremor_da_camera_nao_vira_briga():
+    """O caso em que os dois sinais de movimento passam e nada aconteceu.
+
+    Com a imagem saltando, toda trilha fica rápida e errática de uma vez —
+    medido, ritmo 0,77 e agitação 1,00, acima dos dois pisos. Quaisquer duas
+    pessoas encostadas em cena virariam indício de agressão. É o único
+    portão que segura este caso.
+    """
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"briga"}
+    quadros = []
+    for i in range(22):
+        d = 30 if i % 2 == 0 else -30
+        quadros.append([(1, (600 + d, 300, 700 + d, 500)),
+                        (2, (620 + d, 305, 720 + d, 505)),
+                        (3, (200 + d, 300, 300 + d, 500))])
+    assert "briga" not in [e.classe for e in _alimentar(analisador, quadros)]
+
+
+def test_o_alerta_de_briga_pede_confirmacao_humana():
+    """O texto que o operador lê não pode afirmar o que o sistema não sabe.
+
+    O título vem do catálogo e o corpo do alerta é montado no registro; os
+    dois são checados juntos porque é o par que chega à tela. Abraço efusivo
+    e brincadeira produzem os mesmos três sinais, e um alerta que afirma
+    agressão entre duas pessoas identificadas tem consequência real.
+    """
+    from app.services.vision import ROTULO_ACAO, detalhe_acao
+
+    assert "possível" in ROTULO_ACAO["briga"].lower()
+    assert "confirmação" in detalhe_acao("briga")

@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
@@ -26,10 +26,12 @@ from app.models import (
     TipoDeteccao, Usuario, Zona,
 )
 from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn
-from app.services import evidencias, face_engine, sequencias
+from app.services import biometrics, evidencias, face_engine, sequencias
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
-from app.services.vision import ROTULO_ACAO, SEVERIDADE_ACAO, severidade_objeto
+from app.services.vision import (
+    ROTULO_ACAO, SEVERIDADE_ACAO, janela_horario, severidade_objeto,
+)
 from app.tipos import como_utc
 
 log = logging.getLogger("seguranca.deteccoes")
@@ -41,12 +43,13 @@ PREFIXO_CODIGO = {
     TipoDeteccao.ACAO: "AR",
 }
 
+# Só quem está com acesso restrito vira ocorrência ao ser reconhecido.
+# Funcionário, visitante e terceirizado entram como passagem registrada.
 SEVERIDADE_STATUS = {
-    StatusPessoa.PROCURADO: 4,
-    StatusPessoa.MONITORADO: 3,
-    StatusPessoa.DESAPARECIDO: 3,
+    StatusPessoa.RESTRITO: 4,
     StatusPessoa.FUNCIONARIO: 1,
-    StatusPessoa.CIDADAO: 1,
+    StatusPessoa.VISITANTE: 1,
+    StatusPessoa.TERCEIRIZADO: 1,
 }
 
 
@@ -106,26 +109,52 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
     numero_alerta = await sequencias.proximo_numero(db, "ALR", maior_alerta)
 
     if det.tipo == TipoDeteccao.FACIAL and pessoa is not None:
-        rotulo = {
-            StatusPessoa.PROCURADO: "Procurado",
-            StatusPessoa.MONITORADO: "Monitorado",
-            StatusPessoa.DESAPARECIDO: "Desaparecido",
-        }.get(pessoa.status, "Pessoa")
+        # Chega aqui só com severidade 3+, que hoje é o acesso restrito.
+        rotulo = ("Acesso restrito" if pessoa.status == StatusPessoa.RESTRITO
+                  else "Pessoa")
         titulo = f"{rotulo} identificado"
         detalhe = (
             f"{pessoa.nome} ({pessoa.id_biometrico}) reconhecido com "
             f"{det.similaridade * 100:.1f}% de similaridade em {cam.nome}. "
-            "Confirmação humana obrigatória antes de qualquer abordagem."
+            "Confirmação humana obrigatória antes de qualquer ação."
         )
     elif det.tipo == TipoDeteccao.OBJETO:
         titulo = f"{det.classe} detectado"
         detalhe = f"Classe '{det.classe}' com {(det.confianca or 0) * 100:.1f}% de confiança em {cam.nome}."
     else:
         titulo = ROTULO_ACAO.get(det.classe, det.classe)
-        detalhe = (
-            f"Evento comportamental por {det.duracao_s or 0}s envolvendo "
-            f"{det.envolvidos or 1} pessoa(s) em {cam.nome}."
-        )
+        if det.classe == "fora_de_horario":
+            # A frase genérica aqui era "evento comportamental por 0s
+            # envolvendo 1 pessoa(s)" — verdadeira e inútil. Quem recebe este
+            # alerta às 3h precisa das duas coisas que o justificam: a hora em
+            # que a pessoa foi vista e a janela que ela furou.
+            ini, fim = janela_horario(cam.horario_inicio, cam.horario_fim)
+            visto = como_utc(det.ocorrido_em).astimezone()
+            detalhe = (
+                f"Pessoa vista às {visto:%H:%M} em {cam.nome}, fora da janela "
+                f"permitida ({ini} às {fim})."
+            )
+        elif det.classe == "briga":
+            # A frase genérica dizia "evento comportamental envolvendo 2
+            # pessoas", sob um título que afirmava agressão. Aqui o sistema
+            # não conclui intenção a partir de vídeo — o que ele tem são três
+            # sinais de trajetória que coincidiram, e abraço efusivo e
+            # brincadeira os produzem. Quem recebe isto precisa saber que vai
+            # olhar a imagem para decidir, e sobre o que decidir: um alerta
+            # que afirma agressão entre duas pessoas identificadas tem
+            # consequência real para elas.
+            detalhe = (
+                f"Indício de agressão entre {det.envolvidos or 2} pessoas em "
+                f"{cam.nome}, por {det.duracao_s or 0}s: corpos sobrepostos, "
+                "ambos em movimento rápido e errático. O sistema não conclui "
+                "agressão a partir do vídeo — confirme na imagem antes de "
+                "qualquer ação."
+            )
+        else:
+            detalhe = (
+                f"Evento comportamental por {det.duracao_s or 0}s envolvendo "
+                f"{det.envolvidos or 1} pessoa(s) em {cam.nome}."
+            )
 
     alerta = Alerta(
         codigo=f"ALR-{numero_alerta:05d}",
@@ -143,9 +172,134 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
     await db.flush()
 
     # Durante a carga histórica do seed não faz sentido acionar ninguém.
-    if det.severidade >= 4 and notificar:
+    if notificar:
+        # Todo alerta sobe pelo mesmo evento, e não só o de presença.
+        #
+        # Antes o alerta nascido de detecção viajava escondido dentro do
+        # evento `deteccao`, e a tela só reagia a ele na severidade 4 — com um
+        # toast de sete segundos. Num sistema integrado a presídio isso é
+        # pouco: o aviso tem de interromper quem está operando, não disputar
+        # atenção com o resto da tela e sumir sozinho.
+        await publicar("alerta", {
+            "codigo": alerta.codigo,
+            "titulo": titulo,
+            "detalhe": detalhe,
+            "severidade": det.severidade,
+            "camera_codigo": cam.codigo,
+            "camera_nome": cam.nome,
+            "deteccao_codigo": det.codigo,
+            "tem_imagem": bool(det.snapshot_key),
+            "ocorrido_em": det.ocorrido_em,
+        })
+        if det.severidade >= 4:
+            await notificar_alerta_critico(titulo, detalhe, cam.codigo)
+    return alerta
+
+
+async def alertar_presenca(db: AsyncSession, cam: Camera,
+                           quantidade: int, total: int,
+                           det: Optional[Deteccao] = None,
+                           jpeg: Optional[bytes] = None,
+                           nomes: Optional[List[str]] = None) -> Alerta:
+    """Alerta de alguém **entrando** numa sala vigiada.
+
+    Antes isto era severidade elevada em cada detecção de pessoa, e o
+    resultado foi o que o operador viu na tela: a mesma reunião rendendo um
+    alerta por volta do parque — sete em seis minutos, com duas pessoas.
+    Presença contínua não é notícia; a entrada é.
+
+    Só entrada, e não saída: "a sala ficou vazia" não é ocorrência, é o fim
+    de uma. A queda de ocupação continua sendo acompanhada em
+    `inferencia._vigiar_sala` — sem baixar a referência, a entrada seguinte
+    não seria vista como aumento —, mas não produz alerta.
+
+    O alerta carrega a **própria imagem**, e não a de uma detecção. Dois
+    motivos, os dois medidos na tela: na saída não há detecção nenhuma para
+    anexar — ninguém é fotografado indo embora — e na entrada o registro de
+    detecção é deduplicado por 30 minutos, então a mesma pessoa voltando à
+    sala produzia alerta com a coluna CAPTURA em branco.
+
+    A imagem é o quadro inteiro, não o recorte de uma pessoa: o que o alerta
+    afirma é sobre a *sala* ("agora há 2", "ficou vazia"), e é a sala que
+    precisa aparecer para quem revisa conferir.
+    """
+    async def maior_alerta() -> int:
+        codigo = (await db.execute(select(func.max(Alerta.codigo)))).scalar_one_or_none()
+        return _sequencial_do_codigo(codigo or "", 5)
+
+    numero = await sequencias.proximo_numero(db, "ALR", maior_alerta)
+    pessoas = "pessoa" if quantidade == 1 else "pessoas"
+    verbo = "entrou" if quantidade == 1 else "entraram"
+    nomes = [n for n in (nomes or []) if n]
+
+    # O nome no título só quando ele é inequívoco: uma pessoa entrou e uma
+    # pessoa foi reconhecida. Com duas entrando e uma reconhecida, pôr o nome
+    # no título afirmaria que foi ela quem entrou — e o que se sabe é que ela
+    # está na sala, não que acabou de chegar. Essa diferença decide o que o
+    # operador vai procurar na imagem.
+    if quantidade == 1 and len(nomes) == 1:
+        titulo = f"Entrada de {nomes[0]} em {cam.nome}"
+    else:
+        titulo = f"Entrada em {cam.nome}"
+
+    detalhe = (f"{quantidade} {pessoas} {verbo} em {cam.nome} ({cam.setor}). "
+               f"Agora há {total} na sala. ")
+    if nomes:
+        # "na sala", e não "entrou": o facial lê quem está em cena no quadro,
+        # que não é necessariamente quem acabou de cruzar a porta.
+        lista = ", ".join(nomes)
+        detalhe += (f"Reconhecida na sala: {lista}." if len(nomes) == 1
+                    else f"Reconhecidas na sala: {lista}.")
+        if total > len(nomes):
+            restantes = total - len(nomes)
+            detalhe += (f" {restantes} pessoa não identificada." if restantes == 1
+                        else f" {restantes} pessoas não identificadas.")
+    else:
+        detalhe += ("Esta câmera alerta toda entrada, com ou sem autorização — "
+                    "nenhuma das pessoas em cena consta na base biométrica.")
+
+    codigo = f"ALR-{numero:05d}"
+    agora = datetime.now(timezone.utc)
+    chave = ""
+    if jpeg:
+        try:
+            chave = evidencias.gravar(codigo, agora, jpeg)
+        except (ValueError, OSError) as exc:
+            log.warning("Imagem do alerta %s descartada: %s", codigo, exc)
+
+    alerta = Alerta(
+        codigo=codigo,
+        snapshot_key=chave,
+        deteccao_id=det.id if det is not None else None,
+        camera_id=cam.id,
+        tipo=TipoDeteccao.OBJETO,
+        titulo=titulo,
+        detalhe=detalhe,
+        severidade=settings.ALERTA_PRESENCA_SEVERIDADE,
+        status=StatusAlerta.ABERTO,
+        disparado_em=agora,
+    )
+    db.add(alerta)
+    await db.flush()
+
+    # Vai pelo barramento para a tela avisar na hora, e não só quando alguém
+    # abrir a lista de alertas.
+    await publicar("alerta", {
+        "codigo": alerta.codigo,
+        "titulo": titulo,
+        "detalhe": detalhe,
+        "severidade": alerta.severidade,
+        "camera_codigo": cam.codigo,
+        "camera_nome": cam.nome,
+        # Alerta de sala não nasce de detecção: a imagem é do próprio alerta.
+        "deteccao_codigo": det.codigo if det is not None else "",
+        "tem_imagem": bool(chave),
+        "ocorrido_em": agora,
+    })
+    if alerta.severidade >= 4:
         await notificar_alerta_critico(titulo, detalhe, cam.codigo)
     return alerta
+
 
 
 # ======================================================================
@@ -171,6 +325,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     pessoa: Optional[Pessoa] = None
     similaridade: Optional[float] = None
     limiar: Optional[float] = None
+    sugerido_id = None
     severidade = 1
 
     if dados.tipo == TipoDeteccao.FACIAL:
@@ -198,7 +353,28 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
                 if anterior is None or como_utc(dados.ocorrido_em) > anterior:
                     pessoa.ultima_deteccao = dados.ocorrido_em
                     pessoa.ultima_camera = cam.nome
+                # Acerto folgado vira amostra daquela câmera. É o que mantém
+                # a cobertura crescendo sozinha depois que a primeira amostra
+                # de um ângulo entrou: a busca compara contra cada amostra e
+                # fica com a melhor, então o ângulo novo passa a responder por
+                # si. Quem decide se cabe é `acolher_amostra` — cota por
+                # câmera e recusa de parecida demais vivem lá.
+                if (origem != "seed" and dados.embedding
+                        and similaridade >= settings.FACE_AUTO_SAMPLE_MIN):
+                    if await face_engine.acolher_amostra(
+                            db, pessoa, dados.embedding,
+                            dados.qualidade_face or 0.0, cam.id):
+                        log.info("%s: captura de %s virou amostra (%.0f%%)",
+                                 cam.codigo, pessoa.nome, similaridade * 100)
         # Sem match: severidade 1 e pessoa_id nulo — nenhuma identidade atribuída.
+        # Perto do limiar, porém, guarda-se quem o motor apontou: é o que a
+        # fila de conferência mostra para alguém decidir. Continua não sendo
+        # identidade — `pessoa_id` segue nulo, e nada no sistema trata este
+        # campo como se fosse.
+        elif (resultado.candidato_id
+                and similaridade >= settings.FACE_REVIEW_MIN):
+            sugerido_id = uuid.UUID(resultado.candidato_id)
+
 
         # Uma presença, uma linha. Sem correspondência não existe identidade
         # para separar duas capturas, e nesta resolução o embedding também não
@@ -277,6 +453,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         ocorrido_em=dados.ocorrido_em,
         camera_id=cam.id,
         pessoa_id=pessoa.id if pessoa else None,
+        pessoa_sugerida_id=sugerido_id,
         similaridade=similaridade,
         limiar_aplicado=limiar,
         qualidade_face=dados.qualidade_face,
@@ -299,16 +476,6 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     alerta = await _criar_alerta(db, det, cam, pessoa, notificar=publicar_evento)
 
     if publicar_evento:
-        # Publicar identificação em tempo real (para exibir nome na câmera)
-        if dados.tipo == TipoDeteccao.FACIAL and pessoa is not None:
-            await publicar("identificacao", {
-                "camera_codigo": cam.codigo,
-                "pessoa_nome": pessoa.nome,
-                "id_biometrico": pessoa.id_biometrico,
-                "bbox": det.bbox,
-                "similaridade": similaridade,
-            })
-
         await publicar("deteccao", {
             "codigo": det.codigo,
             "tipo": det.tipo.value,
@@ -339,10 +506,45 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         "codigo": det.codigo,
         "match": pessoa is not None,
         "id_biometrico": pessoa.id_biometrico if pessoa else None,
+        # Cru, e não só o identificador legível: quem liga o corpo ao rosto
+        # precisa da chave estrangeira, e buscá-la de novo seria uma consulta
+        # a mais por rosto identificado.
+        "pessoa_id": str(pessoa.id) if pessoa else None,
+        # O nome sobe junto porque quem desenha a sobreposição é o worker, e
+        # é aqui que a busca 1:N acontece — sem ele, a caixa do rosto
+        # identificado continuaria rotulada apenas como "rosto".
+        "nome": pessoa.nome if pessoa else None,
         "similaridade": similaridade,
         "severidade": severidade,
         "alerta": alerta.codigo if alerta else None,
     }
+
+
+async def vincular_corpo(db: AsyncSession, codigo: str, pessoa_id: str) -> bool:
+    """Dá ao registro do corpo a identidade que o rosto dentro dele revelou.
+
+    O detector de objeto marca a pessoa inteira; o motor facial marca o rosto,
+    que é onde a identidade aparece. São dois registros do mesmo alguém no
+    mesmo instante, e sem costurá-los a passagem fica partida: o corpo consta
+    como "pessoa" anônima e só o rosto sabe quem é.
+
+    Costurar importa além da etiqueta no vídeo. Rosto legível é a exceção —
+    quem está de costas, longe ou de perfil aparece como corpo e mais nada.
+    Vinculado, esse tempo todo entra na trajetória; solto, a pessoa some do
+    mapa justamente nos trechos em que estava andando.
+
+    Só preenche o que está vazio: um registro que já aponta para alguém foi
+    decidido pela busca 1:N ou por um operador, e nenhum dos dois deve ser
+    sobrescrito por inferência geométrica.
+    """
+    atingidos = (
+        await db.execute(
+            update(Deteccao)
+            .where(Deteccao.codigo == codigo, Deteccao.pessoa_id.is_(None))
+            .values(pessoa_id=uuid.UUID(pessoa_id))
+        )
+    ).rowcount
+    return bool(atingidos)
 
 
 @router.post("/ingest", status_code=status.HTTP_201_CREATED,
@@ -389,7 +591,16 @@ async def listar(
     filtros = []
     if tipo:
         filtros.append(Deteccao.tipo == tipo)
-    if classe:
+    if classe == "placa":
+        # Placa não é classe de objeto, é leitura feita *sobre* o veículo
+        # detectado: fica no campo `placa` da própria detecção. Comparada
+        # contra `Deteccao.classe`, a opção do filtro nunca devolvia nada —
+        # mesmo havendo placas lidas e gravadas. Aqui ela passa a significar
+        # "as detecções em que uma placa foi lida", que é o que quem escolhe
+        # "Placa veicular" está procurando.
+        filtros.append(Deteccao.placa.isnot(None))
+        filtros.append(Deteccao.placa != "")
+    elif classe:
         filtros.append(Deteccao.classe == classe)
     if camera:
         cam = (await db.execute(select(Camera).where(Camera.codigo == camera))).scalar_one_or_none()
@@ -588,7 +799,17 @@ async def obter(codigo: str, request: Request, db: AsyncSession = Depends(get_db
             alvo=det.pessoa.id_biometrico if det.pessoa else det.codigo,
             request=request,
         )
-    return DeteccaoOut.model_validate(det)
+
+    saida = DeteccaoOut.model_validate(det)
+    # O que trava a exclusão vai junto da ficha. A regra continua a mesma —
+    # apagar por baixo de um alerta o deixaria apontando para o vazio —, mas
+    # quem abre a ficha passa a saber disso antes de tentar, e com os códigos
+    # em mãos para resolver.
+    saida.alertas = list((await db.execute(
+        select(Alerta.codigo).where(Alerta.deteccao_id == det.id)
+        .order_by(Alerta.disparado_em)
+    )).scalars().all())
+    return saida
 
 
 @router.post("/{codigo}/revisao", response_model=DeteccaoOut, summary="Revisar detecção")
@@ -659,10 +880,19 @@ async def remover(codigo: str, request: Request,
         )
     ).scalar_one()
     if alertas:
+        # "Feche o alerta antes" era mentira, e estava aqui desde sempre:
+        # encerrar põe o alerta em RESOLVIDO e **mantém** o vínculo, então a
+        # contagem acima continua a mesma e a recusa se repete. Medido: encerrar
+        # e tentar de novo devolvia o mesmo 409. O operador fazia o que o
+        # sistema mandava e batia na mesma parede.
+        #
+        # O que libera de verdade é excluir o alerta, que é outra operação.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Esta detecção gerou {alertas} alerta(s) e não pode ser apagada. "
-            "Feche o alerta antes, ou marque a detecção como falso positivo.",
+            f"Esta detecção gerou {alertas} alerta(s) e não pode ser apagada — "
+            "eles ficariam apontando para o vazio. Exclua o alerta primeiro "
+            "(encerrar não basta, o vínculo permanece), ou marque a detecção "
+            "como falso positivo, que a preserva para a reavaliação do limiar.",
         )
 
     # Apagar o registro e deixar o recorte no disco transformaria a retenção

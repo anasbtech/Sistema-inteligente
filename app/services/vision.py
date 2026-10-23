@@ -167,7 +167,11 @@ CATALOGO_ACOES: Tuple[FichaAcao, ...] = (
     # sinais significa briga sozinho — é a coincidência que vira indício.
     # Depende da rajada: sem trajetória densa, velocidade e agitação são
     # zero. Veja `AnalisadorAcoes._avaliar_briga`.
-    FichaAcao("briga", "Agressão física", 4, exige_continua=True),
+    # "Possível", e não "Agressão física": o rótulo é o que o operador lê no
+    # alerta e na lista, e afirmar o fato é afirmar intenção a partir de
+    # vídeo — que é exatamente o que este sistema não faz. O que ele tem são
+    # três sinais de trajetória que coincidiram.
+    FichaAcao("briga", "Possível agressão física", 4, exige_continua=True),
     FichaAcao("permanencia", "Permanência prolongada", 2),
     FichaAcao("invasao", "Invasão de perímetro", 4, exige_zona="LINHA"),
     FichaAcao("contrafluxo", "Deslocamento em contrafluxo", 2,
@@ -302,6 +306,9 @@ def detalhe_acao(codigo: str) -> str:
         return "Dispara com carro, moto ou bicicleta dentro da zona proibida"
     if codigo == "arma_detectada":
         return "Dispara com objeto classificado como arma — nunca ocorreu neste parque"
+    if codigo == "briga":
+        return ("Dispara com duas pessoas sobrepostas, ambas rápidas e "
+                "erráticas por alguns segundos — indício, exige confirmação")
     if codigo == "corrida":
         return ("Dispara quando a pessoa acelera de andar para correr e "
                 "sustenta o ritmo — não basta estar rápido")
@@ -842,6 +849,16 @@ class Trilha:
         dt = max(pts[-1][2] - pts[0][2], 1e-3)
         return soma / dt
 
+    def caminho_corporal(self) -> float:
+        """`caminho` na régua do próprio corpo — alturas por segundo.
+
+        Pelo mesmo motivo de `arranque`: em fração de quadro, dois corpos se
+        agarrando rente à lente percorrem muito mais que os mesmos dois no
+        fundo da sala, e um limiar só não serve para os dois lugares.
+        """
+        escala = self.escala()
+        return self.caminho() / escala if escala > 1e-3 else 0.0
+
     def agitacao(self) -> float:
         """Quanto a direção do movimento muda entre passos consecutivos.
 
@@ -1101,7 +1118,7 @@ class AnalisadorAcoes:
         self.despenque_queda = settings.ACAO_QUEDA_DESPENQUE
         self.permanencia_queda = settings.ACAO_QUEDA_PERMANENCIA_S
         # Briga: os três sinais e o tempo que precisam durar juntos.
-        self.vel_briga = settings.ACAO_BRIGA_VEL
+        self.ritmo_briga = settings.ACAO_BRIGA_RITMO
         self.agitacao_briga = settings.ACAO_BRIGA_AGITACAO
         self.proximidade_briga = settings.ACAO_BRIGA_PROXIMIDADE
         self.duracao_briga = settings.ACAO_BRIGA_DURACAO_S
@@ -1476,13 +1493,25 @@ class AnalisadorAcoes:
             self._avaliar_aglomeracao(pessoas_xy, t, eventos)
 
         if self.ativa("briga"):
-            eventos += self._avaliar_briga(objetos, largura, altura, t)
+            eventos += self._avaliar_briga(objetos, largura, altura, t,
+                                           camera_moveu)
 
         self._limpar(t)
         return eventos
 
+    def _briga_candidata(self, trilha: Optional[Trilha]) -> bool:
+        """Esta pessoa se move como quem está numa luta corporal.
+
+        Rápida e errática ao mesmo tempo. Separadas, cada uma é cena comum:
+        rápida e dirigida é quem corre, errática e lenta é quem gesticula
+        parado.
+        """
+        return (trilha is not None
+                and trilha.caminho_corporal() >= self.ritmo_briga
+                and trilha.agitacao() >= self.agitacao_briga)
+
     def _avaliar_briga(self, objetos, largura: int, altura: int,
-                       t: float) -> List[EventoAcao]:
+                       t: float, camera_moveu: bool = False) -> List[EventoAcao]:
         """Duas pessoas coladas, ambas rápidas e ambas com movimento errático.
 
         Não há classe de "briga" em modelo nenhum deste sistema, e o sistema
@@ -1507,7 +1536,9 @@ class AnalisadorAcoes:
         """
         pessoas = [o for o in objetos
                    if o.classe == "pessoa" and o.track_id is not None]
-        if len(pessoas) < 2:
+        # Com a imagem andando, toda trilha fica rápida e errática de uma vez,
+        # e qualquer duas pessoas encostadas virariam indício.
+        if len(pessoas) < 2 or camera_moveu:
             self._briga_desde.clear()
             return []
 
@@ -1515,15 +1546,11 @@ class AnalisadorAcoes:
         vistos = set()
         for i, a in enumerate(pessoas):
             ta = self.trilhas.get(a.track_id)
-            # `caminho`, e não `velocidade`: quem luta volta ao mesmo lugar, e
-            # o deslocamento líquido de uma luta corporal é perto de zero.
-            if ta is None or ta.caminho() < self.vel_briga \
-                    or ta.agitacao() < self.agitacao_briga:
+            if not self._briga_candidata(ta):
                 continue
             for b in pessoas[i + 1:]:
                 tb = self.trilhas.get(b.track_id)
-                if tb is None or tb.caminho() < self.vel_briga \
-                        or tb.agitacao() < self.agitacao_briga:
+                if not self._briga_candidata(tb):
                     continue
                 if ios(a.bbox, b.bbox) < self.proximidade_briga:
                     continue
@@ -1544,10 +1571,12 @@ class AnalisadorAcoes:
                     "briga", ROTULO_ACAO["briga"],
                     confianca=float(min(0.8, 0.5 + (ta.agitacao() + tb.agitacao()) / 4)),
                     severidade=SEVERIDADE_ACAO["briga"],
-                    duracao_s=int(t - desde), envolvidos=2,
+                    duracao_s=max(1, int(t - desde)), envolvidos=2,
                     bbox=(x1, y1, x2, y2), track_id=a.track_id,
                 ))
-                self._briga_desde[par] = t + self.cooldown_s
+                # O represamento é das duas trilhas, acima, e não deste
+                # relógio: somar o cooldown ao início fazia a duração do
+                # alerta seguinte nascer de um instante que nunca houve.
 
         # Par que se separou perde o relógio: voltar a se aproximar recomeça
         # a contagem, em vez de somar com o encontrão de dois minutos atrás.

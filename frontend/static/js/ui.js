@@ -1,4 +1,4 @@
-/* ==========================================================
+﻿/* ==========================================================
    SEGURANÇA — Utilidades de interface
    Formatação, ícones, toasts, modais, gráficos SVG e tabelas.
    ========================================================== */
@@ -12,6 +12,7 @@ const esc = s => String(s == null ? '' : s)
 
 const ico = (n, sz = 16) => `<svg width="${sz}" height="${sz}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 
+
 /* ---------- Formatação ---------- */
 const pad = (n, l = 2) => String(n).padStart(l, '0');
 const dt = v => (v instanceof Date ? v : new Date(v));
@@ -24,6 +25,14 @@ const fmtDT = v => `${fmtDate(v)} ${fmtTime(v)}`;
 const fmtNum = n => Number(n || 0).toLocaleString('pt-BR');
 const fmtPct = n => Number(n || 0).toFixed(1).replace('.', ',') + '%';
 const pct100 = n => (Number(n || 0) * 100).toFixed(1).replace('.', ',') + '%';
+function pctCurto(v, total){
+  if(!total || v <= 0) return '0%';
+  const p = v / total * 100;
+  if(p < 0.1) return '<0,1%';
+  if(p < 10) return p.toFixed(1).replace('.', ',') + '%';
+  return Math.round(p) + '%';
+}
+
 
 function relTime(v){
   const s = Math.floor((Date.now() - dt(v).getTime()) / 1000);
@@ -42,11 +51,10 @@ function duracao(s){
 
 /* ---------- Rótulos do domínio ---------- */
 const STATUS_PESSOA = {
-  PROCURADO:    {lbl:'Procurado',      cls:'c-red',    desc:'Mandado de prisão em aberto'},
-  MONITORADO:   {lbl:'Monitorado',     cls:'c-amber',  desc:'Medida cautelar / restrição judicial'},
-  DESAPARECIDO: {lbl:'Desaparecido',   cls:'c-violet', desc:'Registro de desaparecimento ativo'},
-  FUNCIONARIO:  {lbl:'Servidor',       cls:'c-blue',   desc:'Servidor público credenciado'},
-  CIDADAO:      {lbl:'Sem restrição',  cls:'c-gray',   desc:'Nenhuma restrição registrada'}
+  RESTRITO:     {lbl:'Acesso restrito', cls:'c-red',   desc:'Não pode circular — reconhecimento gera ocorrência'},
+  FUNCIONARIO:  {lbl:'Funcionário',     cls:'c-blue',  desc:'Colaborador do quadro fixo'},
+  TERCEIRIZADO: {lbl:'Terceirizado',    cls:'c-violet',desc:'Prestador com acesso autorizado'},
+  VISITANTE:    {lbl:'Visitante',       cls:'c-gray',  desc:'Acesso eventual, sem restrição'}
 };
 const STATUS_CAMERA = {
   ONLINE:     {lbl:'On-line',     cls:'c-green'},
@@ -65,11 +73,18 @@ const ROTULO_OBJ = {
   placa:'Placa veicular', arma:'Objeto tipo arma',
   veiculo:'Veículo'   // registros anteriores à separação por tipo
 };
+/* Espelha `vision.CATALOGO_ACOES`. Quem desenha o seletor por câmera lê o
+   catálogo do servidor (/api/info); este mapa serve às telas que só precisam
+   do rótulo — filtro de registros, linha do alerta, ficha da detecção. */
 const ROTULO_ACAO_UI = {
   corrida:'Corrida súbita', queda:'Queda de pessoa', aglomeracao:'Aglomeração',
-  briga:'Agressão física', permanencia:'Permanência prolongada',
+  briga:'Possível agressão física', permanencia:'Permanência prolongada',
   invasao:'Invasão de perímetro', contrafluxo:'Deslocamento em contrafluxo',
-  abandono:'Abandono de objeto', vandalismo:'Dano ao patrimônio', fogo:'Fogo'
+  abandono:'Abandono de objeto', vandalismo:'Dano ao patrimônio', fogo:'Fogo',
+  area_restrita:'Pessoa em área restrita',
+  fora_de_horario:'Entrada em horário não permitido',
+  veiculo_proibido:'Veículo em área proibida',
+  arma_detectada:'Detecção de arma', fumaca:'Fumaça'
 };
 const SEVERIDADE = ['', 'Informativo', 'Baixa', 'Média', 'Crítica'];
 const CLS_SEV = ['', 'c-gray', 'c-blue', 'c-amber', 'c-red'];
@@ -116,7 +131,8 @@ function _escFecha(e){ if(e.key === 'Escape') fecharModal(); }
 
 /* Confirmação em modal — `confirm()` nativo é bloqueado em alguns contextos
    e não combina com o resto da interface. */
-function confirmar(titulo, mensagem, {rotulo = 'Confirmar', perigo = false, exigeTexto = null} = {}){
+function confirmar(titulo, mensagem, {rotulo = 'Confirmar', perigo = false,
+                                      exigeTexto = null, secundario = null} = {}){
   return new Promise(resolve => {
     abrirModal(`
       <div class="modal-hd"><h3>${esc(titulo)}</h3><span class="sp" style="flex:1"></span>
@@ -130,11 +146,19 @@ function confirmar(titulo, mensagem, {rotulo = 'Confirmar', perigo = false, exig
       </div>
       <div class="modal-ft">
         <button class="btn btn-ghost" id="cfNao">Cancelar</button>
+        <span class="sp" style="flex:1"></span>
+        ${secundario ? `<button class="btn btn-soft" id="cfAlt">${esc(secundario)}</button>` : ''}
         <button class="btn ${perigo ? 'btn-danger' : 'btn-primary'}" id="cfSim">${esc(rotulo)}</button>
       </div>`);
     const terminar = v => { fecharModal(); resolve(v); };
     $('#cfNao').onclick = () => terminar(null);
     $('#modalBox').querySelector('.x').onclick = () => terminar(null);
+    /* Segunda saída, quando há duas formas legítimas de resolver e uma delas
+       não é "cancelar". Devolve o sentinela em vez do texto digitado: quem
+       chamou precisa distinguir qual botão foi usado, e o campo de motivo não
+       se aplica a este caminho. */
+    const alt = $('#cfAlt');
+    if(alt) alt.onclick = () => terminar('__secundario__');
     $('#cfSim').onclick = () => {
       if(exigeTexto){
         const v = $('#cfMotivo').value.trim();
@@ -158,6 +182,7 @@ const erroBloco = (e, aoTentar) => `<div class="empty">${ico('alert',30)}
   ${aoTentar ? `<div style="margin-top:12px"><button class="btn btn-ghost btn-sm" id="${aoTentar}">Tentar de novo</button></div>` : ''}</div>`;
 
 /* ---------- Gráficos SVG ---------- */
+
 function areaChart(series, opts){
   const o = Object.assign({w:720, h:200, pad:{t:14,r:12,b:26,l:38}, labels:[], yTicks:4}, opts || {});
   const {w, h, pad} = o, iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
@@ -245,25 +270,53 @@ function barrasH(items, opts){
   return `<svg viewBox="0 0 ${o.w} ${h}" style="width:100%;height:auto;display:block" role="img">${out}</svg>`;
 }
 
+/* Percentual que não apaga o que é pequeno.
+
+   Arredondar a uma casa inteira transformava 4 ações em 1.207 detecções num
+   "0%" — e 0% é o número que se usa para dizer que não houve nenhuma. Num
+   sistema em que a classe rara é justamente a crítica, essa é a leitura que
+   não pode sair errada. Abaixo de 1 e acima de zero, usa decimal; abaixo de
+   0,1 diz "<0,1%", que é curto e verdadeiro. */
+/* Percentuais de uma composição, que somam exatamente 100%.
+
+   Arredondando cada um por conta própria, 994, 1.245 e 4 em 2.404 saíam como
+   48%, 52% e 0,2% — 100,2% no rodapé de um sistema cuja razão de existir é a
+   conferência. Aqui todos usam uma casa decimal e o resto da divisão vai para
+   quem tem a maior sobra (maior resto), que é como se fecha um rateio.
+
+   Zero continua zero: parte sem evento não ganha fatia por arredondamento. */
 function donut(parts, opts){
   const o = Object.assign({size:176, thick:24, centro:'', sub:''}, opts || {});
   const S = o.size, R = S/2 - 4, r = R - o.thick, cx = S/2, cy = S/2;
   const tot = parts.reduce((s, p) => s + p.v, 0) || 1;
+  /* Fatia com valor mas sem ângulo não é desenhada por nenhum renderizador, e
+     some. O piso é de um grau — a menor coisa que o monitor consegue mostrar,
+     não uma fatia inflada para parecer maior do que é. O número ao lado
+     continua sendo a medida; o arco só serve para ela ser encontrada. */
+  const MINIMO = Math.PI / 180;
   let a0 = -Math.PI/2, out = '';
   parts.forEach(p => {
     if(p.v <= 0) return;
-    const a1 = a0 + (p.v/tot) * Math.PI * 2;
+    const a1 = a0 + Math.max(MINIMO, (p.v/tot) * Math.PI * 2);
     const grande = (a1 - a0) > Math.PI ? 1 : 0;
     const x0 = cx + R*Math.cos(a0), y0 = cy + R*Math.sin(a0);
     const x1 = cx + R*Math.cos(a1), y1 = cy + R*Math.sin(a1);
     const x2 = cx + r*Math.cos(a1), y2 = cy + r*Math.sin(a1);
     const x3 = cx + r*Math.cos(a0), y3 = cy + r*Math.sin(a0);
-    out += `<path d="M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${grande} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${r},${r} 0 ${grande} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z" fill="${p.cor}"/>`;
+    out += `<path d="M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${grande} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${r},${r} 0 ${grande} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z" fill="${p.cor}"><title>${esc((p.nome ? p.nome + ': ' : '') + fmtNum(p.v) + ' · ' + pctCurto(p.v, tot))}</title></path>`;
+    // Fatia miúda ganha um tique para fora do anel: sem ele, um grau de arco
+    // se perde na borda e a classe parece ausente.
+    if((p.v/tot) * Math.PI * 2 < MINIMO * 3){
+      const m = (a0 + a1) / 2;
+      out += `<line x1="${(cx + R*Math.cos(m)).toFixed(2)}" y1="${(cy + R*Math.sin(m)).toFixed(2)}"
+                    x2="${(cx + (R+5)*Math.cos(m)).toFixed(2)}" y2="${(cy + (R+5)*Math.sin(m)).toFixed(2)}"
+                    stroke="${p.cor}" stroke-width="2" stroke-linecap="round"/>`;
+    }
     a0 = a1;
   });
   out += `<text x="${cx}" y="${cy-1}" text-anchor="middle" font-size="26" font-weight="600" font-family="IBM Plex Mono, monospace" fill="var(--txt-1)">${esc(o.centro)}</text>`;
   out += `<text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="9.5" letter-spacing="1.2" fill="var(--txt-3)">${esc(o.sub)}</text>`;
-  return `<svg viewBox="0 0 ${S} ${S}" style="width:${S}px;max-width:100%;height:auto;display:block" role="img">${out}</svg>`;
+  return `<svg viewBox="-6 -6 ${S+12} ${S+12}" style="width:${S}px;max-width:100%;height:auto;display:block" role="img">${out}</svg>`;
 }
 
 /* ---------- Paginação ---------- */
@@ -315,7 +368,8 @@ function pintarFaces(raiz){
 function carregarFace(canvas, idBiometrico){
   if(!idBiometrico || !API.access) return;
   const img = new Image();
-  img.onload  = () => pintarRecorte(canvas.getContext('2d', {alpha:false}), img, canvas.width, canvas.height);
+  img.onload  = () => pintarRecorte(canvas.getContext('2d', {alpha:false}), img,
+                                    ...medidaCSS(canvas));
   img.onerror = () => {};   // sem captura guardada: fica o template
   img.src = `${API.base}/pessoas/${encodeURIComponent(idBiometrico)}/face`
           + `?token=${encodeURIComponent(API.access)}`;
@@ -325,27 +379,110 @@ function carregarFace(canvas, idBiometrico){
    O desenho sintético continua por baixo: quando não há imagem — detecção
    antiga, ou vinda do simulador — fica o esquema, que não finge ser uma
    fotografia de alguém. */
-function carregarRecorte(canvas, codigo){
+/* Molda a caixa ao recorte, em vez de moldar o recorte a uma caixa fixa.
+
+   Captura de rosto é vertical; numa moldura 5:3 sobrava preto dos dois lados
+   e a imagem ficava perdida no meio. Aqui a moldura assume a proporção do
+   recorte, e não sobra nada.
+
+   O teto de ampliação continua valendo: esticar um recorte de 49x85 até a
+   largura da coluna não cria detalhe nenhum — vira um borrão que parece
+   defeito do sistema. Quando o recorte é pequeno, a moldura fica pequena
+   junto, em vez de ampliar até embaçar. */
+function encaixarRecorte(canvas, img, larguraMax, limiteAltura){
+  const MAX_AMPLIACAO = 3;
+  // Sem teto declarado, metade da janela — que serve à ficha, onde a imagem é
+  // o assunto. Quem vive dentro de um cartão passa o seu, senão a moldura
+  // cresce com o recorte e empurra o próprio cartão.
+  const alturaMax = limiteAltura || Math.round(window.innerHeight * 0.5);
+  const esc = Math.min(larguraMax / img.naturalWidth,
+                       alturaMax / img.naturalHeight,
+                       MAX_AMPLIACAO);
+  const w = Math.max(1, Math.round(img.naturalWidth * esc));
+  const h = Math.max(1, Math.round(img.naturalHeight * esc));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  // Redefinir o tamanho zera a transformação; a escala de DPR entra depois.
+  const ctx = canvas.getContext('2d', {alpha:false});
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.drawImage(img, 0, 0, w, h);
+}
+
+/* `fonte` diz de onde vem a imagem: 'deteccoes' (o padrão) ou 'alertas'.
+   Alerta de sala não nasce de detecção — a saída não fotografa ninguém indo
+   embora — e carrega a própria imagem. Sem este parâmetro a coluna CAPTURA
+   ficava em branco justamente nos alertas que mais precisam dela. */
+function carregarRecorte(canvas, codigo, larguraMax, fonte, alturaMax){
   if(!codigo || !API.access) return;
   const img = new Image();
-  img.onload  = () => pintarRecorte(canvas.getContext('2d', {alpha:false}), img, canvas.width, canvas.height);
+  img.onload  = () => larguraMax
+    ? encaixarRecorte(canvas, img, larguraMax, alturaMax)
+    : pintarRecorte(canvas.getContext('2d', {alpha:false}), img, ...medidaCSS(canvas));
   img.onerror = () => {};
-  img.src = `${API.base}/deteccoes/${encodeURIComponent(codigo)}/snapshot`
+  img.src = `${API.base}/${fonte || 'deteccoes'}/${encodeURIComponent(codigo)}/snapshot`
           + `?token=${encodeURIComponent(API.access)}`;
 }
 
+/* Moldura neutra enquanto o recorte real não chega — e no lugar dele, quando
+   não existe.
+
+   O que havia aqui era uma cena inventada a partir do código da detecção:
+   silhueta colorida, caixa, linhas de varredura e vinheta. Ficava por baixo
+   da evidência e aparecia sozinha quando ela não existia, sem nada indicar
+   que aquele desenho não era a captura. Em sistema de identificação, imagem
+   inventada ao lado de registro real é a pior coisa que a tela pode mostrar. */
+/* A medida em que o desenho acontece, não a do bitmap.
+
+   `molduraVazia` deixa o contexto escalado pelo DPR, então desenhar usando
+   `canvas.width` — que já é a largura multiplicada pelo mesmo DPR — aplica o
+   fator duas vezes. Em tela comum o DPR é 1 e nada aparece; num monitor HiDPI
+   a imagem saía ao dobro do tamanho e vazava para fora da moldura. */
+function medidaCSS(canvas){
+  const l = parseFloat(canvas.style.width), a = parseFloat(canvas.style.height);
+  return [l || canvas.width, a || canvas.height];
+}
+
+function molduraVazia(canvas, largura, altura){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = largura * dpr; canvas.height = altura * dpr;
+  canvas.style.width = largura + 'px'; canvas.style.height = altura + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0A1218';
+  ctx.fillRect(0, 0, largura, altura);
+}
+
+/* Miniatura da coluna CAPTURA.
+
+   A célula era deitada — 54 por 39 — e a captura de pessoa é em pé: medidos
+   400 recortes deste parque, a proporção mediana é 0,73 contra 1,38 da célula.
+   A imagem entrava encolhida no meio da moldura, com tarja preta dos dois
+   lados, e de um rosto de 54 pixels de largura sobravam 28.
+
+   Aqui a moldura toma a proporção do recorte, como já fazia a do painel de
+   alerta: a altura é o teto e a largura segue a imagem, então não há tarja em
+   caso nenhum e as linhas da tabela continuam alinhadas pela altura. O teto de
+   1,26 vez a largura é onde a captura típica usa a coluna inteira sem esticar
+   demais a linha.
+
+   Dava também um defeito que só aparece em tela HiDPI: `pintarRecorte` recebia
+   `canvas.width`, que é o bitmap já multiplicado pelo DPR, enquanto o contexto
+   vinha escalado pelo mesmo DPR de `molduraVazia` — com dpr 2 a miniatura era
+   desenhada ao dobro e vazava para fora da moldura. `encaixarRecorte` dimensiona
+   e transforma no mesmo lugar, e não tem como divergir. */
 function pintarSnaps(raiz){
   $$('[data-snap]', raiz || document).forEach(c => {
     if(c.dataset.pintado) return;
     let d;
     try{ d = JSON.parse(c.dataset.snap); }catch(e){ return; }
-    drawSnapshot(c, d, +(c.getAttribute('width') || 56));
+    const w = +(c.getAttribute('width') || 56);
+    const h = Math.round(w * 1.26);
+    molduraVazia(c, w, h);
     c.dataset.pintado = '1';
-    carregarRecorte(c, d.codigo);
+    carregarRecorte(c, d.codigo, w, d.fonte, h);
   });
 }
-/* Serializa só o que a miniatura precisa — evita jogar o objeto inteiro no DOM */
-const snapAttr = d => esc(JSON.stringify({
-  codigo: d.codigo, tipo: d.tipo, classe: d.classe, bbox: d.bbox,
-  cena: (d.camera && d.camera.cena) || d.cena || 'rua'
-}));
+/* Só o código: era a cena sintética que precisava de tipo, classe e bbox. */
+const snapAttr = (d, fonte) =>
+  esc(JSON.stringify(fonte ? {codigo: d.codigo, fonte} : {codigo: d.codigo}));
