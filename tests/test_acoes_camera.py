@@ -697,6 +697,83 @@ def test_so_a_camera_que_vigia_movimento_paga_a_rajada():
 
 
 # ----------------------------------------------------------------------
+# Queda: despencar, ficar na horizontal e continuar lá
+#
+# Mesma pessoa nas duas posturas, com os pés na mesma linha do chão: em pé
+# ocupa 90x240 px, no chão 240x90. O centro do corpo desce de 0,50 para 0,60
+# da altura do quadro, que é o tranco que a regra procura.
+# ----------------------------------------------------------------------
+def _em_pe(n, x=400):
+    return [[(7, (x, 240, x + 90, 480))] for _ in range(n)]
+
+
+def _no_chao(n, x=400):
+    return [[(7, (x, 390, x + 240, 480))] for _ in range(n)]
+
+
+def _quedas(quadros):
+    from app.config import settings
+
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"queda"}
+    return [e for e in _alimentar(analisador, quadros,
+                                  passo=settings.ACAO_CONTINUA_INTERVALO_S)]
+
+
+def test_cair_e_ficar_no_chao_vira_alerta():
+    eventos = _quedas(_em_pe(6) + _no_chao(40))
+    assert [e.classe for e in eventos] == ["queda"]
+
+
+def test_abaixar_para_pegar_algo_do_chao_nao_e_queda():
+    """O movimento normal que mais se parece com uma queda.
+
+    A caixa achata igual, e o corpo desce com o mesmo tranco — a regra
+    antiga, que exigia só essas duas coisas, alertava aqui. O que separa é
+    levantar em seguida: ninguém se abaixa e fica.
+    """
+    assert _quedas(_em_pe(6) + _no_chao(7) + _em_pe(10)) == []
+
+
+def test_quem_ja_estava_deitado_nao_caiu():
+    """A câmera da área de descanso, que alertaria o dia inteiro.
+
+    Postura de queda sem o tranco que leva a ela: a pessoa já estava no chão
+    quando a câmera chegou, e isso não é uma queda — é alguém deitado.
+    """
+    assert _quedas(_no_chao(40)) == []
+
+
+def test_a_queda_se_confirma_na_visita_seguinte():
+    """Onde a confirmação acontece de verdade, e por que ela é forte.
+
+    A rajada entrega ~1s por visita, menos que a permanência exigida. Quem
+    confirma é a visita seguinte, dezenas de segundos depois — e aí o que se
+    sabe não é só que o corpo foi ao chão, é que ele continuava lá meio
+    minuto depois. A duração relatada é esse tempo, não um número fixo.
+    """
+    from app.config import settings
+
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"queda"}
+    t = 9000.0
+    eventos = _alimentar(analisador, _em_pe(6) + _no_chao(2), t0=t,
+                         passo=settings.ACAO_CONTINUA_INTERVALO_S)
+    assert eventos == [], "um segundo no chão ainda não confirma"
+
+    eventos = analisador.atualizar(
+        [ObjetoDetectado("pessoa", 0.9, (400, 390, 640, 480), 7)],
+        1280, 720, agora=t + 30.0)
+    assert [e.classe for e in eventos] == ["queda"]
+    assert eventos[0].duracao_s >= 29, "o alerta diz há quanto tempo está caído"
+
+
+def test_a_mesma_queda_alerta_uma_vez_so():
+    """A pessoa segue no chão por minutos — o alerta é um."""
+    assert len(_quedas(_em_pe(6) + _no_chao(120))) == 1
+
+
+# ----------------------------------------------------------------------
 # Agressão física: três sinais que só juntos viram indício
 # ----------------------------------------------------------------------
 def _alimentar(analisador, caixas_por_quadro, t0=9000.0, passo=0.22):

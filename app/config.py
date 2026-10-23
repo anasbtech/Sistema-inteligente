@@ -572,6 +572,28 @@ class Settings(BaseSettings):
     # `AnalisadorAcoes._camera_moveu`.
     ACAO_CORRIDA_COERENCIA: float = 0.90
 
+    # --- Queda de pessoa --------------------------------------------------
+    # Três coisas, nesta ordem, e é a ordem que define o evento: o corpo
+    # **despencou**, ficou na **horizontal** e **continua lá**.
+    #
+    # Sozinha, a horizontal não distingue cair de deitar, e a câmera da área
+    # de descanso alertaria o dia inteiro. Sozinho, o tranco não distingue
+    # cair de agachar. E sem a permanência, abaixar-se para pegar algo do
+    # chão é uma queda — é o movimento normal que mais se parece com uma.
+    #
+    # Largura sobre altura da caixa. Em pé um corpo dá ~0,4; no chão, mais
+    # que 1. O piso fica acima de 1 para não depender de ângulo fino.
+    ACAO_QUEDA_RAZAO: float = 1.25
+    # Alturas de corpo por segundo, para baixo, na mesma régua da corrida.
+    # Um corpo que cede cobre a própria altura em menos de um segundo.
+    ACAO_QUEDA_DESPENQUE: float = 1.2
+    # Quanto o corpo precisa ficar no chão para virar alerta. É o que derruba
+    # quem se abaixou: ninguém amarra o sapato deitado, e quem se agacha
+    # levanta antes disto. Com a rajada entregando ~1s por visita, a
+    # confirmação costuma vir na visita seguinte — e é uma confirmação forte,
+    # porque significa que a pessoa seguia no chão dezenas de segundos depois.
+    ACAO_QUEDA_PERMANENCIA_S: float = 3.0
+
     # --- Agressão física ------------------------------------------------
     # Três sinais exigidos ao mesmo tempo, nas duas pessoas do par. Veja
     # `AnalisadorAcoes._avaliar_briga`: nenhum deles sozinho significa
@@ -594,8 +616,8 @@ class Settings(BaseSettings):
     # --- Rajada para as ações que medem movimento -----------------------
     # Corrida, queda e contrafluxo comparam a posição do corpo entre quadros
     # próximos. No rodízio, duas visitas à mesma câmera distam dezenas de
-    # segundos, e `Trilha.velocidade` exige cinco pontos, `queda_vertical`
-    # oito — seriam minutos para juntar o que a ação precisa, e a pessoa já
+    # segundos, e `Trilha.velocidade` exige cinco pontos, `despencou`
+    # três — seriam minutos para juntar o que a ação precisa, e a pessoa já
     # saiu de cena. Por isso a câmera que vigia uma dessas ações recebe uma
     # rajada: vários quadros seguidos na mesma visita.
     #

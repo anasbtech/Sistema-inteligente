@@ -306,7 +306,8 @@ def detalhe_acao(codigo: str) -> str:
         return ("Dispara quando a pessoa acelera de andar para correr e "
                 "sustenta o ritmo — não basta estar rápido")
     if codigo == "queda":
-        return "Dispara quando a caixa da pessoa se achata de repente"
+        return ("Dispara quando o corpo despenca, fica na horizontal e "
+                "permanece assim — abaixar-se não conta")
     return ""
 
 
@@ -793,6 +794,9 @@ class Trilha:
     # pouco não vira alerta: um salto de posição isolado é quase sempre o
     # rastreador reatribuindo a trilha, não alguém disparando a correr.
     correndo_desde: Optional[float] = None
+    # Desde quando o corpo está na horizontal, tendo despencado para chegar
+    # lá. Quem se abaixa levanta em seguida e zera isto; quem caiu, não.
+    caido_desde: Optional[float] = None
     alertou: Dict[str, float] = field(default_factory=dict)
 
     def registrar(self, x: float, y: float, t: float, altura: float = 0.0) -> None:
@@ -909,14 +913,37 @@ class Trilha:
             return 0.0, 0.0
         return float(np.mean(passos[-3:])), float(np.mean(passos[-7:-3]))
 
-    def queda_vertical(self) -> float:
-        """Razão de achatamento recente — proxy simples para queda."""
-        if len(self.pontos) < 8:
+    def despencou(self, salto_max_s: float = 1.0) -> float:
+        """Quanto o corpo desceu, em alturas de corpo por segundo.
+
+        Só para baixo: subir não é queda. Mede o *tranco* que leva ao chão, e
+        é o que separa cair de estar deitado — quem a câmera encontra já no
+        chão nunca teve o tranco, e não deve virar alerta de queda a cada
+        volta do rodízio.
+
+        Na mesma régua de `arranque`, e pelo mesmo motivo: em fração de
+        quadro, a queda de quem está rente à lente mede muitas vezes a de
+        quem cai no fundo da sala, e um limiar só não serve para as duas.
+        """
+        escala = self.escala()
+        if escala <= 1e-3:
             return 0.0
-        _, y0, t0 = self.pontos[-8]
-        _, y1, t1 = self.pontos[-1]
-        dt = max(t1 - t0, 1e-3)
-        return float(max(0.0, (y1 - y0) / dt))
+        descidas: List[float] = []
+        pts = list(self.pontos)
+        for (_, y0, t0), (_, y1, t1) in zip(pts, pts[1:]):
+            dt = t1 - t0
+            if dt > salto_max_s:
+                descidas.clear()        # outra visita: o tranco não atravessa
+                continue
+            if dt <= 1e-3:
+                continue
+            descidas.append((y1 - y0) / dt / escala)
+        if len(descidas) < 3:
+            return 0.0
+        # O pico, não a média: o corpo vai ao chão em um ou dois passos, e
+        # diluí-lo nos três últimos apagava justamente o tranco que se quer
+        # medir — a queda saía com um terço do seu tamanho.
+        return float(max(0.0, max(descidas[-3:])))
 
 
 def _minutos(hhmm: str, padrao: int) -> int:
@@ -1069,6 +1096,10 @@ class AnalisadorAcoes:
         self.agitacao_corrida = settings.ACAO_CORRIDA_AGITACAO
         self.duracao_corrida = settings.ACAO_CORRIDA_DURACAO_S
         self.coerencia_camera = settings.ACAO_CORRIDA_COERENCIA
+        # Queda: despencar, ficar na horizontal e continuar lá.
+        self.razao_queda = settings.ACAO_QUEDA_RAZAO
+        self.despenque_queda = settings.ACAO_QUEDA_DESPENQUE
+        self.permanencia_queda = settings.ACAO_QUEDA_PERMANENCIA_S
         # Briga: os três sinais e o tempo que precisam durar juntos.
         self.vel_briga = settings.ACAO_BRIGA_VEL
         self.agitacao_briga = settings.ACAO_BRIGA_AGITACAO
@@ -1210,6 +1241,51 @@ class AnalisadorAcoes:
             envolvidos=1, bbox=obj.bbox, track_id=obj.track_id,
         ))
 
+    def _avaliar_queda(self, trilha: Trilha, obj, t: float,
+                       camera_moveu: bool, eventos: List[EventoAcao]) -> None:
+        """Despencou, ficou na horizontal e continua lá.
+
+        A ordem importa, e é ela que define o evento:
+
+        * **horizontal** diz a postura — largura da caixa maior que a altura.
+          Sozinha não serve: não separa cair de deitar, e a câmera da área de
+          descanso alertaria o dia inteiro.
+        * **despencou** diz que ela *chegou* ao chão agora, e é exigido uma
+          vez só, no instante em que o corpo vai ao chão. Quem a câmera
+          encontra já deitado nunca teve o tranco e não vira alerta.
+        * **permanecer** é o que separa queda de movimento normal. Abaixar-se
+          para pegar algo do chão achata a caixa igual — e dura um segundo.
+
+        Depois de confirmada, a queda não é reavaliada enquanto o corpo
+        seguir no chão: o tranco já não está na trilha, e exigi-lo de novo
+        faria o alerta depender de a pessoa cair duas vezes.
+        """
+        x1, y1, x2, y2 = obj.bbox
+        horizontal = (x2 - x1) / max(y2 - y1, 1) >= self.razao_queda
+        if not horizontal:
+            trilha.caido_desde = None      # levantou: o que houve foi agachar
+            return
+
+        if trilha.caido_desde is None:
+            # Com a imagem andando, todo corpo parece despencar de uma vez.
+            if camera_moveu or trilha.despencou() < self.despenque_queda:
+                return
+            trilha.caido_desde = t
+            return
+
+        caido_ha = t - trilha.caido_desde
+        if caido_ha < self.permanencia_queda:
+            return
+        if not self._pode_alertar(trilha, "queda", t):
+            return
+
+        eventos.append(EventoAcao(
+            "queda", ROTULO_ACAO["queda"], confianca=0.82,
+            severidade=SEVERIDADE_ACAO["queda"],
+            duracao_s=max(1, int(caido_ha)), envolvidos=1,
+            bbox=obj.bbox, track_id=obj.track_id,
+        ))
+
     def _pode_alertar(self, trilha: Trilha, classe: str, agora: float) -> bool:
         # A seleção da câmera vem antes do cooldown de propósito: ação
         # desligada não deve nem marcar a trilha, senão religá-la ficaria
@@ -1276,15 +1352,8 @@ class AnalisadorAcoes:
                 self._avaliar_corrida(trilha, obj, t, camera_moveu, eventos)
 
             # --- queda ---
-            if obj.classe == "pessoa":
-                x1, y1, x2, y2 = obj.bbox
-                razao = (x2 - x1) / max(y2 - y1, 1)
-                if razao > 1.35 and trilha.queda_vertical() > 0.05 and self._pode_alertar(trilha, "queda", t):
-                    eventos.append(EventoAcao(
-                        "queda", ROTULO_ACAO["queda"], confianca=0.82,
-                        severidade=SEVERIDADE_ACAO["queda"],
-                        duracao_s=1, envolvidos=1, bbox=obj.bbox, track_id=obj.track_id,
-                    ))
+            if obj.classe == "pessoa" and self.ativa("queda"):
+                self._avaliar_queda(trilha, obj, t, camera_moveu, eventos)
 
             # --- permanência prolongada ---
             if vel < 0.012:
