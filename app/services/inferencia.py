@@ -729,6 +729,10 @@ class Inferencia:
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, False, fora
             )
+            if len(objetos) > 0:
+                print(f"[BOXES-OBJ] {cam.codigo}: detected {len(objetos)} objects")
+            else:
+                print(f"[BOXES-EMPTY] {cam.codigo}: no objects detected")
         else:
             if not cam.analitico_objeto:
                 print(f"[BOXES-SKIP] {cam.codigo}: analitico_objeto=False")
@@ -890,6 +894,10 @@ class Inferencia:
                 face_engine.extrair_faces, quadro,
                 0.0, settings.INFERENCIA_ROSTO_MIN_PX, 0.0,
             )
+            if len(faces) > 0:
+                print(f"[BOXES-FACE] {cam.codigo}: detected {len(faces)} faces")
+            else:
+                print(f"[BOXES-EMPTY-FACE] {cam.codigo}: no faces detected")
             # O que o alinhamento precisa saber da cena para, se for o caso,
             # fazer nascer a linha do corpo que recebe a identidade.
             cena = {"cam": cam, "quadro": quadro, "agora": agora}
