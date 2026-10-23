@@ -1113,10 +1113,15 @@ class AnalisadorAcoes:
                               if n_aglomeracao is None else n_aglomeracao)
         self.raio_aglomeracao = (settings.ACAO_AGLOMERACAO_RAIO
                                  if raio_aglomeracao is None else raio_aglomeracao)
+        self.seg_aglomeracao = settings.ACAO_AGLOMERACAO_S
         self.seg_abandono = settings.ACAO_ABANDONO_S if seg_abandono is None else seg_abandono
         self.cooldown_s = settings.ACAO_COOLDOWN_S if cooldown_s is None else cooldown_s
         self.trilhas: Dict[int, Trilha] = {}
+        # Desde quando o ajuntamento existe (vira o `duracao_s` do alerta) e
+        # quando ele foi ao painel pela última vez. São perguntas diferentes:
+        # ver `_avaliar_aglomeracao`.
         self._aglomeracao_em: Optional[float] = None
+        self._aglomeracao_alertou: float = 0.0
         # Quanto uma trilha sobrevive sem ser vista. Oito segundos servem para
         # quem analisa a câmera quadro a quadro; quem a visita de tempos em
         # tempos precisa esticar isto até além do intervalo entre as visitas,
@@ -1467,21 +1472,8 @@ class AnalisadorAcoes:
         # --- aglomeração (nível de cena, não de indivíduo) ---
         # Checada aqui, e não em `_pode_alertar`: aglomeração é da cena
         # inteira e não tem trilha por onde passar o cooldown.
-        if self.ativa("aglomeracao") and len(pessoas_xy) >= self.n_aglomeracao:
-            maior = self._maior_agrupamento(pessoas_xy)
-            if maior >= self.n_aglomeracao:
-                if self._aglomeracao_em is None:
-                    self._aglomeracao_em = t
-                elif t - self._aglomeracao_em > 10.0:
-                    eventos.append(EventoAcao(
-                        "aglomeracao", ROTULO_ACAO["aglomeracao"],
-                        confianca=float(min(0.6 + maior / 40.0, 0.96)),
-                        severidade=SEVERIDADE_ACAO["aglomeracao"],
-                        duracao_s=int(t - self._aglomeracao_em), envolvidos=maior,
-                    ))
-                    self._aglomeracao_em = t + self.cooldown_s
-        else:
-            self._aglomeracao_em = None
+        if self.ativa("aglomeracao"):
+            self._avaliar_aglomeracao(pessoas_xy, t, eventos)
 
         if self.ativa("briga"):
             eventos += self._avaliar_briga(objetos, largura, altura, t)
@@ -1562,6 +1554,49 @@ class AnalisadorAcoes:
         for par in [p for p in self._briga_desde if p not in vistos]:
             self._briga_desde.pop(par, None)
         return eventos
+
+    def _avaliar_aglomeracao(self, pessoas_xy: Sequence[Tuple[float, float]],
+                             t: float, eventos: List[EventoAcao]) -> None:
+        """Gente **junta** acima do limite da câmera, e por tempo bastante.
+
+        Conta o maior agrupamento, não o total em cena. A Produção trabalha
+        com onze pessoas espalhadas pela sala: pelo total, a ação acusaria o
+        expediente todo dia; as mesmas onze amontoadas numa porta é que são o
+        fato. "Junto" é o raio de `ACAO_AGLOMERACAO_RAIO`.
+
+        Cada pessoa entra uma vez: o agrupamento se calcula sobre um ponto
+        por caixa, e as caixas já chegam aqui sem as duplicatas que a fusão
+        desfez — duas leituras do mesmo corpo contariam duas pessoas e
+        inventariam a aglomeração que não existe.
+
+        Duas esperas distintas, que antes dividiam a mesma variável e se
+        confundiam: `_aglomeracao_em` é desde quando o ajuntamento existe, e
+        é o que o `duracao_s` do alerta relata; `_aglomeracao_alertou` é o
+        represamento, para o mesmo ajuntamento não voltar ao painel a cada
+        visita. Somar o cooldown ao início fazia a duração relatada nascer de
+        um instante que nunca houve.
+        """
+        maior = (self._maior_agrupamento(pessoas_xy)
+                 if len(pessoas_xy) >= self.n_aglomeracao else 0)
+        if maior < self.n_aglomeracao:
+            self._aglomeracao_em = None
+            return
+
+        if self._aglomeracao_em is None:
+            self._aglomeracao_em = t
+        durando = t - self._aglomeracao_em
+        if durando < self.seg_aglomeracao:
+            return
+        if t - self._aglomeracao_alertou < self.cooldown_s:
+            return
+
+        self._aglomeracao_alertou = t
+        eventos.append(EventoAcao(
+            "aglomeracao", ROTULO_ACAO["aglomeracao"],
+            confianca=float(min(0.6 + maior / 40.0, 0.96)),
+            severidade=SEVERIDADE_ACAO["aglomeracao"],
+            duracao_s=max(1, int(durando)), envolvidos=maior,
+        ))
 
     def _maior_agrupamento(self, pontos: Sequence[Tuple[float, float]]) -> int:
         """Maior componente conexa sob o raio de proximidade (união-busca leve)."""

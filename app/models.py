@@ -1,4 +1,4 @@
-"""Modelos ORM do SEGURANÇA (SQLAlchemy 2.0, async).
+﻿"""Modelos ORM do SEGURANÇA (SQLAlchemy 2.0, async).
 
 Pontos de projeto que importam:
 
@@ -51,11 +51,15 @@ class Sexo(str, enum.Enum):
 
 
 class StatusPessoa(str, enum.Enum):
-    PROCURADO = "PROCURADO"
-    MONITORADO = "MONITORADO"
-    DESAPARECIDO = "DESAPARECIDO"
+    """Situação de quem está na base biométrica deste prédio.
+
+    Só `RESTRITO` vira ocorrência ao ser reconhecido: quem trabalha ou visita
+    é registrado como passagem, sem acionar ninguém.
+    """
     FUNCIONARIO = "FUNCIONARIO"
-    CIDADAO = "CIDADAO"
+    VISITANTE = "VISITANTE"
+    TERCEIRIZADO = "TERCEIRIZADO"
+    RESTRITO = "RESTRITO"
 
 
 class StatusCamera(str, enum.Enum):
@@ -119,6 +123,9 @@ class Usuario(Base):
     telefone: Mapped[str] = mapped_column(String(32), default="")
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Excluir não apaga a linha: `auditoria.usuario_id` é ON DELETE SET NULL, e
+    # zerá-lo reescreveria linhas já encadeadas por hash, quebrando a cadeia.
+    excluido_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
     mfa_ativo: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
@@ -155,7 +162,13 @@ class SenhaHistorico(Base):
 
 
 class TokenRecuperacao(Base):
-    """Código OTP de redefinição de senha — guardado como HASH, nunca em claro."""
+    """Segredo do link de redefinição — guardado como HASH, nunca em claro.
+
+    `tentativas` sobrou do código de seis dígitos, que precisava limitar o
+    chute. O segredo do link tem entropia demais para ser adivinhado, então
+    hoje o campo fica em zero; continua aqui porque remover coluna de banco em
+    produção custa mais do que o espaço que ela ocupa.
+    """
     __tablename__ = "tokens_recuperacao"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
@@ -166,6 +179,23 @@ class TokenRecuperacao(Base):
     usado: Mapped[bool] = mapped_column(Boolean, default=False)
     ip_solicitante: Mapped[str] = mapped_column(String(64), default="")
     criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
+
+
+class Configuracao(Base):
+    """Parâmetro ajustado pela interface, sobrepondo o padrão do `.env`.
+
+    Só o que a aplicação relê a cada uso entra aqui; o que é lido na subida
+    do processo continua vindo do `.env`, porque gravar um valor que não
+    passa a valer é pior que não oferecer o campo.
+    """
+    __tablename__ = "configuracao"
+
+    chave: Mapped[str] = mapped_column(String(64), primary_key=True)
+    valor: Mapped[str] = mapped_column(String(200))
+    alterado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
+    alterado_por: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 # ======================================================================
@@ -199,6 +229,76 @@ class Camera(Base):
     analitico_facial: Mapped[bool] = mapped_column(Boolean, default=True)
     analitico_objeto: Mapped[bool] = mapped_column(Boolean, default=True)
     analitico_acao: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Quais ações esta câmera vigia, entre as do catálogo em `vision`.
+    #
+    # A chave acima liga a análise; esta lista diz o que ela procura. Separar
+    # as duas é o que permite a mesma instalação vigiar queda no arquivo e
+    # aglomeração no saguão sem obrigar as duas a tudo — e sem cobrar da CPU
+    # um cálculo que naquele lugar não significa nada.
+    #
+    # Lista vazia com a análise ligada é análise que não procura nada, e é
+    # assim de propósito: o padrão de quem liga está em `vision.ACOES_PADRAO`,
+    # mas desmarcar tudo é uma escolha legítima de quem configura.
+    acoes_ativas: Mapped[list] = mapped_column(JSONPortatil, default=list)
+    # Toda pessoa nesta câmera vira alerta, identificada ou não.
+    #
+    # É o oposto do reconhecimento facial, que alerta sobre *quem* entrou:
+    # aqui o que importa é o lugar, e autorização não entra na conta. Sala de
+    # reunião fora de hora, datacenter, almoxarifado — presença ali já é o
+    # fato a registrar, e dizer "mas essa pessoa tem acesso" é julgamento de
+    # quem revisa, não do detector.
+    #
+    # Desligado por padrão: ligado numa sala de trabalho, onde há gente
+    # sentada o dia inteiro, isso vira uma enxurrada que some com os alertas
+    # que importam.
+    alerta_presenca: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Janela em que circular aqui é normal, em hora de parede ("HH:MM"). Fora
+    # dela, a ação `fora_de_horario` acusa quem aparecer.
+    #
+    # Por câmera, e não só no sistema, porque "horário não permitido" é uma
+    # propriedade do lugar: a portaria tem gente a noite inteira, o
+    # almoxarifado não deveria ter ninguém depois das 18h, e o datacenter não
+    # deveria ter ninguém nunca. Uma janela única para o parque obrigaria as
+    # três a mentir.
+    #
+    # Nulo é "usa a do sistema" (`ACAO_HORARIO_INICIO`/`FIM`) — assim mudar o
+    # padrão vale para quem não quis decidir, sem passar por cima de quem quis.
+    # Início igual ao fim é janela de 24 h: tudo permitido, nada acusa.
+    horario_inicio: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+    horario_fim: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+
+    # Esta câmera alcança via, pátio ou garagem? Desligado, carro, moto e
+    # bicicleta são ignorados nela — num hall de andar eles só podem vir da
+    # janela, e o registro diria que havia um carro dentro da sala.
+    # Padrão desligado: o parque é interno, e a exceção é quem vê veículo.
+    detecta_veiculo: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Bagagem — mochila, bolsa, mala. Desligado, porque numa câmera de teto o
+    # que tem essa silhueta é saco de lixo e caixa de papelão: em seis semanas
+    # vieram 15 registros e nenhum era bagagem. Ligue onde bagagem é o assunto
+    # — revista de entrada, guarda-volumes, esteira.
+    detecta_bagagem: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Animal. Desligado porque o COCO não tem rótulo para pessoa agachada ou de
+    # costas, e o modelo resolve a dúvida escolhendo o animal mais parecido em
+    # silhueta: das 10 detecções que chegaram ao registro, as 10 eram pessoas.
+    # Ligue em pátio, perímetro ou via — onde animal solto é ocorrência.
+    detecta_animal: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Capacete e arma de fogo, que vêm de detectores próprios e não do YOLO do
+    # parque. Desligados por padrão: cada um custa uma passada a mais sobre o
+    # quadro, e o orçamento de CPU deste parque já é apertado.
+    detecta_capacete: Mapped[bool] = mapped_column(Boolean, default=False)
+    detecta_arma: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Quantas pessoas juntas são aglomeração *aqui*. Por câmera pelo mesmo
+    # motivo do horário: é propriedade do lugar. Oito pessoas num corredor de
+    # passagem é ocorrência; na Produção, onde treze trabalham, é terça-feira.
+    # Um número único para o parque obrigaria uma das duas a mentir.
+    #
+    # Nulo é "usa o do sistema" (`ACAO_AGLOMERACAO_N`).
+    limite_aglomeracao: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     limiar_facial: Mapped[float] = mapped_column(Float, default=settings.FACE_THRESHOLD)
     limiar_objeto: Mapped[float] = mapped_column(Float, default=settings.OBJECT_THRESHOLD)
@@ -289,9 +389,9 @@ class Pessoa(Base):
     rg: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
 
     status: Mapped[StatusPessoa] = mapped_column(
-        Enum(StatusPessoa, name="status_pessoa_enum"), default=StatusPessoa.CIDADAO, index=True
+        Enum(StatusPessoa, name="status_pessoa_enum"), default=StatusPessoa.VISITANTE, index=True
     )
-    mandado: Mapped[str] = mapped_column(String(64), default="")
+    restricao: Mapped[str] = mapped_column(String(64), default="")
     tipificacao: Mapped[str] = mapped_column(String(200), default="")
     orgao_expedidor: Mapped[str] = mapped_column(String(160), default="")
     unidade: Mapped[str] = mapped_column(String(120), default="")
@@ -338,6 +438,16 @@ class AmostraFacial(Base):
     embedding: Mapped[list] = mapped_column(Vetor(settings.EMBEDDING_DIM))
     qualidade: Mapped[float] = mapped_column(Float, default=0.0)
     origem: Mapped[str] = mapped_column(String(32), default="cadastro")  # cadastro | captura
+    # De qual câmera veio a captura que virou esta amostra; nulo na foto de
+    # cadastro. A busca 1:N compara contra cada amostra e fica com a melhor,
+    # então uma amostra por ângulo é o que faz a pessoa ser reconhecida fora
+    # da câmera onde foi cadastrada. Guardar a origem é o que permite saber
+    # quais ângulos o template já cobre — e aplicar cota por câmera, sem a
+    # qual a câmera movimentada enche o cadastro sozinha e as outras seguem
+    # descobertas.
+    camera_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
     pessoa: Mapped[Pessoa] = relationship(back_populates="amostras_rel")
@@ -362,6 +472,13 @@ class Deteccao(Base):
     )
     similaridade: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     limiar_aplicado: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Quem o motor apontou em primeiro quando a similaridade não alcançou o
+    # limiar. Não é identificação, e por isso não é `pessoa_id`: é o palpite
+    # que a fila de conferência mostra ao operador. Confirmado por ele, a
+    # captura vira amostra e aí sim `pessoa_id` é preenchido.
+    pessoa_sugerida_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("pessoas.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     qualidade_face: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # --- objeto / ação ---
@@ -392,7 +509,19 @@ class Deteccao(Base):
     expurgo_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True, index=True)
 
     camera: Mapped[Camera] = relationship(lazy="joined")
-    pessoa: Mapped[Optional[Pessoa]] = relationship(lazy="joined")
+    # `foreign_keys` explícito: esta tabela passou a apontar para `pessoas`
+    # por dois caminhos — quem foi identificado e quem foi apenas sugerido —,
+    # e sem dizer qual deles é o relacionamento o SQLAlchemy recusa o
+    # mapeamento inteiro, derrubando o sistema no arranque.
+    pessoa: Mapped[Optional[Pessoa]] = relationship(
+        lazy="joined", foreign_keys=[pessoa_id]
+    )
+    # `noload`: a sugestão só interessa à fila de conferência, que a busca
+    # explicitamente. Carregá-la junto de toda detecção seria um join a mais
+    # em todas as listagens, para um campo quase sempre nulo.
+    pessoa_sugerida: Mapped[Optional[Pessoa]] = relationship(
+        lazy="noload", foreign_keys=[pessoa_sugerida_id]
+    )
 
     __table_args__ = (
         Index("ix_deteccoes_tipo_data", "tipo", "ocorrido_em"),
@@ -419,6 +548,17 @@ class Alerta(Base):
     detalhe: Mapped[str] = mapped_column(Text, default="")
     severidade: Mapped[int] = mapped_column(Integer, default=3, index=True)
 
+    # Imagem do próprio alerta, quando ele não nasce de uma detecção.
+    #
+    # Alerta de sala reporta um *estado* — "a sala ficou vazia" — e não há
+    # detecção para anexar: ninguém é fotografado indo embora. Antes disso a
+    # coluna CAPTURA ficava em branco e o operador tinha de ir procurar a
+    # imagem em outro lugar, que é o oposto do que um alerta serve.
+    #
+    # Também cobre a entrada: o registro de detecção é deduplicado por 30
+    # minutos, então a mesma pessoa voltando à sala gerava alerta sem captura.
+    snapshot_key: Mapped[str] = mapped_column(String(200), default="")
+
     status: Mapped[StatusAlerta] = mapped_column(
         Enum(StatusAlerta, name="status_alerta_enum"), default=StatusAlerta.ABERTO, index=True
     )
@@ -431,6 +571,22 @@ class Alerta(Base):
 
     camera: Mapped[Camera] = relationship(lazy="joined")
     pessoa: Mapped[Optional[Pessoa]] = relationship(lazy="joined")
+    deteccao: Mapped[Optional["Deteccao"]] = relationship(lazy="joined")
+
+    @property
+    def deteccao_codigo(self) -> str:
+        """Código da captura que originou o alerta, para a tela buscar o recorte.
+
+        Sem ele a ficha do alerta descreve o que foi visto mas não mostra, e
+        quem tria decide no texto. O vínculo é `ON DELETE SET NULL`: captura
+        expurgada deixa o alerta sem imagem, não sem sentido.
+        """
+        return self.deteccao.codigo if self.deteccao else ""
+
+    @property
+    def tem_imagem(self) -> bool:
+        """O alerta guarda imagem própria, independente de detecção."""
+        return bool(self.snapshot_key)
 
 
 # ======================================================================

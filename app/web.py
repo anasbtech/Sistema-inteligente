@@ -1,4 +1,4 @@
-"""Serve a interface e expõe os metadados que ela consome no boot.
+﻿"""Serve a interface e expõe os metadados que ela consome no boot.
 
 A interface é HTML/CSS/JS estático — sem build, sem npm. O FastAPI entrega os
 arquivos e o `/api/info` diz ao front-end em que modo o sistema está rodando.
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import RAIZ, settings
 from app.database import get_db
 from app.models import Alerta, Auditoria, Camera, Deteccao, Pessoa, StatusCamera, Usuario
+from app.services import extras
 
 FRONTEND = RAIZ / "frontend"
 router = APIRouter(tags=["Interface"])
@@ -68,7 +69,7 @@ async def info(db: AsyncSession = Depends(get_db)):
     operação, nada que identifique pessoa.
     """
     from app.services import face_engine, simulador
-    from app.services.vision import yolo_disponivel
+    from app.services.vision import CATALOGO_ACOES, detalhe_acao, yolo_disponivel
     from app.tipos import dialeto_suporta_vetor
 
     async def contar(modelo):
@@ -103,11 +104,44 @@ async def info(db: AsyncSession = Depends(get_db)):
             "device": settings.DEVICE,
             "retencao_dias": settings.RETENTION_DAYS_UNMATCHED,
             "mascarar_para": settings.mask_roles,
-            "watermark": settings.WATERMARK_EVIDENCE,
             "senha_expira_dias": settings.PASSWORD_EXPIRE_DAYS,
             "max_tentativas": settings.MAX_LOGIN_ATTEMPTS,
             "sessao_minutos": settings.ACCESS_TOKEN_MINUTES,
         },
+        # O catálogo de ações vai inteiro, com os indisponíveis e o motivo.
+        # A tela precisa poder mostrar "Fogo" na lista e dizer, ali mesmo, que
+        # não há detector — esconder a opção faria o operador procurá-la.
+        "acoes": [
+            {
+                "codigo": f.codigo,
+                "rotulo": f.rotulo,
+                "severidade": f.severidade,
+                "disponivel": f.disponivel,
+                "indisponivel": f.indisponivel,
+                # Em que condição ela dispara, com os números que estão
+                # valendo. É o que permite decidir antes de ligar.
+                "detalhe": detalhe_acao(f.codigo),
+                "exige_continua": f.exige_continua,
+                "exige_zona": f.exige_zona,
+                "exige_bagagem": f.exige_bagagem,
+            }
+            for f in CATALOGO_ACOES
+        ],
+        # A janela que vale para a câmera que não definiu a sua. A tela
+        # precisa dela para dizer, no campo em branco, o que vai acontecer —
+        # senão "--:--" parece ação sem horário nenhum.
+        "horario_padrao": {
+            "inicio": settings.ACAO_HORARIO_INICIO,
+            "fim": settings.ACAO_HORARIO_FIM,
+        },
+        # Pelo mesmo motivo: no campo em branco a tela precisa dizer quantas
+        # pessoas vão disparar o alerta, senão o vazio parece "sem limite".
+        "aglomeracao_padrao": settings.ACAO_AGLOMERACAO_N,
+        # Capacete e arma de fogo dependem de um modelo que não vem embarcado.
+        # A tela precisa saber disso para não oferecer uma chave que não liga
+        # nada — e para dizer o que falta, em vez de deixar o operador ligar e
+        # esperar por um registro que nunca vem.
+        "detectores_extras": extras.disponiveis(),
         "estatisticas": {
             "cameras": cameras,
             "cameras_online": online,

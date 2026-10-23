@@ -149,6 +149,127 @@ def test_desmarcada_nao_consome_o_cooldown():
     assert [e.classe for e in _disparar_aglomeracao(analisador)] == ["aglomeracao"]
 
 
+# ----------------------------------------------------------------------
+# Aglomeração: quantos, quão juntos, por quanto tempo
+# ----------------------------------------------------------------------
+def test_ajuntamento_de_um_instante_nao_alerta():
+    """O que se desfaz sozinho não é aglomeração.
+
+    Fila que se forma e anda, gente que para para se cumprimentar, saída de
+    reunião. Sem a espera, cada um deles é um alerta.
+    """
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"aglomeracao"}
+    objetos = _cena_aglomerada()
+    assert analisador.atualizar(objetos, 1280, 720, agora=1000.0) == []
+    assert analisador.atualizar(objetos, 1280, 720, agora=1005.0) == [], (
+        "cinco segundos ainda são menos que a espera configurada")
+
+
+def test_cada_camera_tem_o_seu_limite():
+    """Oito num corredor é ocorrência; na Produção, onde treze trabalham, não.
+
+    Um número único para o parque obrigaria uma das duas a mentir — por isso
+    o limite é da câmera, e o do sistema só vale para quem não quis decidir.
+    """
+    cinco = _cena_aglomerada(5)
+
+    padrao = AnalisadorAcoes()
+    padrao.acoes_ativas = {"aglomeracao"}
+    padrao.atualizar(cinco, 1280, 720, agora=1000.0)
+    assert padrao.atualizar(cinco, 1280, 720, agora=1011.0) == [], (
+        "cinco pessoas estão abaixo do limite do sistema")
+
+    apertada = AnalisadorAcoes()
+    apertada.acoes_ativas = {"aglomeracao"}
+    apertada.n_aglomeracao = 4
+    apertada.atualizar(cinco, 1280, 720, agora=1000.0)
+    eventos = apertada.atualizar(cinco, 1280, 720, agora=1011.0)
+    assert [e.classe for e in eventos] == ["aglomeracao"]
+    assert eventos[0].envolvidos == 5
+
+
+def test_gente_espalhada_pela_sala_nao_e_aglomeracao():
+    """Conta quem está *junto*, não quem está em cena.
+
+    Nove pessoas numa grade bem separada passam do limite pelo total e não
+    formam agrupamento nenhum. É a distinção que torna a ação utilizável numa
+    sala que trabalha cheia: pelo total, a Produção seria alerta todo dia.
+    """
+    espalhadas = []
+    for i, x in enumerate((192, 576, 960)):
+        for j, y in enumerate((144, 360, 576)):
+            espalhadas.append(ObjetoDetectado(
+                "pessoa", 0.9, (x, y, x + 40, y + 110), track_id=i * 3 + j))
+
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"aglomeracao"}
+    assert len(espalhadas) >= analisador.n_aglomeracao, "o total passa do limite"
+    analisador.atualizar(espalhadas, 1280, 720, agora=1000.0)
+    assert analisador.atualizar(espalhadas, 1280, 720, agora=1011.0) == []
+
+
+def test_duas_leituras_do_mesmo_corpo_nao_contam_duas_pessoas():
+    """A contagem herda a fusão de caixas, e é dela que depende.
+
+    Oito pessoas das quais metade veio marcada duas vezes são quatro pessoas.
+    Sem desfazer a duplicata antes de contar, a aglomeração nasceria de gente
+    que não está lá.
+    """
+    from app.services.vision import fundir_sobrepostas
+
+    gente, duplicatas = [], []
+    for i in range(4):
+        x = 500 + i * 46
+        corpo = ObjetoDetectado("pessoa", 0.90, (x, 400, x + 40, 520), i)
+        gente.append(corpo)
+        # Tronco marcado dentro do corpo inteiro — a duplicata real do
+        # Service Desk, que o IoU não pega e a contenção pega.
+        duplicatas.append(ObjetoDetectado("pessoa", 0.21,
+                                          (x + 8, 400, x + 36, 505), 90 + i))
+
+    assert len(gente + duplicatas) >= 8, "sem fundir, passaria do limite"
+    assert len(fundir_sobrepostas(gente + duplicatas)) == 4
+
+
+def test_a_duracao_relatada_e_o_tempo_real_do_ajuntamento():
+    """O alerta diz há quanto tempo aquilo está acontecendo.
+
+    O represamento e o início do fato são perguntas diferentes, e dividiam a
+    mesma variável: somar o cooldown ao início fazia a duração do segundo
+    alerta nascer de um instante que nunca existiu.
+    """
+    from app.config import settings
+
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"aglomeracao"}
+    objetos = _cena_aglomerada()
+    t = 1000.0
+    analisador.atualizar(objetos, 1280, 720, agora=t)
+    primeiro = analisador.atualizar(objetos, 1280, 720, agora=t + 11.0)
+    assert primeiro[0].duracao_s == 11
+
+    # Mesmo ajuntamento, depois do represamento: segue sendo o mesmo fato,
+    # e a duração conta desde que ele começou.
+    adiante = t + settings.ACAO_COOLDOWN_S + 20.0
+    assert analisador.atualizar(objetos, 1280, 720, agora=t + 30.0) == [], (
+        "dentro do cooldown o mesmo ajuntamento não volta ao painel")
+    segundo = analisador.atualizar(objetos, 1280, 720, agora=adiante)
+    assert [e.classe for e in segundo] == ["aglomeracao"]
+    assert segundo[0].duracao_s == int(adiante - t)
+
+
+def test_ajuntamento_que_se_desfaz_recomeca_a_contagem():
+    """Esvaziar e voltar a juntar é outro fato, e começa do zero."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"aglomeracao"}
+    objetos = _cena_aglomerada()
+    analisador.atualizar(objetos, 1280, 720, agora=1000.0)
+    analisador.atualizar(_cena_aglomerada(2), 1280, 720, agora=1005.0)
+    assert analisador.atualizar(objetos, 1280, 720, agora=1011.0) == [], (
+        "a espera recomeça quando o agrupamento se desfaz")
+
+
 def test_acoes_validas_preserva_a_ordem_do_catalogo():
     assert acoes_validas(["aglomeracao", "corrida"]) == ["corrida", "aglomeracao"]
     assert acoes_validas(["nada"]) == []

@@ -1,4 +1,4 @@
-"""Contratos de entrada e saída da API (Pydantic v2)."""
+﻿"""Contratos de entrada e saída da API (Pydantic v2)."""
 from __future__ import annotations
 
 import re
@@ -8,7 +8,9 @@ from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.config import settings
 from app.models import Perfil, Sexo, StatusAlerta, StatusCamera, StatusPessoa, TipoDeteccao, TipoZona
+from app.services.vision import ACOES_PADRAO, FICHA_ACAO, acoes_validas
 
 SENHA_REGRAS = [
     (r".{10,}", "mínimo de 10 caracteres"),
@@ -54,14 +56,18 @@ class RecuperarIn(BaseModel):
     email: EmailStr
 
 
-class VerificarCodigoIn(BaseModel):
-    email: EmailStr
-    codigo: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+class VerificarLinkIn(BaseModel):
+    """O segredo que veio na URL do e-mail.
+
+    Não pede e-mail junto: o segredo já identifica o token, e por ele o
+    usuário. Exigir o endereço de novo só daria mais um campo para errar, sem
+    acrescentar segurança — quem tem o link tem o link.
+    """
+    token: str = Field(..., min_length=20, max_length=200)
 
 
 class RedefinirSenhaIn(BaseModel):
-    email: EmailStr
-    codigo: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    token: str = Field(..., min_length=20, max_length=200)
     nova_senha: str
 
     @field_validator("nova_senha")
@@ -110,7 +116,6 @@ class UsuarioUpdate(BaseModel):
     perfil: Optional[Perfil] = None
     unidade: Optional[str] = None
     telefone: Optional[str] = None
-    ativo: Optional[bool] = None
     mfa_ativo: Optional[bool] = None
     forcar_troca_senha: Optional[bool] = None
 
@@ -123,6 +128,7 @@ class UsuarioOut(ORMModel):
     perfil: Perfil
     unidade: str
     ativo: bool
+    excluido_em: Optional[datetime] = None
     mfa_ativo: bool
     ultimo_acesso: Optional[datetime]
     criado_em: datetime
@@ -157,6 +163,53 @@ class ZonaOut(ZonaIn, ORMModel):
     id: uuid.UUID
 
 
+def validar_hora(v: Optional[str]) -> Optional[str]:
+    """Aceita "HH:MM" de 24 horas, e só isso.
+
+    Vazio vira `None`, que é "sem janela própria, usa a do sistema" — assim
+    limpar o campo na tela devolve a câmera ao padrão, em vez de gravar uma
+    string vazia que depois seria lida como meia-noite.
+    """
+    if v is None:
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    partes = v.split(":")
+    if len(partes) != 2 or not all(p.isdigit() for p in partes):
+        raise ValueError("Use o formato HH:MM, por exemplo 19:00.")
+    h, m = int(partes[0]), int(partes[1])
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError("Hora fora do relógio de 24 horas.")
+    return f"{h:02d}:{m:02d}"
+
+
+def validar_acoes(v: Optional[List[str]]) -> Optional[List[str]]:
+    """Recusa o que o sistema não sabe emitir.
+
+    Guardar "Fogo" ligado numa câmera que não tem detector de fogo é prometer
+    vigilância que não acontece — e é pior que recusar, porque quem configurou
+    sai achando que está coberto. A recusa diz o motivo; o catálogo em
+    `vision.CATALOGO_ACOES` é quem o conhece.
+
+    Lista vazia passa: desligar tudo é uma escolha legítima.
+    """
+    if v is None:
+        return None
+    desconhecidas = [c for c in v if c not in FICHA_ACAO]
+    if desconhecidas:
+        raise ValueError("ação inexistente: " + ", ".join(sorted(desconhecidas)))
+    impossiveis = [c for c in v if not FICHA_ACAO[c].disponivel]
+    if impossiveis:
+        detalhe = "; ".join(f"{FICHA_ACAO[c].rotulo} — {FICHA_ACAO[c].indisponivel}"
+                            for c in sorted(impossiveis))
+        raise ValueError("ação sem detector no sistema: " + detalhe)
+    # Normaliza: sem repetição e na ordem do catálogo, que é a ordem em que a
+    # tela as mostra. Sem isto a mesma seleção gravava em ordens diferentes e
+    # a auditoria acusava alteração onde nada mudou.
+    return acoes_validas(v)
+
+
 class CameraBase(BaseModel):
     nome: str = Field(..., min_length=3, max_length=200)
     setor: str
@@ -178,11 +231,38 @@ class CameraBase(BaseModel):
     analitico_facial: bool = True
     analitico_objeto: bool = True
     analitico_acao: bool = False
+    acoes_ativas: List[str] = Field(default_factory=lambda: list(ACOES_PADRAO))
+    # Janela de horário permitido desta câmera; em branco, vale a do sistema.
+    horario_inicio: Optional[str] = None
+    horario_fim: Optional[str] = None
+    alerta_presenca: bool = False
+    detecta_veiculo: bool = False
+    detecta_bagagem: bool = False
+    detecta_animal: bool = False
+    detecta_capacete: bool = False
+    detecta_arma: bool = False
+    # Quantas pessoas juntas são aglomeração nesta câmera; em branco,
+    # vale o padrão do parque. Piso 2 porque uma pessoa sozinha não
+    # aglomera, e duas é a menor reunião possível.
+    limite_aglomeracao: Optional[int] = Field(None, ge=2, le=200)
     limiar_facial: float = Field(0.88, ge=0.5, le=1.0)
-    limiar_objeto: float = Field(0.65, ge=0.1, le=1.0)
+    # Casado com settings.OBJECT_THRESHOLD, e não com um número próprio: a
+    # câmera nascia em 0,65, valor em que — medido na Produção 02 — o modelo
+    # marcava só a pessoa da frente e deixava as três do fundo sem caixa.
+    limiar_objeto: float = Field(settings.OBJECT_THRESHOLD, ge=0.1, le=1.0)
     retencao_dias: int = 90
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+
+    @field_validator("acoes_ativas")
+    @classmethod
+    def _acoes(cls, v: List[str]) -> List[str]:
+        return validar_acoes(v) or []
+
+    @field_validator("horario_inicio", "horario_fim")
+    @classmethod
+    def _hora(cls, v: Optional[str]) -> Optional[str]:
+        return validar_hora(v)
 
 
 class CameraCreate(CameraBase):
@@ -191,8 +271,15 @@ class CameraCreate(CameraBase):
 
 
 class CameraUpdate(BaseModel):
+    """Edição parcial. As faixas repetem as de `CameraBase` de propósito.
+
+    Sem elas, o valor fora da faixa passava pela validação e só parava no
+    CHECK do banco — que devolve erro 500 e uma mensagem de SQL. O operador
+    via a tela recusar sem dizer o quê, e o log ganhava um traceback de
+    integridade onde cabia um campo marcado em vermelho.
+    """
     model_config = ConfigDict(extra="forbid")
-    nome: Optional[str] = None
+    nome: Optional[str] = Field(None, min_length=3, max_length=200)
     setor: Optional[str] = None
     cena: Optional[str] = None
     status: Optional[StatusCamera] = None
@@ -202,20 +289,41 @@ class CameraUpdate(BaseModel):
     fabricante: Optional[str] = None
     modelo: Optional[str] = None
     resolucao: Optional[str] = None
-    fps: Optional[int] = None
+    # ck_fps no banco é `> 0 AND <= 120`.
+    fps: Optional[int] = Field(None, ge=1, le=120)
     codec: Optional[str] = None
-    bitrate_kbps: Optional[int] = None
+    bitrate_kbps: Optional[int] = Field(None, ge=128, le=65536)
     ptz: Optional[bool] = None
     infravermelho: Optional[bool] = None
     analitico_facial: Optional[bool] = None
     analitico_objeto: Optional[bool] = None
     analitico_acao: Optional[bool] = None
+    acoes_ativas: Optional[List[str]] = None
+    horario_inicio: Optional[str] = None
+    horario_fim: Optional[str] = None
+    alerta_presenca: Optional[bool] = None
+    detecta_veiculo: Optional[bool] = None
+    detecta_bagagem: Optional[bool] = None
+    detecta_animal: Optional[bool] = None
+    detecta_capacete: Optional[bool] = None
+    detecta_arma: Optional[bool] = None
+    limite_aglomeracao: Optional[int] = Field(None, ge=2, le=200)
     limiar_facial: Optional[float] = Field(None, ge=0.5, le=1.0)
     limiar_objeto: Optional[float] = Field(None, ge=0.1, le=1.0)
-    retencao_dias: Optional[int] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    retencao_dias: Optional[int] = Field(None, ge=1, le=3650)
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
     zonas: Optional[List[ZonaIn]] = None
+
+    @field_validator("acoes_ativas")
+    @classmethod
+    def _acoes(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        return validar_acoes(v)
+
+    @field_validator("horario_inicio", "horario_fim")
+    @classmethod
+    def _hora(cls, v: Optional[str]) -> Optional[str]:
+        return validar_hora(v)
 
 
 class CameraOut(ORMModel):
@@ -238,6 +346,16 @@ class CameraOut(ORMModel):
     analitico_facial: bool
     analitico_objeto: bool
     analitico_acao: bool
+    acoes_ativas: List[str] = []
+    horario_inicio: Optional[str] = None
+    horario_fim: Optional[str] = None
+    alerta_presenca: bool = False
+    limite_aglomeracao: Optional[int] = None
+    detecta_veiculo: bool
+    detecta_bagagem: bool
+    detecta_animal: bool
+    detecta_capacete: bool
+    detecta_arma: bool
     limiar_facial: float
     limiar_objeto: float
     retencao_dias: int
@@ -262,23 +380,23 @@ class PessoaCreate(BaseModel):
     a ser emitido — o motor de reconhecimento jamais o infere da imagem."""
     nome: str = Field(..., min_length=5, max_length=200)
     sexo: Sexo
-    status: StatusPessoa = StatusPessoa.CIDADAO
+    status: StatusPessoa = StatusPessoa.VISITANTE
     alcunha: str = ""
     nascimento: Optional[date] = None
     cpf: Optional[str] = None
     rg: Optional[str] = None
-    mandado: str = ""
+    restricao: str = ""
     tipificacao: str = ""
     orgao_expedidor: str = ""
     unidade: str = ""
-    base_legal: str = "Segurança pública"
+    base_legal: str = "Controle de acesso predial"
     observacoes: str = ""
 
-    @field_validator("mandado")
+    @field_validator("restricao")
     @classmethod
-    def _mandado_obrigatorio(cls, v: str, info) -> str:
-        if info.data.get("status") == StatusPessoa.PROCURADO and not v.strip():
-            raise ValueError("Situação 'PROCURADO' exige o número do mandado judicial")
+    def _restricao_obrigatoria(cls, v: str, info) -> str:
+        if info.data.get("status") == StatusPessoa.RESTRITO and not v.strip():
+            raise ValueError("Situação 'RESTRITO' exige o motivo da restrição")
         return v
 
 
@@ -291,7 +409,7 @@ class PessoaUpdate(BaseModel):
     nascimento: Optional[date] = None
     cpf: Optional[str] = None
     rg: Optional[str] = None
-    mandado: Optional[str] = None
+    restricao: Optional[str] = None
     tipificacao: Optional[str] = None
     orgao_expedidor: Optional[str] = None
     unidade: Optional[str] = None
@@ -311,7 +429,7 @@ class PessoaOut(ORMModel):
     cpf: Optional[str]
     rg: Optional[str]
     status: StatusPessoa
-    mandado: str
+    restricao: str
     tipificacao: str
     orgao_expedidor: str
     unidade: str
@@ -401,6 +519,14 @@ class DeteccaoOut(ORMModel):
     hash_evidencia: str
     camera: Optional[CameraOut] = None
     pessoa: Optional[PessoaOut] = None
+    # Os alertas que este registro gerou, por código. Vai na ficha porque é o
+    # que impede de apagá-lo: sem isto, a tela só descobre o impedimento
+    # depois de o operador escrever o motivo e confirmar.
+    #
+    # São os códigos, e não só a contagem, porque a tela precisa *agir* sobre
+    # eles — encerrar não desfaz o vínculo, e o caminho que libera a exclusão é
+    # apagar o alerta.
+    alertas: List[str] = []
 
 
 class RevisaoIn(BaseModel):
@@ -420,6 +546,10 @@ class AlertaOut(ORMModel):
     resolucao: str
     disparado_em: datetime
     fechado_em: Optional[datetime]
+    deteccao_codigo: str = ""
+    # O alerta tem imagem própria? A tela usa isto para decidir de onde
+    # buscar a miniatura: da detecção que o gerou, ou do próprio alerta.
+    tem_imagem: bool = False
     camera: Optional[CameraOut] = None
     pessoa: Optional[PessoaOut] = None
 

@@ -397,6 +397,10 @@ class Inferencia:
         # Pelo mesmo motivo: a janela de horário é editável na ficha da câmera.
         analisador.horario_inicio = cam.horario_inicio
         analisador.horario_fim = cam.horario_fim
+        # Quantas pessoas juntas são aglomeração aqui. Nulo cai no padrão do
+        # parque — o mesmo acordo do horário.
+        analisador.n_aglomeracao = (cam.limite_aglomeracao
+                                    or settings.ACAO_AGLOMERACAO_N)
 
         try:
             eventos = analisador.atualizar(objetos, largura, altura,

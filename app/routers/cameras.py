@@ -1,4 +1,4 @@
-"""Câmeras: cadastro, configuração, zonas, PTZ e heartbeat do worker."""
+﻿"""Câmeras: cadastro, configuração, zonas, PTZ e heartbeat do worker."""
 from __future__ import annotations
 
 import uuid
@@ -16,6 +16,7 @@ from app.database import get_db
 from app.deps import exige
 from app.models import Camera, StatusCamera, Usuario, Zona
 from app.schemas import CameraCreate, CameraOut, CameraUpdate, PTZComando, ZonaIn
+from app.services.vision import FICHA_ACAO, janela_horario
 
 router = APIRouter(prefix="/cameras", tags=["Câmeras"])
 
@@ -56,6 +57,40 @@ async def _obter(db: AsyncSession, codigo: str) -> Camera:
     if cam is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Câmera '{codigo}' não encontrada.")
     return cam
+
+
+def _acoes_sem_efeito(cam: Camera) -> List[dict]:
+    """Ações ligadas nesta câmera que, do jeito que ela está, não disparam.
+
+    Ligar "Invasão de perímetro" sem desenhar a linha que define o perímetro
+    deixa a câmera anunciando uma vigilância que não exerce. O diagnóstico é
+    onde isso precisa aparecer — a configuração aceita, mas não cala.
+    """
+    tipos = {getattr(z.tipo, "value", z.tipo) for z in (cam.zonas or ())}
+    pendencias: List[dict] = []
+    for codigo in (cam.acoes_ativas or ()):
+        ficha = FICHA_ACAO.get(codigo)
+        if ficha is None:
+            continue
+        if ficha.exige_zona and ficha.exige_zona not in tipos:
+            pendencias.append({
+                "acao": codigo, "rotulo": ficha.rotulo,
+                "motivo": f"Depende de uma zona do tipo {ficha.exige_zona.lower()}, "
+                          f"e esta câmera não tem nenhuma.",
+            })
+        # Janela que começa onde termina são 24 h permitidas: a ação fica
+        # ligada e nunca pode disparar. É configuração válida — serve para
+        # deixar a ação armada e suspender a vigilância sem desmarcá-la — mas
+        # precisa aparecer, ou a ficha anuncia uma guarda que ninguém faz.
+        if codigo == "fora_de_horario":
+            ini, fim = janela_horario(cam.horario_inicio, cam.horario_fim)
+            if ini == fim:
+                pendencias.append({
+                    "acao": codigo, "rotulo": ficha.rotulo,
+                    "motivo": f"A janela permitida vai de {ini} a {fim} — 24 horas. "
+                              f"Nada fica fora dela, então a ação nunca dispara.",
+                })
+    return pendencias
 
 
 def _aplicar_zonas(cam: Camera, zonas: List[ZonaIn]) -> None:
@@ -99,9 +134,21 @@ async def listar(
     return [CameraOut.model_validate(c) for c in linhas]
 
 
+# Lugares por onde se passa, não onde alguém fica. A câmera existe neles e
+# continua precisando dizer onde está, mas ninguém é "do elevador": oferecê-los
+# no cadastro de pessoa só produz lotação que não quer dizer nada.
+SETORES_DE_PASSAGEM = {"Elevador", "Descanso"}
+
+
 @router.get("/setores", summary="Setores cadastrados")
-async def setores(db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(exige("live"))):
+async def setores(
+    lotacao: bool = Query(False, description="Só onde alguém pode ser lotado"),
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("live")),
+):
     linhas = (await db.execute(select(Camera.setor).distinct().order_by(Camera.setor))).scalars().all()
+    if lotacao:
+        linhas = [s for s in linhas if s not in SETORES_DE_PASSAGEM]
     return {"setores": list(linhas)}
 
 
@@ -138,7 +185,8 @@ async def criar(dados: CameraCreate, request: Request, db: AsyncSession = Depend
                           metadados={"setor": cam.setor, "analiticos": {
                               "facial": cam.analitico_facial,
                               "objeto": cam.analitico_objeto,
-                              "acao": cam.analitico_acao}})
+                              "acao": cam.analitico_acao,
+                              "acoes": list(cam.acoes_ativas or ())}})
     return await _resposta(db, cam)
 
 
@@ -245,6 +293,21 @@ async def saude(codigo: str, db: AsyncSession = Depends(get_db),
             "facial": cam.analitico_facial,
             "objeto": cam.analitico_objeto,
             "acao": cam.analitico_acao,
+            "acoes": list(cam.acoes_ativas or ()),
+            # A janela que está valendo aqui, já resolvida: o diagnóstico não
+            # deve obrigar quem lê a saber que nulo significa "a do sistema".
+            "horario_permitido": "{} às {}".format(*janela_horario(
+                cam.horario_inicio, cam.horario_fim)),
+            "horario_proprio": bool(cam.horario_inicio or cam.horario_fim),
+            # Também já resolvido: quem lê o diagnóstico quer o número que
+            # está valendo aqui, não "nulo, veja o padrão do sistema".
+            "limite_aglomeracao": (cam.limite_aglomeracao
+                                   or settings.ACAO_AGLOMERACAO_N),
+            "limite_proprio": cam.limite_aglomeracao is not None,
         },
+        # O que está ligado mas não pode disparar aqui. Ação que depende de
+        # zona sem zona desenhada é vigilância anunciada e não exercida, e o
+        # diagnóstico da câmera é onde isso tem de aparecer.
+        "acoes_sem_efeito": _acoes_sem_efeito(cam),
         "zonas": len(cam.zonas),
     }

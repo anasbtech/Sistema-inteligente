@@ -48,6 +48,81 @@ def checar_dependencias() -> None:
         sys.exit(1)
 
 
+# Colunas acrescentadas ao modelo depois que este banco já existia.
+#
+# `create_all` cria tabela que falta, mas não coluna que falta: num banco já
+# povoado ele passa batido e o sistema sobe para quebrar na primeira consulta.
+# Como aqui não há Alembic, a costura é esta — idempotente, uma linha por
+# coluna, com o DEFAULT que o banco antigo deve assumir.
+#
+# Manter em ordem cronológica, e nunca remover uma linha: um parque que ficou
+# parado dois releases precisa passar por todas elas.
+def _colunas_novas() -> list[tuple[str, str, str, str | None]]:
+    """tabela, coluna, DDL, e o UPDATE que arruma as linhas que já existiam."""
+    import json
+
+    from app.services.vision import ACOES_PADRAO
+
+    # A câmera que já tinha análise de ação ligada vigiava tudo que o sistema
+    # sabe detectar — era o que o interruptor significava antes de existir
+    # seleção. Herdar essa lista mantém o parque fazendo exatamente o que
+    # fazia ontem; deixar em branco apagaria vigilância sem ninguém pedir.
+    padrao = json.dumps(list(ACOES_PADRAO))
+    return [
+        ("cameras", "acoes_ativas", "JSON DEFAULT '[]'",
+         f"UPDATE cameras SET acoes_ativas = '{padrao}'"),
+        # Desligado em todas: ligar é decisão de quem conhece a sala.
+        ("cameras", "alerta_presenca", "BOOLEAN DEFAULT 0", None),
+        ("alertas", "snapshot_key", "VARCHAR(200) DEFAULT ''", None),
+        # Nulas de propósito: câmera sem janela própria segue a do sistema, e
+        # preencher todas com o padrão de hoje congelaria esse padrão nelas.
+        ("cameras", "horario_inicio", "VARCHAR(5)", None),
+        ("cameras", "horario_fim", "VARCHAR(5)", None),
+        # Classes que a câmera precisa pedir. Todas nascem desligadas, mesmo
+        # em parque já instalado: ligá-las sozinhas devolveria ao registro o
+        # ruído que motivou tirá-las, e em 26 câmeras ninguém notaria a tempo.
+        ("cameras", "detecta_bagagem", "BOOLEAN DEFAULT 0", None),
+        ("cameras", "detecta_animal", "BOOLEAN DEFAULT 0", None),
+        ("cameras", "detecta_capacete", "BOOLEAN DEFAULT 0", None),
+        ("cameras", "detecta_arma", "BOOLEAN DEFAULT 0", None),
+        # Nulas nas que já existiam, e é a resposta certa: não há como saber
+        # de que câmera veio uma amostra cadastrada antes desta coluna, e
+        # chutar uma falsearia a cobertura que a cota vai consultar.
+        ("amostras_faciais", "camera_id", "CHAR(36)", None),
+        ("deteccoes", "pessoa_sugerida_id", "CHAR(36)", None),
+        # Nula pelo mesmo motivo do horário: câmera sem limite próprio segue
+        # o do sistema, e preencher todas com o padrão de hoje o congelaria
+        # nelas — mudá-lo depois deixaria de valer justamente para quem nunca
+        # quis decidir.
+        ("cameras", "limite_aglomeracao", "INTEGER", None),
+    ]
+
+
+async def acrescentar_colunas(conn) -> int:
+    """Põe no banco as colunas que o modelo ganhou depois dele. Idempotente."""
+    from sqlalchemy import inspect, text
+
+    def existentes(sync_conn, tabela: str) -> set[str]:
+        inspetor = inspect(sync_conn)
+        if tabela not in inspetor.get_table_names():
+            return set()
+        return {c["name"] for c in inspetor.get_columns(tabela)}
+
+    acrescentadas = 0
+    for tabela, coluna, ddl, preenchimento in _colunas_novas():
+        colunas = await conn.run_sync(existentes, tabela)
+        # Tabela inexistente não é caso de ALTER: o `create_all` logo acima já
+        # a teria criado com a coluna. Coluna presente, idem — é o caminho de
+        # todo arranque depois do primeiro.
+        if not colunas or coluna in colunas:
+            continue
+        await conn.execute(text(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {ddl}"))
+        if preenchimento:
+            await conn.execute(text(preenchimento))
+        acrescentadas += 1
+    return acrescentadas
+
+
 async def preparar_banco(reset: bool) -> bool:
     """Cria o schema e semeia. Devolve True se semeou agora."""
     from sqlalchemy import func, select
@@ -69,7 +144,8 @@ async def preparar_banco(reset: bool) -> bool:
             from sqlalchemy import text
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
-    print(f"  {VERDE}✓{FIM} Schema pronto")
+        novas = await acrescentar_colunas(conn)
+    print(f"  {VERDE}✓{FIM} Schema pronto" + (f" ({novas} coluna(s) acrescentada(s))" if novas else ""))
 
     async with db_context() as db:
         ja_tem = int((await db.execute(select(func.count()).select_from(Usuario))).scalar_one())
@@ -116,6 +192,51 @@ async def _contas_de_demonstracao() -> list[tuple[str, str, str]]:
         )
     await engine.dispose()
     return [c for c in DEMONSTRACAO if c[0] in vivos]
+
+
+def sockets_do_laco_local(host: str, porta: int):
+    """Escuta nos **dois** laços locais: `::1` e `127.0.0.1`.
+
+    Medido nesta máquina: `localhost` resolve para `::1` antes de `127.0.0.1`,
+    e com o servidor só em IPv4 cada conexão nova pagava **2,057 s** esperando
+    o IPv6 ser recusado antes de tentar o IPv4. O servidor respondia em 20 ms;
+    os dois segundos eram inteiros de handshake.
+
+    O estrago aparecia longe da causa: a ficha biométrica dispara duas
+    chamadas em paralelo e só desenha quando as duas voltam, então ela ficava
+    no "carregando" para sempre; e salvar uma câmera estourava a paciência do
+    navegador antes de a requisição sair. Os dois chegaram como "não abre" e
+    "não salva", que não se parecem com um problema de rede.
+
+    Continua restrito ao laço local — nada é exposto na rede. Host diferente
+    de loopback devolve `None`, e aí quem resolve é o uvicorn, como antes.
+    """
+    import socket
+
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        return None
+
+    socks = []
+    for familia, endereco in ((socket.AF_INET6, "::1"), (socket.AF_INET, "127.0.0.1")):
+        try:
+            s = socket.socket(familia, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if familia == socket.AF_INET6:
+                # Um soquete por família: sem isto, no Linux o soquete IPv6
+                # aceitaria IPv4 mapeado e o bind seguinte falharia.
+                s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            s.bind((endereco, porta))
+            s.listen(2048)
+            s.set_inheritable(True)
+            socks.append(s)
+        except OSError:
+            # Máquina sem IPv6, ou aquele laço já ocupado. Seguir com o que
+            # deu certo é melhor que não subir: o pior caso é o de hoje.
+            continue
+
+    if not socks:
+        return None
+    return socks
 
 
 def abrir_navegador(url: str, atraso: float = 2.0) -> None:
@@ -266,13 +387,23 @@ def main() -> None:
             abrir_navegador(url)
 
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=args.host, port=args.porta,
-        reload=args.recarregar,
-        log_level="warning",       # o ciclo de vida já registra o essencial
-        access_log=False,
-    )
+
+    socks = sockets_do_laco_local(args.host, args.porta) if not args.recarregar else None
+    if socks:
+        config = uvicorn.Config(
+            "app.main:app",
+            log_level="warning",   # o ciclo de vida já registra o essencial
+            access_log=False,
+        )
+        uvicorn.Server(config).run(sockets=socks)
+    else:
+        uvicorn.run(
+            "app.main:app",
+            host=args.host, port=args.porta,
+            reload=args.recarregar,
+            log_level="warning",
+            access_log=False,
+        )
 
 
 if __name__ == "__main__":

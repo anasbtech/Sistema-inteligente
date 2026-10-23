@@ -1,4 +1,4 @@
-/* ==========================================================
+﻿/* ==========================================================
    SEGURANÇA — Telas operacionais: painel, mosaico ao vivo e câmeras
    ========================================================== */
 'use strict';
@@ -50,7 +50,8 @@ async function renderPainel(alvo){
     API.resumoDeteccoes({desde: inicio.toISOString(), ate: fim.toISOString()}),
     API.pode('alerts') ? API.resumoAlertas() : Promise.resolve({}),
     API.pode('biometrics') ? API.esquemaIds() : Promise.resolve({prefixos:{}}),
-    API.deteccoes({tipo:'FACIAL', apenas_match:true, por_pagina:6}),
+    // Rosto ou corpo: os 6 mais recentes de ambos. O tipo aparece em d.tipo.
+    API.deteccoes({apenas_match:true, por_pagina:6}),
     API.pode('alerts') ? API.alertas({status:'ABERTO', por_pagina:6}) : Promise.resolve({itens:[]})
   ]);
 
@@ -130,16 +131,25 @@ async function renderPainel(alvo){
       <div class="panel-hd"><h3>Composição</h3><span class="sub">${rotuloPeriodo}</span></div>
       <div class="panel-bd" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center">
         ${donut([
-          {v:obj, cor:'var(--green)'}, {v:fac, cor:'var(--acc)'}, {v:act, cor:'var(--violet)'}
+          {v:obj, cor:'var(--green)', nome:'Objetos'},
+          {v:fac, cor:'var(--acc)',   nome:'Facial'},
+          {v:act, cor:'var(--violet)', nome:'Ações'}
         ], {centro: fmtNum(total), sub:'EVENTOS'})}
-        <div style="display:flex;flex-direction:column;gap:9px;min-width:130px">
+        <div style="display:flex;flex-direction:column;gap:9px;min-width:146px">
           ${[['Objetos',obj,'var(--green)'],['Facial',fac,'var(--acc)'],['Ações',act,'var(--violet)']].map(([k,v,c]) => `
             <div style="display:flex;align-items:center;gap:8px">
               <i style="width:9px;height:9px;border-radius:2px;background:${c};flex:none"></i>
               <span style="flex:1;font-size:12.5px;color:var(--txt-2)">${k}</span>
               <b class="mono" style="font-size:13px">${fmtNum(v)}</b>
-              <span class="mono" style="font-size:10.5px;color:var(--txt-4);width:38px;text-align:right">${total ? Math.round(v/total*100) : 0}%</span>
+              <span class="mono" style="font-size:10.5px;color:var(--txt-4);width:46px;text-align:right">${pctCurto(v, total)}</span>
             </div>`).join('')}
+          <!-- O que a rosca não diz sozinha: das 1.207 leituras do dia, quantas
+               foram comportamento e não só "a câmera viu alguém". É o número
+               que decide se a vigilância rendeu alguma coisa. -->
+          <div class="comp-destaque">
+            <span>Eventos de comportamento</span>
+            <b class="mono">${fmtNum(act)}</b>
+          </div>
         </div>
       </div>
     </div>
@@ -181,7 +191,7 @@ async function renderPainel(alvo){
               <div class="cnt">${fmtNum(p.registros || 0)} registros</div></div>`;
           }).join('')}
         </div>
-        <div class="note">${ico('info',15)}<div>O sexo é atributo <b>do cadastro</b>, informado no registro da pessoa — nunca inferido pelo modelo a partir da imagem. Por isso o prefixo do ID é estável e não muda entre capturas.</div></div>
+        <div class="note">${ico('info',15)}<div>O sexo é atributo <b>do cadastro</b>, informado no registro da pessoa — nunca inferido pelo modelo a partir da imagem. O identificador não muda entre capturas, exceto na saída de BIO-N: quem entrou sem identificação recebe o prefixo definitivo quando a pessoa for cadastrada.</div></div>
       </div>
     </div>
   </div>
@@ -216,20 +226,26 @@ async function renderPainel(alvo){
   $$('#periodoAtalhos button').forEach(b => b.onclick = () =>
     aplicarPeriodo(diasAtras({hoje:0, '7d':6, '30d':29}[b.dataset.atalho]), hojeStr));
 
-  // Identificações recentes
+  // Identificações recentes (rosto ou corpo)
   const itens = ultimas.itens || [];
   $('#dashFacial').innerHTML = itens.length ? `<div class="rank">${itens.map(d => {
     const p = d.pessoa, st = STATUS_PESSOA[p.status] || STATUS_PESSOA.CIDADAO;
+    const ehRosto = d.tipo === 'FACIAL';
+    // Rosto traz similaridade; corpo, confiança. Mostrar qual está disponível.
+    const metrica = ehRosto ? (d.similaridade ? pct100(d.similaridade) : '—')
+                            : (d.confianca ? pct100(d.confianca) : '—');
     return `<div class="rank-row clickable" data-det="${esc(d.codigo)}" style="cursor:pointer">
-      <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="38" height="38"></canvas>
+      ${ehRosto ? `<canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="38" height="38"></canvas>`
+                : `<canvas data-snap="${snapAttr(d)}" width="38" height="48"></canvas>`}
       <div class="rank-bd"><b>${esc(p.nome)}</b>
         <span class="sub">${esc(p.id_biometrico)} · ${esc((d.camera ? d.camera.nome : '').slice(0,26))}</span></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        <span class="chip ${st.cls}">${esc(st.lbl)}</span>
-        <span class="mono" style="font-size:10.5px;color:var(--txt-3)">${relTime(d.ocorrido_em)} · ${pct100(d.similaridade)}</span>
+        <span class="chip" style="font-size:9.5px;padding:3px 6px">${ehRosto ? 'Rosto' : 'Corpo'}</span>
+        <span class="mono" style="font-size:10.5px;color:var(--txt-3)">${relTime(d.ocorrido_em)} · ${metrica}</span>
       </div></div>`;
   }).join('')}</div>` : vazio('face','Nenhuma identificação positiva recente.');
   pintarFaces($('#dashFacial'));
+  pintarSnaps($('#dashFacial'));
   $$('#dashFacial .rank-row').forEach(r => r.onclick = () => abrirDeteccao(r.dataset.det));
 
   // Alertas prioritários
@@ -285,7 +301,13 @@ async function renderAoVivo(alvo){
   </div>`;
 
   $$('#layoutSeg button').forEach(b => b.onclick = () => {
-    APP.mosaico = +b.dataset.n; APP.paginaMosaico = 0; irPara('live');
+    APP.mosaico = +b.dataset.n; APP.paginaMosaico = 0;
+    // Trocar o arranjo sem remontar a tela. Remontar substituiria a casca, e
+    // em tela cheia é ela que o navegador está exibindo: a pessoa cairia fora
+    // da parede justamente ao usar o controle que existe para não precisar
+    // sair. `montarMosaico` já reescreve a grade a partir de `APP.mosaico`.
+    $$('#layoutSeg button').forEach(x => x.classList.toggle('on', x === b));
+    montarMosaico();
   });
   $('#pgPrev').onclick = () => { if(APP.paginaMosaico > 0){ APP.paginaMosaico--; montarMosaico(); } };
   $('#pgNext').onclick = () => {
@@ -300,30 +322,50 @@ async function renderAoVivo(alvo){
     toast(APP.pausado ? 'Mosaico pausado' : 'Mosaico retomado',
       APP.pausado ? 'A gravação nos servidores continua ativa.' : '', 'info', 2600);
   };
-  // A casca inteira, e não só o mosaico: em tela cheia a barra tem de vir
-  // junto, senão não há como paginar nem trocar o arranjo sem sair.
-  $('#btnFs').onclick = () => {
-    const el = $('.live-shell');
-    if(!document.fullscreenElement){
-      if(el && el.requestFullscreen) el.requestFullscreen().catch(() =>
-        toast('Tela cheia indisponível', 'O navegador bloqueou a solicitação.', 'warn'));
-    }else document.exitFullscreen();
-  };
-  // Vale também para a saída pelo Esc, que não passa pelo botão.
-  let sumir = null;
-  document.onfullscreenchange = () => {
+  // Cobrir o monitor inteiro — abas, barra de endereço e barra de tarefas —
+  // só a API de tela cheia do navegador faz. Uma camada fixa da página chega
+  // às bordas da janela e para por aí, que foi o que se tentou antes.
+  //
+  // O preço é a faixa que o navegador exibe no alto anunciando o endereço do
+  // servidor. Ela é desenhada fora da página: nenhum código daqui a alcança,
+  // nem para reescrever, nem para esconder, nem para traduzir. Some sozinha
+  // em poucos segundos, e a nossa entra quando ela sai.
+  //
+  // A casca inteira, e não só o mosaico: na parede a barra tem de vir junto,
+  // senão não há como paginar nem trocar o arranjo sem sair.
+  let sumir = null, sumirAviso = null;
+
+  function definirParede(ativo){
     const shell = $('.live-shell');
     const barra = $('.live-bar');
-    const ativo = !!document.fullscreenElement;
     if(shell) shell.classList.toggle('wall', ativo);
     const b = $('#btnFs');
     if(b) b.innerHTML = `${ico('expand',13)} ${ativo ? 'Sair' : 'Tela cheia'}`;
 
     clearTimeout(sumir);
+    clearTimeout(sumirAviso);
+    const aviso = $('.fs-aviso');
+    if(aviso) aviso.classList.remove('aparece');
     if(!ativo){
       if(barra) barra.classList.remove('aparece');
       if(shell) shell.onmousemove = null;
       return;
+    }
+    if(shell){
+      let a = aviso;
+      if(!a){
+        a = document.createElement('div');
+        a.className = 'fs-aviso';
+        shell.appendChild(a);
+      }
+      a.innerHTML = 'pressione <kbd>Esc</kbd> para sair';
+      // Entra depois que a faixa do navegador saiu. A dela dura perto de três
+      // segundos e meio; entrando antes disso, as duas se sobrepõem e a tela
+      // fica com dois avisos para a mesma coisa.
+      sumirAviso = setTimeout(() => {
+        a.classList.add('aparece');
+        sumirAviso = setTimeout(() => a.classList.remove('aparece'), 3400);
+      }, 4200);
     }
     // Faixa de 70px no alto: perto o bastante para ser intencional, longe o
     // bastante para não piscar a cada vez que o ponteiro cruza a primeira
@@ -333,14 +375,32 @@ async function renderAoVivo(alvo){
       const b2 = $('.live-bar');
       if(!b2) return;
       clearTimeout(sumir);
-      if(perto){ b2.classList.add('aparece'); return; }
+      if(perto){
+        // A barra ocupa a mesma faixa do aviso: quem chamou a barra já sabe
+        // sair, e dois painéis sobrepostos no topo não se leem.
+        clearTimeout(sumirAviso);
+        const a2 = $('.fs-aviso');
+        if(a2) a2.classList.remove('aparece');
+        b2.classList.add('aparece');
+        return;
+      }
       sumir = setTimeout(() => b2.classList.remove('aparece'), 1200);
     };
+  }
+
+  $('#btnFs').onclick = () => {
+    const el = $('.live-shell');
+    if(!document.fullscreenElement){
+      if(el && el.requestFullscreen) el.requestFullscreen({navigationUI: 'hide'}).catch(() =>
+        toast('Tela cheia indisponível', 'O navegador bloqueou a solicitação.', 'warn'));
+    }else document.exitFullscreen();
   };
+  // Quem manda no estado é o navegador, não o botão: o Esc sai da tela cheia
+  // sem passar por aqui, e sair pelo Esc tem de desfazer a parede igual.
+  document.onfullscreenchange = () => definirParede(!!document.fullscreenElement);
 
   montarMosaico();
   await carregarStreamDeEventos();
-  renderPTZ();
 }
 
 
@@ -395,8 +455,13 @@ function montarMosaico(){
     const cam = camPorCodigo(cv.dataset.feed);
     // Zona e ruído sobre uma célula pequena viram sujeira: quem decide é o
     // tamanho real da célula, e com o parque inteiro na tela ela é mínima.
+    // `hd` segue o tamanho real da célula, não o gosto: no 2×2 cada tile tem
+    // perto de 640px e o fluxo padrão já o cobre pixel a pixel. No 1×1 a
+    // célula é a tela inteira, e aí o padrão chegava como 640 de largura
+    // esticado ao dobro — e com o canvas limitado a 900px, esticado duas
+    // vezes. Pedir nativo só aqui custa um encode a mais, de um espectador.
     if(cam) FEED.register(cv, cam,
-      {zonas: celulas <= 4, noise: celulas <= 9});
+      {zonas: celulas <= 4, noise: celulas <= 9, hd: celulas === 1});
   });
   $$('#mosaic .tile[data-cam]').forEach(t => {
     t.onclick = () => {
@@ -409,6 +474,10 @@ function montarMosaico(){
   });
 
   if(!APP.pausado) FEED.start();
+  // A câmera em foco pode ter mudado acima. Em 1×1 ela muda a cada página,
+  // porque a anterior sai da tela — e sem este aviso o painel ao lado segue
+  // descrevendo uma câmera que ninguém está mais vendo.
+  renderPTZ();
 }
 
 
@@ -452,17 +521,10 @@ function renderPTZ(){
 
   $$('[data-ptz]', box).forEach(b => b.onclick = async () => {
     const cmd = b.dataset.ptz;
-    // Efeito imediato na cena sintética — o comando real vai por ONVIF.
-    const sc = FEED.scenes.get(c.codigo);
-    if(sc){
-      if(cmd === 'zoom_in')  sc.cfg = {...sc.cfg, hy: Math.max(.16, sc.cfg.hy - .03)};
-      if(cmd === 'zoom_out') sc.cfg = {...sc.cfg, hy: Math.min(.46, sc.cfg.hy + .03)};
-      if(cmd === 'home')     sc.cfg = SCENE_CFG[c.cena] || SCENE_CFG.rua;
-      if(cmd === 'left')  sc.agents.forEach(a => a.u += .12);
-      if(cmd === 'right') sc.agents.forEach(a => a.u -= .12);
-      if(cmd === 'up')    sc.agents.forEach(a => a.d = Math.max(.18, a.d - .05));
-      if(cmd === 'down')  sc.agents.forEach(a => a.d = Math.min(.94, a.d + .05));
-    }
+    // Sem resposta visual imediata: o movimento aparece quando a câmera
+    // entregar o próximo quadro. O que havia aqui era a cena sintética
+    // reagindo ao botão — um retorno que não vinha da câmera e dizia que o
+    // comando funcionou mesmo quando o ONVIF recusava.
     try{
       await API.ptz(c.codigo, cmd);
       toast('Comando PTZ', `${c.codigo} · ${cmd}`, 'info', 1800);
@@ -549,10 +611,12 @@ function renderOnce(canvas, cam){
     ctx.fillText(cam.status === 'OFFLINE' ? 'OFFLINE' : 'MANUTENÇÃO', w/2, h/2 + 4);
     return;
   }
-  const sc = FEED.scene(cam);
-  const agentes = drawScene(ctx, sc, w, h, {noite: FEED.noite});
-  drawBoxes(ctx, sc, agentes, w, h, w/640);
-  drawFx(ctx, sc, w, h, false);
+  // Preto até o quadro real chegar. Antes entrava aqui uma cena inventada —
+  // pessoas, carros e postes desenhados — e o operador via movimento onde a
+  // câmera não tinha entregue nada. Numa tela de videomonitoramento isso não
+  // é enfeite: é imagem que não veio de lente nenhuma.
+  ctx.fillStyle = '#0A0E15';
+  ctx.fillRect(0, 0, w, h);
 }
 
 let CAM_FILTRO = {q:'', setor:'', status:''};
@@ -623,7 +687,7 @@ async function renderCameras(alvo){
       if(!url) return;
       const img = new Image();
       img.onload = () => pintarAoVivo(cv.getContext('2d', {alpha: false}), img, cv.width, cv.height);
-      img.onerror = () => {};                    // câmera muda: fica a cena sintética
+      img.onerror = () => {};                    // câmera muda: a miniatura fica preta
       img.src = url;
     }));
     $$('#camTbl [data-ver]').forEach(b => b.onclick = e => { e.stopPropagation(); abrirCamera(b.dataset.ver); });
@@ -661,9 +725,145 @@ async function editarCamera(codigo){
     infravermelho:    c ? !!c.infravermelho : true,
     analitico_facial: c ? !!c.analitico_facial : true,
     analitico_objeto: c ? !!c.analitico_objeto : true,
-    analitico_acao:   c ? !!c.analitico_acao : false
+    analitico_acao:   c ? !!c.analitico_acao : false,
+    alerta_presenca:  c ? !!c.alerta_presenca : false,
+    detecta_veiculo:  c ? !!c.detecta_veiculo : false,
+    detecta_bagagem:  c ? !!c.detecta_bagagem : false,
+    detecta_animal:   c ? !!c.detecta_animal : false,
+    detecta_capacete: c ? !!c.detecta_capacete : false,
+    detecta_arma:     c ? !!c.detecta_arma : false
   };
   const chave = k => `<span class="sw ${flags[k]?'on':''}"></span>`;
+
+  /* Capacete e arma de fogo não existem no modelo do parque — dependem de um
+     detector próprio, apontado na configuração. Sem ele a chave não liga nada.
+
+     A linha aparece mesmo assim, e desligada, dizendo o que falta. Esconder a
+     opção mandaria o operador procurá-la; oferecê-la como se funcionasse o
+     faria ligar e esperar por um registro que nunca vem — que é exatamente o
+     que esta tela fazia com as classes do filtro. */
+  const linhaDetectorExtra = (k, titulo, ajuda) => {
+    const pronto = ((APP.cfg || {}).detectores_extras || {})[k];
+    const campo = 'detecta_' + k;
+    return `<div class="sw-row ${pronto ? '' : 'sem-detector'}"
+                 ${pronto ? `data-csw="${campo}"` : ''}>
+      <div class="bd"><b>${esc(titulo)}</b>
+        <span>${pronto ? esc(ajuda)
+                       : 'Sem detector instalado — nenhum registro desta classe será gerado'}</span></div>
+      ${pronto ? chave(campo) : '<span class="chip c-gray">indisponível</span>'}</div>`;
+  };
+
+  /* Ações que esta câmera vigia.
+
+     O catálogo vem do servidor (/api/info), e não de uma lista escrita aqui:
+     é ele que sabe quais ações têm detector por trás. Repetir a lista no
+     front faria a tela oferecer "Fogo" como se funcionasse no dia em que o
+     servidor mudasse de ideia.
+
+     Sem catálogo — /api/info fora do ar, versão antiga — o painel não é
+     desenhado e `acoes_ativas` não vai no salvamento: o servidor mantém o que
+     já tinha. Melhor não mexer do que gravar uma lista inventada. */
+  const catalogoAcoes = (APP.cfg && Array.isArray(APP.cfg.acoes)) ? APP.cfg.acoes : [];
+  const padraoAcoes = catalogoAcoes.filter(a => a.disponivel).map(a => a.codigo);
+  /* O que abre marcado é o que está ativo *agora*: câmera com a análise
+     desligada abre sem nada marcado, mesmo tendo lista gravada. Mostrar seis
+     ações marcadas sob um interruptor apagado era dizer duas coisas opostas
+     na mesma linha. A lista gravada não se perde — volta no religar. */
+  const guardadasAcoes = c ? (c.acoes_ativas || []) : padraoAcoes;
+  const acoesSel = new Set(flags.analitico_acao ? guardadasAcoes : []);
+
+  /* A ressalva de uma ação que funciona vira etiqueta curta; o motivo de uma
+     que não funciona continua por extenso, porque ali a frase é a informação. */
+  // O tipo da zona vem como valor de enum (LINHA, POLIGONO). Minusculizar
+  // não basta: "poligono" sem acento é erro de português na tela.
+  const NOME_ZONA = {LINHA: 'linha', POLIGONO: 'polígono'};
+  const marcasAcao = a => {
+    if(!a.disponivel) return [];
+    const m = [];
+    if(a.exige_zona) m.push(`exige zona ${NOME_ZONA[a.exige_zona] || a.exige_zona.toLowerCase()}`);
+    // Não é mais "não funciona": desde 15/10 a câmera recebe uma rajada de
+    // quadros quando há movimento em cena. Mas a rajada tem teto por volta,
+    // então é amostragem — e dizer "contínua" prometeria mais que isso.
+    if(a.exige_continua) m.push('por amostragem de movimento');
+    // A ação existe e o detector roda; o que pode faltar é a classe chegar
+    // até ele. Dito aqui, quem liga sabe que precisa ligar bagagem junto.
+    if(a.exige_bagagem && !flags.detecta_bagagem) m.push('exige bagagem ligada');
+    return m;
+  };
+
+  /* Guarda a seleção entre um desligar e o religar seguinte, dentro desta
+     janela. Desligar a análise para conferir outra coisa não pode custar a
+     escolha de ações que levou tempo para montar. */
+  let acoesLembradas = [...(guardadasAcoes.length ? guardadasAcoes : padraoAcoes)];
+
+  const resumoAcoes = () => {
+    if(!catalogoAcoes.length) return 'Corrida, queda, permanência e aglomeração';
+    if(!acoesSel.size) return 'Nenhuma ação ativada — esta câmera não vigia comportamento';
+    const nomes = catalogoAcoes.filter(a => acoesSel.has(a.codigo)).map(a => a.rotulo);
+    return nomes.length <= 2 ? nomes.join(' e ')
+                             : `${nomes.length} ações: ${nomes.slice(0, 2).join(', ')} e mais ${nomes.length - 2}`;
+  };
+
+  const linhaAcao = a => {
+    const ligada = acoesSel.has(a.codigo) && a.disponivel;
+    const marcas = marcasAcao(a);
+    return `<div class="acao-item ${a.disponivel ? '' : 'indisponivel'}"
+                 ${a.disponivel ? `data-acao="${esc(a.codigo)}"` : ''}>
+      <div class="bd"><b>${esc(a.rotulo)}</b>
+        ${a.disponivel
+            ? (a.detalhe ? `<span>${esc(a.detalhe)}</span>` : '')
+            : `<span>${esc(a.indisponivel || 'Indisponível neste sistema')}</span>`}
+        ${marcas.length ? `<div class="marcas">${
+          marcas.map(m => `<span class="chip c-gray">${esc(m)}</span>`).join('')}</div>` : ''}
+      </div>
+      <span class="sw ${ligada ? 'on' : ''}"></span>
+    </div>
+    ${a.codigo === 'fora_de_horario' && a.disponivel ? editorHorario(ligada) : ''}
+    ${a.codigo === 'aglomeracao' && a.disponivel ? editorAglomeracao(ligada) : ''}`;
+  };
+
+  /* Pelo mesmo motivo do horário: ligar "Aglomeração" sem dizer quantas
+     pessoas são demais *aqui* não configura nada. Oito num corredor de
+     passagem é ocorrência; na Produção, onde treze trabalham, é terça-feira.
+     Em branco vale o do sistema, e o campo abre vazio de propósito — vir
+     preenchido com o padrão gravaria na câmera uma escolha que ninguém fez. */
+  const editorAglomeracao = ligada => `
+    <div class="acao-horario ${ligada ? '' : 'oculta'}" id="cAglomeracao">
+      <label for="cAglomN">Alerta a partir de</label>
+      <input class="inp mono" type="number" id="cAglomN" min="2" max="200"
+             style="width:72px" value="${esc(v('limite_aglomeracao',''))}">
+      <label for="cAglomN">pessoas juntas</label>
+      <span class="hint" id="cAglomDica"></span>
+    </div>`;
+
+  /* A janela de horário mora dentro da própria ação, e não numa seção à
+     parte: ligar "Entrada em horário não permitido" sem dizer qual é o
+     horário não configura nada, e separar as duas coisas na tela faz a
+     metade ficar para trás. Em branco, vale a do sistema — por isso o campo
+     abre vazio em vez de já vir preenchido com o padrão, que gravaria na
+     câmera uma escolha que ninguém fez. */
+  const editorHorario = ligada => `
+    <div class="acao-horario ${ligada ? '' : 'oculta'}" id="cHorario">
+      <label for="cHoraIni">Permitido das</label>
+      <input class="inp mono" type="time" id="cHoraIni" value="${esc(v('horario_inicio',''))}">
+      <label for="cHoraFim">às</label>
+      <input class="inp mono" type="time" id="cHoraFim" value="${esc(v('horario_fim',''))}">
+      <span class="hint" id="cHorarioDica"></span>
+    </div>`;
+
+  const paineisDeAcoes = () => {
+    if(!catalogoAcoes.length) return '';
+    const podem = catalogoAcoes.filter(a => a.disponivel);
+    const naoPodem = catalogoAcoes.filter(a => !a.disponivel);
+    return `<div class="acoes-sel ${flags.analitico_acao ? '' : 'travada'}" id="cAcoes">
+      <div class="topo"><div class="eyebrow">Ações vigiadas por esta câmera</div>
+        <button type="button" data-acoes-todas>Ativar todas</button>
+        <button type="button" data-acoes-nenhuma>Desativar</button></div>
+      ${podem.map(linhaAcao).join('')}
+      ${naoPodem.length ? `<div class="acoes-grupo"><b>Sem detector neste sistema</b><i></i></div>
+        ${naoPodem.map(linhaAcao).join('')}` : ''}
+    </div>`;
+  };
 
   const box = abrirModal(`
     <div class="modal-hd"><h3>${novo ? 'Nova câmera' : 'Configurar câmera'}</h3>
@@ -683,7 +883,7 @@ async function editarCamera(codigo){
         <div class="field"><label for="cCena">Tipo de cena</label>
           <select class="inp" id="cCena">${Object.entries(CENAS)
             .map(([k,o]) => `<option value="${k}" ${v('cena','rua')===k?'selected':''}>${esc(o.lbl)}</option>`).join('')}</select>
-          <span class="hint">Só afeta a imagem sintética de reserva, quando o RTSP não responde.</span></div>
+          <span class="hint">Rótulo de classificação do ponto. Não altera a análise nem a imagem.</span></div>
         <div class="field"><label for="cStatus">Status operacional</label>
           <select class="inp" id="cStatus">${Object.entries(STATUS_CAMERA)
             .map(([k,o]) => `<option value="${k}" ${v('status','ONLINE')===k?'selected':''}>${esc(o.lbl)}</option>`).join('')}</select>
@@ -722,9 +922,20 @@ async function editarCamera(codigo){
       <div class="sw-row" data-csw="analitico_facial"><div class="bd"><b>Reconhecimento facial</b>
         <span>Extrai template e consulta a base biométrica</span></div>${chave('analitico_facial')}</div>
       <div class="sw-row" data-csw="analitico_objeto"><div class="bd"><b>Detecção de objetos</b>
-        <span>Pessoas, veículos, motocicletas e volumes</span></div>${chave('analitico_objeto')}</div>
+        <span>Pessoas sempre; veículo só com o item abaixo ligado</span></div>${chave('analitico_objeto')}</div>
+      <div class="sw-row" data-csw="detecta_veiculo"><div class="bd"><b>Alcança via, pátio ou garagem</b>
+        <span>Desligado, veículo é ignorado — num hall ele só vem da janela. Ligado, carro, caminhão, ônibus, moto e bicicleta contam, e a placa é lida</span></div>${chave('detecta_veiculo')}</div>
+      <div class="sw-row" data-csw="detecta_bagagem"><div class="bd"><b>Bagagem — mochila, bolsa, mala</b>
+        <span>Vista do teto, essa silhueta costuma ser saco de lixo ou caixa: em seis semanas, dos 15 registros nenhum era bagagem. Ligue na revista de entrada ou no guarda-volumes</span></div>${chave('detecta_bagagem')}</div>
+      <div class="sw-row" data-csw="detecta_animal"><div class="bd"><b>Animal</b>
+        <span>O modelo não tem rótulo para pessoa agachada e escolhe o bicho de silhueta parecida: das 10 detecções deste parque, as 10 eram pessoas. Ligue em pátio, perímetro ou via</span></div>${chave('detecta_animal')}</div>
+      ${linhaDetectorExtra('capacete', 'Capacete', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
+      ${linhaDetectorExtra('arma', 'Arma de fogo', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
+      <div class="sw-row" data-csw="alerta_presenca"><div class="bd"><b>Alertar toda presença</b>
+        <span>Sala vigiada: qualquer pessoa aqui gera alerta, autorizada ou não. Numa sala de trabalho vira enxurrada</span></div>${chave('alerta_presenca')}</div>
       <div class="sw-row" data-csw="analitico_acao"><div class="bd"><b>Análise de ações</b>
-        <span>Corrida, queda, permanência e aglomeração</span></div>${chave('analitico_acao')}</div>
+        <span id="cAcoesResumo">${esc(resumoAcoes())}</span></div>${chave('analitico_acao')}</div>
+      ${paineisDeAcoes()}
       <div class="sw-row" data-csw="ptz"><div class="bd"><b>PTZ</b>
         <span>Habilita os comandos de movimento, via ONVIF</span></div>${chave('ptz')}</div>
       <div class="sw-row" data-csw="infravermelho"><div class="bd"><b>Infravermelho</b>
@@ -753,10 +964,132 @@ async function editarCamera(codigo){
     </div>`);
 
   $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
+
+  /* Interruptor e lista são o mesmo controle, e é isso que evita o estado
+     morto de "análise ligada sem nenhuma ação" — que não vigia nada e não
+     diz por quê. A chave vale como atalho de tudo/nada; a lista é onde a
+     escolha mora. */
+  const btTodas = $('[data-acoes-todas]', box), btNenhuma = $('[data-acoes-nenhuma]', box);
+  ['#cHoraIni', '#cHoraFim', '#cAglomN'].forEach(sel => {
+    const el = $(sel, box);
+    // `change` só dispara ao sair do campo; a dica precisa acompanhar quem
+    // ainda está escolhendo a hora.
+    if(el) el.oninput = () => {
+      sincronizarHorario(); sincronizarAglomeracao();
+    };
+  });
+
+  const sincronizarAcoes = () => {
+    // Sem catálogo não há painel, e a chave volta a ser o controle único:
+    // deduzi-la de uma seleção que a tela nunca mostrou desligaria a análise
+    // de uma câmera sem ninguém ter pedido.
+    if(!catalogoAcoes.length) return;
+    flags.analitico_acao = acoesSel.size > 0;
+    const linha = $('[data-csw="analitico_acao"]', box);
+    if(linha) linha.querySelector('.sw').classList.toggle('on', flags.analitico_acao);
+    const painel = $('#cAcoes', box);
+    if(painel) painel.classList.toggle('travada', !flags.analitico_acao);
+    const resumo = $('#cAcoesResumo', box);
+    if(resumo) resumo.textContent = resumoAcoes();
+    // Atalho que não faz nada fica apagado em vez de enganar o clique.
+    const possiveis = catalogoAcoes.filter(a => a.disponivel).length;
+    if(btTodas) btTodas.disabled = acoesSel.size >= possiveis;
+    if(btNenhuma) btNenhuma.disabled = acoesSel.size === 0;
+  };
+
+  const pintarAcao = codigo => {
+    const linha = $(`[data-acao="${codigo}"]`, box);
+    if(linha) linha.querySelector('.sw').classList.toggle('on', acoesSel.has(codigo));
+    if(codigo === 'fora_de_horario') sincronizarHorario();
+    if(codigo === 'aglomeracao') sincronizarAglomeracao();
+  };
+
+  /* A dica diz o número que vai valer, inclusive quando o campo está em
+     branco — descobrir qual era o limite pelo alerta que nunca chegou é
+     tarde. */
+  const sincronizarAglomeracao = () => {
+    const cx = $('#cAglomeracao', box);
+    if(!cx) return;
+    cx.classList.toggle('oculta', !acoesSel.has('aglomeracao'));
+    const dica = $('#cAglomDica', box);
+    if(!dica) return;
+    const n = parseInt($('#cAglomN', box).value, 10);
+    const padrao = (APP.cfg && APP.cfg.aglomeracao_padrao) || 8;
+    dica.textContent = n >= 2
+      ? `Dispara com ${n} pessoas agrupadas por tempo suficiente.`
+      : `Em branco: vale o limite do sistema, ${padrao} pessoas.`;
+  };
+
+  /* A dica diz o que vai acontecer com o que está digitado agora — inclusive
+     nos dois casos em que a configuração é válida mas não vigia nada: campo
+     em branco (vale a do sistema) e início igual ao fim (24 h permitidas).
+     Descobrir isso depois, pelo alerta que nunca chega, é tarde. */
+  const sincronizarHorario = () => {
+    const cx = $('#cHorario', box);
+    if(!cx) return;
+    cx.classList.toggle('oculta', !acoesSel.has('fora_de_horario'));
+    const ini = $('#cHoraIni', box).value, fim = $('#cHoraFim', box).value;
+    const padrao = (APP.cfg && APP.cfg.horario_padrao) || {inicio: '07:00', fim: '19:00'};
+    const dica = $('#cHorarioDica', box);
+    if(!dica) return;
+    if(!ini && !fim){
+      dica.textContent = `Em branco: vale a janela do sistema, ${padrao.inicio} às ${padrao.fim}.`;
+    }else if(ini && fim && ini === fim){
+      dica.textContent = 'Início igual ao fim são 24 horas permitidas — assim a ação nunca dispara.';
+    }else{
+      const a = ini || padrao.inicio, b = fim || padrao.fim;
+      const vira = a > b ? ' A janela atravessa a meia-noite.' : '';
+      dica.textContent = `Fora de ${a} às ${b}, qualquer pessoa vista aqui vira alerta.${vira}`;
+    }
+  };
+
+  const marcarAcoes = ligar => {
+    // Só as que têm detector: "ativar todas" não liga o que não existe.
+    catalogoAcoes.filter(a => a.disponivel).forEach(a => {
+      if(ligar) acoesSel.add(a.codigo); else acoesSel.delete(a.codigo);
+      pintarAcao(a.codigo);
+    });
+    sincronizarAcoes();
+  };
+
   $$('[data-csw]', box).forEach(r => r.onclick = () => {
-    const k = r.dataset.csw; flags[k] = !flags[k];
+    const k = r.dataset.csw;
+    if(k === 'analitico_acao' && catalogoAcoes.length){
+      if(acoesSel.size){
+        // Desligar não joga fora a escolha: ela volta inteira no religar,
+        // enquanto esta janela estiver aberta.
+        acoesLembradas = [...acoesSel];
+        marcarAcoes(false);
+      }else{
+        const voltar = acoesLembradas.length
+          ? acoesLembradas
+          : catalogoAcoes.filter(a => a.disponivel).map(a => a.codigo);
+        catalogoAcoes.filter(a => a.disponivel).forEach(a => {
+          if(voltar.includes(a.codigo)) acoesSel.add(a.codigo); else acoesSel.delete(a.codigo);
+          pintarAcao(a.codigo);
+        });
+        sincronizarAcoes();
+      }
+      return;
+    }
+    flags[k] = !flags[k];
     r.querySelector('.sw').classList.toggle('on', flags[k]);
   });
+
+  $$('[data-acao]', box).forEach(linha => linha.onclick = () => {
+    const codigo = linha.dataset.acao;
+    if(acoesSel.has(codigo)) acoesSel.delete(codigo); else acoesSel.add(codigo);
+    pintarAcao(codigo);
+    // Ativar a primeira ação liga a análise sozinha. Escolher o que a câmera
+    // vigia *é* ligar a vigilância dela — não são dois passos.
+    sincronizarAcoes();
+  });
+
+  if(btTodas) btTodas.onclick = () => marcarAcoes(true);
+  if(btNenhuma) btNenhuma.onclick = () => marcarAcoes(false);
+  sincronizarAcoes();   // acerta o estado dos atalhos já na abertura
+  sincronizarHorario(); // e a dica da janela, que depende do que está gravado
+  sincronizarAglomeracao();  // idem, para o limite de pessoas juntas
 
   const bdel = $('#cDel');
   if(bdel) bdel.onclick = async () => {
@@ -803,6 +1136,26 @@ async function editarCamera(codigo){
       longitude: texto('#cLon') === '' ? null : num('#cLon', null),
       ...flags
     };
+    // Só vai quando a tela teve o catálogo para desenhar o painel. Sem ele o
+    // campo fica de fora do PATCH e o servidor preserva o que já estava.
+    //
+    // Com a análise desligada grava a lista lembrada, e não vazio: quem
+    // montou uma seleção de duas ações e desligou a análise para outra coisa
+    // não deve reencontrá-la em branco. O que vale é sempre `analitico_acao`,
+    // que o servidor consulta antes de olhar a lista.
+    if(catalogoAcoes.length){
+      dados.acoes_ativas = flags.analitico_acao ? [...acoesSel] : acoesLembradas;
+      // Vazio vira `null`, e não '': é assim que o servidor entende "sem
+      // janela própria, use a do sistema". String vazia ele leria como
+      // meia-noite e a câmera passaria a acusar o dia inteiro.
+      const hi = $('#cHoraIni'), hf = $('#cHoraFim');
+      if(hi) dados.horario_inicio = hi.value || null;
+      if(hf) dados.horario_fim = hf.value || null;
+      // Mesmo acordo para o limite de aglomeração: vazio é `null`, que o
+      // servidor lê como "sem limite próprio, use o do sistema".
+      const an = $('#cAglomN');
+      if(an) dados.limite_aglomeracao = parseInt(an.value, 10) || null;
+    }
 
     // Validar aqui evita um 422 que a interface teria de traduzir depois.
     const erro =
@@ -820,8 +1173,13 @@ async function editarCamera(codigo){
 
     const btn = $('#cSave');
     btn.disabled = true;
+
+    // A gravação é um passo; recarregar a lista e navegar são outro. Juntos
+    // num `try` só, qualquer tropeço ao redesenhar a tela saía como "não foi
+    // possível concluir" — e o operador tentava de novo algo que o servidor
+    // já tinha aceitado.
+    let salva;
     try{
-      let salva;
       if(novo){
         const cod = texto('#cCodigo');
         if(cod) dados.codigo = cod;
@@ -829,14 +1187,20 @@ async function editarCamera(codigo){
       }else{
         salva = await API.salvarCamera(c.codigo, dados);
       }
-      fecharModal();
-      toast(novo ? 'Câmera cadastrada' : 'Configuração salva',
-        `${salva.codigo} — ${salva.nome}.`, 'ok');
+    }catch(e){
+      btn.disabled = false;
+      erroToast(e, novo ? 'Câmera não foi cadastrada' : 'Configuração não foi salva');
+      return;
+    }
+
+    fecharModal();
+    toast(novo ? 'Câmera cadastrada' : 'Configuração salva',
+      `${salva.codigo} — ${salva.nome}.`, 'ok');
+    try{
       await carregarCatalogoCameras();
       irPara('cams');
     }catch(e){
-      btn.disabled = false;
-      erroToast(e);
+      erroToast(e, 'Salvo, mas a lista não recarregou');
     }
   };
 }
@@ -882,6 +1246,7 @@ async function abrirCamera(codigo){
         <div style="min-width:0">
           <div id="camQuadro" style="position:relative;${medidaCaixa(razaoInicial)};background:#000;border-radius:var(--r-m);overflow:hidden;border:1px solid var(--line)">
             <canvas id="camModalFeed" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <div id="camNomeOverlay" style="position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,0.6);color:#fff;padding:6px 10px;border-radius:4px;font-size:13px;font-weight:500;backdrop-filter:blur(4px)">${esc(c.nome)}</div>
           </div>
         </div>
         <div class="cam-ficha-lado">
@@ -895,7 +1260,16 @@ async function abrirCamera(codigo){
                 ${c.analitico_objeto ? '<span class="chip c-green">Objetos</span>' : ''}
                 ${c.analitico_acao ? '<span class="chip c-violet">Ações</span>' : ''}
                 ${c.ptz ? '<span class="chip c-blue">PTZ</span>' : ''}
+                ${c.alerta_presenca ? '<span class="chip c-red">Alerta por presença</span>' : ''}
                 ${!c.analitico_facial && !c.analitico_objeto && !c.analitico_acao ? '<span class="chip c-gray">Nenhum</span>' : ''}</div></dd>
+              ${c.analitico_acao ? `<dt>Ações vigiadas</dt><dd>${
+                (c.acoes_ativas && c.acoes_ativas.length)
+                  ? c.acoes_ativas.map(k => esc(ROTULO_ACAO_UI[k] || k)).join(' · ')
+                  // Análise ligada sem nenhuma ação marcada é um estado válido
+                  // e silencioso. Dito assim, quem lê a ficha entende por que
+                  // a câmera não produz ocorrência de ação.
+                  : '<span class="hint">Nenhuma marcada — a análise não procura nada nesta câmera.</span>'
+              }</dd>` : ''}
             </dl>
           </div>
           <div>
@@ -924,12 +1298,17 @@ async function abrirCamera(codigo){
             </dl>
           </div>
           <div>
-            <div class="eyebrow" style="margin-bottom:8px">Zonas configuradas</div>
+            <div class="eyebrow" style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+              <span>Zonas configuradas</span><span class="sp" style="flex:1"></span>
+              ${API.pode('cams') ? `<button class="btn btn-ghost btn-sm" id="btZonas">${ico('edit',13)} Desenhar</button>` : ''}
+            </div>
             <div class="zone-list">${(c.zonas||[]).map(z => `<div class="zone-item">
               <span class="zone-swatch" style="background:${esc(z.cor)}"></span><b>${esc(z.nome)}</b>
               <span class="chip c-gray">${z.tipo === 'LINHA' ? 'Linha' : 'Polígono'}</span>
               <span class="mono" style="font-size:10.5px;color:var(--txt-4)">${(z.pontos||[]).length} pts</span></div>`).join('')
-              || '<p class="hint">Nenhuma zona definida.</p>'}</div>
+              || `<p class="hint">Nenhuma zona definida. Sem zona, as ações de
+                   invasão de perímetro, área restrita, veículo em área proibida e
+                   contrafluxo não têm onde disparar.</p>`}</div>
           </div>
         </div>
       </div>
@@ -975,4 +1354,271 @@ async function abrirCamera(codigo){
   }
   else renderOnce(cv, c);
 
+  const bz = $('#btZonas');
+  if(bz) bz.onclick = () => abrirEditorZonas(c);
+}
+
+
+/* ==========================================================
+   EDITOR DE ZONAS
+   ==========================================================
+
+   Quatro das quinze ações — invasão de perímetro, pessoa em área restrita,
+   veículo em área proibida e contrafluxo — só têm sentido dentro de uma
+   região marcada: sem ela não há "dentro" nem "fora" para comparar. O banco
+   guardava zonas desde o começo, o vídeo já sabia desenhá-las e a ficha já as
+   listava, mas não havia por onde criar uma. Eram zero no parque inteiro, e
+   as quatro ações ficavam ligáveis e mudas.
+
+   O ponto é gravado normalizado em 0..1, e não em pixel: a mesma zona vale
+   quando a câmera troca de resolução, e é assim que o detector a compara com
+   a caixa do objeto, que também é normalizada. */
+function abrirEditorZonas(cam){
+  const zonas = (cam.zonas || []).map(z => ({
+    nome: z.nome, tipo: z.tipo, cor: z.cor,
+    pontos: (z.pontos || []).map(p => [p[0], p[1]]),
+    regras: z.regras || {},
+  }));
+  let atual = zonas.length ? 0 : -1;
+
+  const PALETA = ['#35A7DE', '#E5484D', '#F5A524', '#30A46C', '#8E4EC6'];
+
+  /* O que cada tipo de zona pode vigiar — e a chave que o detector consulta.
+     Desenhar a região não basta: o analisador pergunta à zona *o que* ela
+     guarda, e uma zona sem regra é consultada por ninguém. Era o que faltava
+     para as quatro ações saírem de ligadas-e-mudas. */
+  const REGRAS_ZONA = {
+    POLIGONO: [
+      ['restrita',         'Pessoa em área restrita'],
+      ['veiculo_proibido', 'Veículo em área proibida'],
+      ['contrafluxo',      'Deslocamento em contrafluxo'],
+    ],
+    // Perímetro é cruzamento de linha: é a única coisa que uma linha decide.
+    LINHA: [['invasao', 'Invasão de perímetro']],
+  };
+
+  abrirModal(`
+    <div class="modal-hd"><h3>Zonas de ${esc(cam.nome)}</h3><span class="sp" style="flex:1"></span>
+      <button class="x" data-close>${ico('x',17)}</button></div>
+    <div class="modal-bd">
+      <p class="hint" style="margin:0 0 10px">Clique sobre a imagem para marcar os vértices.
+        O polígono fecha sozinho; a linha usa dois pontos. Pelo menos 3 pontos para
+        polígono e 2 para linha.</p>
+      <div class="zona-edit">
+        <div class="zona-tela">
+          <canvas id="zonaCv"></canvas>
+          <div class="zona-vazia" id="zonaAviso" hidden></div>
+        </div>
+        <div class="zona-lado">
+          <div class="eyebrow" style="margin-bottom:6px">Zonas desta câmera</div>
+          <div id="zonaLista"></div>
+          <button class="btn btn-ghost btn-sm" id="zonaNova" style="width:100%;margin-top:8px">
+            ${ico('plus',13)} Nova zona</button>
+          <div id="zonaForm" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="zonaSalvar">Salvar zonas</button>
+    </div>`, true);
+
+  const cv = $('#zonaCv'), ctx = cv.getContext('2d');
+  let fundo = null;
+
+  /* O quadro da câmera por baixo. Sem ele o operador desenharia no escuro —
+     uma zona só faz sentido em relação ao que a câmera vê. Se a imagem não
+     vier (câmera offline, sem captura), o desenho continua possível sobre uma
+     grade, porque a zona é geometria e não depende da foto. */
+  const img = new Image();
+  img.onload = () => { fundo = img; medir(); pintar(); };
+  img.onerror = () => { $('#zonaAviso').hidden = false;
+    $('#zonaAviso').textContent = 'Sem imagem desta câmera — o desenho vale assim mesmo.';
+    medir(); pintar(); };
+  img.src = `${API.base}/stream/${encodeURIComponent(cam.codigo)}/snapshot`
+          + `?token=${encodeURIComponent(API.access)}&t=${Date.now()}`;
+
+  function medir(){
+    const larg = cv.parentElement.clientWidth || 520;
+    const prop = fundo && fundo.naturalWidth ? fundo.naturalHeight / fundo.naturalWidth : 9 / 16;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const alt = Math.round(larg * prop);
+    cv.width = larg * dpr; cv.height = alt * dpr;
+    cv.style.width = larg + 'px'; cv.style.height = alt + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function pintar(){
+    const W = parseFloat(cv.style.width), H = parseFloat(cv.style.height);
+    ctx.clearRect(0, 0, W, H);
+    if(fundo) ctx.drawImage(fundo, 0, 0, W, H);
+    else {
+      ctx.fillStyle = '#0A1218'; ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1;
+      for(let i = 1; i < 8; i++){
+        ctx.beginPath(); ctx.moveTo(W*i/8, 0); ctx.lineTo(W*i/8, H); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, H*i/8); ctx.lineTo(W, H*i/8); ctx.stroke();
+      }
+    }
+    zonas.forEach((z, i) => {
+      const pts = z.pontos;
+      if(!pts.length) return;
+      const ativo = i === atual;
+      ctx.save();
+      ctx.strokeStyle = z.cor;
+      ctx.lineWidth = ativo ? 2.2 : 1.3;
+      ctx.setLineDash(z.tipo === 'LINHA' ? [] : [5, 4]);
+      ctx.beginPath();
+      pts.forEach((p, k) => { const x = p[0]*W, y = p[1]*H; k ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+      if(z.tipo === 'POLIGONO' && pts.length > 2){
+        ctx.closePath();
+        ctx.fillStyle = z.cor + (ativo ? '2A' : '14');
+        ctx.fill();
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+      // Alça em cada vértice, só na zona em edição: é o que mostra onde se
+      // clicou e permite conferir a forma antes de salvar.
+      if(ativo) pts.forEach(p => {
+        ctx.beginPath(); ctx.arc(p[0]*W, p[1]*H, 4, 0, Math.PI*2);
+        ctx.fillStyle = z.cor; ctx.fill();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#0A1218'; ctx.stroke();
+      });
+      ctx.restore();
+    });
+  }
+
+  function listar(){
+    $('#zonaLista').innerHTML = zonas.length ? zonas.map((z, i) => `
+      <div class="zona-item ${i === atual ? 'on' : ''}" data-z="${i}">
+        <span class="zone-swatch" style="background:${esc(z.cor)}"></span>
+        <b>${esc(z.nome)}</b>
+        <span class="chip c-gray">${z.tipo === 'LINHA' ? 'Linha' : 'Polígono'}</span>
+        <span class="mono" style="font-size:10px;color:var(--txt-4)">${z.pontos.length}</span>
+        <button class="x" data-rm="${i}" title="Remover">${ico('trash',13)}</button>
+      </div>`).join('') : '<p class="hint" style="margin:0">Nenhuma ainda.</p>';
+
+    $$('[data-z]', $('#zonaLista')).forEach(el => el.onclick = e => {
+      if(e.target.closest('[data-rm]')) return;
+      atual = +el.dataset.z; listar(); formulario(); pintar();
+    });
+    $$('[data-rm]', $('#zonaLista')).forEach(b => b.onclick = () => {
+      zonas.splice(+b.dataset.rm, 1);
+      atual = Math.min(atual, zonas.length - 1);
+      listar(); formulario(); pintar();
+    });
+  }
+
+  function formulario(){
+    const alvo = $('#zonaForm');
+    if(atual < 0 || !zonas[atual]){ alvo.innerHTML = ''; return; }
+    const z = zonas[atual];
+    const minimo = z.tipo === 'LINHA' ? 2 : 3;
+    alvo.innerHTML = `
+      <div class="field"><label for="zNome">Nome</label>
+        <input class="inp" id="zNome" value="${esc(z.nome)}" maxlength="120"></div>
+      <div class="field"><label for="zTipo">Tipo</label>
+        <select class="inp" id="zTipo">
+          <option value="POLIGONO" ${z.tipo==='POLIGONO'?'selected':''}>Polígono — área</option>
+          <option value="LINHA" ${z.tipo==='LINHA'?'selected':''}>Linha — cruzamento</option>
+        </select></div>
+      <div class="field"><label>Cor</label>
+        <div style="display:flex;gap:6px">${PALETA.map(c => `
+          <span class="zona-cor ${z.cor===c?'on':''}" data-cor="${c}" style="background:${c}"></span>`).join('')}
+        </div></div>
+      <div class="field"><label>O que esta zona vigia</label>
+        ${REGRAS_ZONA[z.tipo].map(([k, rot]) => `
+          <label class="zona-regra"><input type="checkbox" data-regra="${k}"
+            ${z.regras[k] ? 'checked' : ''}><span>${esc(rot)}</span></label>`).join('')}
+        <span class="hint" style="margin-top:4px">Sem nenhuma marcada, a zona é
+          só desenho: nenhuma ação consulta a região.</span></div>
+      <p class="hint" style="margin:8px 0 0">
+        ${z.pontos.length} de ${minimo} ponto(s) mínimos.
+        ${z.pontos.length >= minimo ? 'Pronta.' : 'Clique na imagem para marcar.'}</p>
+      <button class="btn btn-ghost btn-sm" id="zLimpar" style="width:100%;margin-top:8px"
+        ${z.pontos.length ? '' : 'disabled'}>Apagar pontos</button>`;
+
+    $('#zNome').oninput = e => { z.nome = e.target.value; listar(); };
+    $('#zTipo').onchange = e => {
+      z.tipo = e.target.value;
+      // Linha é um segmento: guardar seis vértices e desenhar dois enganaria
+      // quem conferisse a contagem na lista.
+      if(z.tipo === 'LINHA' && z.pontos.length > 2) z.pontos = z.pontos.slice(0, 2);
+      // Regra de polígono não vale em linha, e vice-versa: deixá-la gravada
+      // criaria uma zona que diz vigiar algo que o detector nunca pergunta
+      // àquele tipo.
+      const validas = REGRAS_ZONA[z.tipo].map(([k]) => k);
+      z.regras = Object.fromEntries(
+        Object.entries(z.regras).filter(([k, v]) => v && validas.includes(k)));
+      listar(); formulario(); pintar();
+    };
+    $$('[data-cor]', alvo).forEach(s => s.onclick = () => {
+      z.cor = s.dataset.cor; listar(); formulario(); pintar();
+    });
+    $$('[data-regra]', alvo).forEach(cx => cx.onchange = () => {
+      z.regras = {...z.regras, [cx.dataset.regra]: cx.checked};
+      listar();
+    });
+    $('#zLimpar').onclick = () => { z.pontos = []; formulario(); listar(); pintar(); };
+  }
+
+  cv.onclick = e => {
+    if(atual < 0 || !zonas[atual]) return;
+    const z = zonas[atual];
+    if(z.tipo === 'LINHA' && z.pontos.length >= 2) z.pontos = [];
+    const r = cv.getBoundingClientRect();
+    // Preso ao intervalo 0..1: o servidor recusa ponto fora dele, e um clique
+    // na borda pode render 1,0003 por arredondamento do navegador.
+    const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    z.pontos.push([+x.toFixed(4), +y.toFixed(4)]);
+    formulario(); listar(); pintar();
+  };
+
+  $('#zonaNova').onclick = () => {
+    zonas.push({nome: `Zona ${zonas.length + 1}`, tipo: 'POLIGONO',
+                cor: PALETA[zonas.length % PALETA.length], pontos: [], regras: {}});
+    atual = zonas.length - 1;
+    listar(); formulario(); pintar();
+  };
+
+  $('#zonaSalvar').onclick = async () => {
+    // Zona com pontos de menos não é zona: o polígono não fecha área e a
+    // linha não tem direção. Recusar aqui é melhor que gravar uma região que
+    // o detector vai ignorar em silêncio.
+    const incompletas = zonas.filter(z => z.pontos.length < (z.tipo === 'LINHA' ? 2 : 3));
+    if(incompletas.length){
+      toast('Zona incompleta',
+            `${incompletas.map(z => z.nome).join(', ')} — polígono precisa de 3 pontos, linha de 2.`,
+            'err', 6000);
+      return;
+    }
+    // Zona sem regra é gravável e inútil: o detector não a consulta. Avisar
+    // é melhor que recusar — pode ser uma região desenhada agora para marcar
+    // a regra depois —, mas calar seria deixar o operador achar que ligou
+    // uma vigilância que não existe.
+    const mudas = zonas.filter(z => !Object.values(z.regras || {}).some(Boolean));
+    if(mudas.length){
+      const segue = await confirmar('Zona sem vigilância',
+        `${mudas.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} não vigia nada:
+         nenhuma ação consulta a região. Salvar assim mesmo?`,
+        {rotulo: 'Salvar assim'});
+      if(!segue) return;
+    }
+    const bt = $('#zonaSalvar');
+    bt.disabled = true; bt.textContent = 'Salvando…';
+    try{
+      const salva = await API.salvarCamera(cam.codigo, {zonas});
+      toast('Zonas salvas', `${zonas.length} zona(s) em ${cam.nome}.`, 'ok');
+      fecharModal();
+      // A ficha reabre com o que foi gravado — inclusive o que o servidor
+      // tenha normalizado.
+      abrirCamera(salva.codigo || cam.codigo);
+    }catch(e){
+      toast('Não foi possível salvar', e.message, 'err', 7000);
+      bt.disabled = false; bt.textContent = 'Salvar zonas';
+    }
+  };
+
+  window.addEventListener('resize', () => { medir(); pintar(); }, {once: true});
+  medir(); listar(); formulario(); pintar();
 }

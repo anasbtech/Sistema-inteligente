@@ -527,11 +527,27 @@ class Settings(BaseSettings):
     ACAO_COOLDOWN_S: float = 600.0
 
     # Aglomeração é contada num quadro só, então funciona mesmo no rodízio.
-    # Oito pessoas dentro de 18% da largura do quadro: numa sala de produção
-    # com treze isso é o expediente, e não ocorrência — por isso a escolha de
-    # ligar ou não é de quem conhece o lugar.
+    #
+    # Conta quem está *junto*, não quem está em cena: oito pessoas dentro de
+    # 18% da largura do quadro. A distinção é o que torna a ação utilizável
+    # aqui — a Produção trabalha com onze pessoas espalhadas pela sala, e um
+    # total bruto a acusaria o expediente inteiro; as mesmas onze amontoadas
+    # numa porta são outra coisa. O raio é a medida de "junto".
     ACAO_AGLOMERACAO_N: int = 8
     ACAO_AGLOMERACAO_RAIO: float = 0.18
+    # Padrão do parque. Cada câmera pode ter o seu — ver
+    # `Camera.limite_aglomeracao`, que vence este quando preenchido.
+    #
+    # Quanto o agrupamento precisa durar para virar alerta. Dez segundos
+    # derrubam o ajuntamento que se desfaz sozinho: fila que se forma e anda,
+    # gente que para no corredor para se cumprimentar, saída de reunião. Não
+    # é o mesmo que o cooldown — este diz quando o fato *começa a existir*, o
+    # cooldown diz de quanto em quanto tempo ele se repete no painel.
+    #
+    # Como a câmera é visitada de tempos em tempos, a confirmação costuma vir
+    # na visita seguinte: duas observações separadas mostrando o mesmo
+    # agrupamento é o que o rodízio consegue afirmar sobre durar.
+    ACAO_AGLOMERACAO_S: float = 10.0
 
     # Corrida e abandono seguem aqui para ficarem no mesmo lugar que o resto,
     # mas não mudam nada hoje: corrida exige análise contínua, e abandono
