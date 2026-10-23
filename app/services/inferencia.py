@@ -30,10 +30,32 @@ from app.config import settings
 from app.database import db_context
 from app.models import Camera, StatusCamera, TipoDeteccao
 from app.schemas import DeteccaoIn
-from app.services import face_engine, video, vision
+from app.services import chama, extras, face_engine, placa, video, vision
 from app.services.events import publicar
 
 log = logging.getLogger("seguranca.inferencia")
+
+
+def _classes_barradas(cam) -> set:
+    """O que esta câmera NÃO pode registrar.
+
+    A lista do que o modelo sabe ver é uma só, do parque inteiro; o que cada
+    câmera registra é decisão da câmera. Antes isso valia só para veículo, e as
+    demais classes problemáticas eram resolvidas apagando-as do mapa — o que as
+    tirava também de onde faziam sentido. Uma câmera de pátio não via animal
+    porque um hall de andar confundia pessoa agachada com cachorro.
+
+    O que torna a classe errada quase nunca é o modelo: é o enquadramento. Por
+    isso quem decide é quem conhece a câmera.
+    """
+    fora = set()
+    if not cam.detecta_veiculo:
+        fora |= vision.CLASSES_VIA
+    if not getattr(cam, "detecta_bagagem", False):
+        fora |= vision.CLASSES_BAGAGEM
+    if not getattr(cam, "detecta_animal", False):
+        fora |= vision.CLASSES_ANIMAL
+    return fora
 
 
 class Inferencia:
@@ -45,6 +67,11 @@ class Inferencia:
         self._task: Optional[asyncio.Task] = None
         self._visto: Dict[Tuple[str, str], float] = {}
         self._rostos: Dict[str, list] = {}
+        # Última vez que o corpo de cada pessoa virou linha, por câmera. Tem
+        # dicionário próprio porque a janela é outra: o corpo identificado
+        # não é o objeto anônimo de `_visto`, e represá-lo por 30 minutos era
+        # o que deixava a trajetória só com rostos.
+        self._corpos_identificados: Dict[Tuple[str, str], float] = {}
         self.gerados = 0
         # Quanto uma volta completa leva de fato. Cresce com o parque, e é o
         # que o mosaico precisa saber para não apagar a caixa cedo demais.
@@ -54,6 +81,25 @@ class Inferencia:
         # misturá-las entre câmeras faria a mesma pessoa "saltar" de uma para
         # outra e disparar corrida.
         self._acoes: Dict[str, vision.AnalisadorAcoes] = {}
+        # E um rastreio por câmera, pelo mesmo motivo: a identidade de um
+        # objeto vale dentro da cena dele. É o que dá `track_id` aos objetos
+        # onde a análise de ação está ligada — sem ele o analisador descarta
+        # tudo e nenhuma ação chega a ser avaliada.
+        self._rastreios: Dict[str, vision.RastreioPorPosicao] = {}
+        # Ocupação confirmada de cada sala vigiada, e a contagem que está
+        # esperando confirmação. É o que transforma "há gente na sala" em
+        # "alguém entrou". A queda também é acompanhada, mas em silêncio: sem
+        # baixar a referência, a entrada seguinte não seria vista como
+        # aumento.
+        self._ocupacao: Dict[str, int] = {}
+        self._ocupacao_pendente: Dict[str, Tuple[int, int]] = {}  # (contagem, vezes)
+        # Último alerta de fogo/fumaça por câmera: chama não se apaga entre
+        # duas visitas, e sem represa viraria uma ocorrência por volta.
+        self._ultima_chama: Dict[Tuple[str, str], float] = {}
+        # Orçamento da rajada: quantas já saíram nesta volta e quando cada
+        # câmera foi atendida pela última vez.
+        self._rajadas_na_volta = 0
+        self._ultima_rajada: Dict[str, float] = {}
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
@@ -110,6 +156,23 @@ class Inferencia:
             await asyncio.sleep(max(0.0, self.intervalo - gasto))
 
     async def _rodada(self) -> None:
+        """Uma sessão de banco por câmera, nunca uma para a volta inteira.
+
+        O SQLite aceita um escritor de cada vez. Com a volta toda dentro de um
+        `db_context`, a transação de escrita ficava aberta do começo ao fim —
+        e a volta passou de 5s para mais de 80s quando a varredura em
+        ladrilhos entrou. Qualquer requisição que também escrevesse ficava na
+        fila até o `busy_timeout`, que é de 30 segundos.
+
+        Isso chegou à tela como "a ficha biométrica demora e fica carregando":
+        abrir uma ficha grava a consulta na trilha de auditoria, então ela é
+        uma escritora. Medido, 1 em cada 25 chamadas parava 28–33s, enquanto
+        um arquivo estático — que não toca no banco — nunca passou de 0,12s.
+
+        As câmeras são lidas numa sessão curta e usadas destacadas depois:
+        `expire_on_commit=False` mantém os atributos já carregados.
+        """
+        self._rajadas_na_volta = 0
         async with db_context() as db:
             cameras = (
                 await db.execute(
@@ -118,15 +181,16 @@ class Inferencia:
             ).scalars().unique().all()
             self.ultimo_total = len(cameras)
 
-            for cam in cameras:
-                if not cam.rtsp_url:
-                    continue
-                try:
+        for cam in cameras:
+            if not cam.rtsp_url:
+                continue
+            try:
+                async with db_context() as db:
                     await self._processar(db, cam)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
 
-    def _rosto_repetido(self, camera: str, embedding) -> bool:
+    def _rosto_recente(self, camera: str, embedding) -> Tuple[bool, list]:
         """Mesmo rosto que já entrou há pouco naquela câmera.
 
         Compara o vetor, não a posição: é o que distingue duas pessoas no
@@ -136,21 +200,116 @@ class Inferencia:
 
         A janela é curta porque passar de novo é um evento de verdade: quem
         volta ao saguão depois de um tempo deve constar outra vez.
+
+        Devolve `(repetido, entrada)`. A entrada é `[vetor, instante, nome,
+        pessoa_id]`, e a identidade fica guardada ali porque quem repete não
+        volta a passar pela busca 1:N: sem lembrá-la, ela apareceria só na
+        volta em que o registro nasce e sumiria nas seguintes, com a pessoa
+        ainda em cena. O `pessoa_id` acompanha o nome porque é ele que liga o
+        corpo ao rosto no banco, e a volta que repete tem corpo igual.
         """
         agora = time.monotonic()
         recentes = [
-            (v, t) for v, t in self._rostos.get(camera, [])
-            if agora - t < settings.INFERENCIA_ROSTO_JANELA_S
+            e for e in self._rostos.get(camera, [])
+            if agora - e[1] < settings.INFERENCIA_ROSTO_JANELA_S
         ]
-        for vetor, _ in recentes:
-            if face_engine.similaridade_cosseno(vetor, embedding) >= settings.INFERENCIA_ROSTO_IGUAL:
+        for entrada in recentes:
+            if face_engine.similaridade_cosseno(entrada[0], embedding) >= settings.INFERENCIA_ROSTO_IGUAL:
                 self._rostos[camera] = recentes
-                return True
-        recentes.append((embedding, agora))
+                return True, entrada
+        nova = [embedding, agora, None, None]
+        recentes.append(nova)
         # Guarda só as últimas: o saguão cheio não pode fazer a lista crescer
         # sem teto, e comparar contra as mais recentes já resolve.
         self._rostos[camera] = recentes[-24:]
+        return False, nova
+
+    @staticmethod
+    def _corpo_do_rosto(bbox_rosto, corpos: list) -> Optional[dict]:
+        """Qual corpo em cena contém este rosto.
+
+        Mede pela interseção sobre a menor área — o mesmo critério que separa
+        duplicata de pessoa distinta no detector de objeto. Havendo mais de um
+        corpo que contenha o rosto, vence o **menor**: num corredor a caixa de
+        quem está à frente encosta na de quem está atrás, e a menor é sempre a
+        mais específica.
+        """
+        area = lambda b: max(1, (b[2] - b[0]) * (b[3] - b[1]))
+        dentro = [c for c in corpos
+                  if vision.ios(tuple(bbox_rosto), tuple(c["bbox"]))
+                  >= settings.FACE_CORPO_CONTENCAO]
+        return min(dentro, key=lambda c: area(c["bbox"])) if dentro else None
+
+    def _corpo_ja_registrado(self, camera: str, pessoa_id: str) -> bool:
+        """Este corpo já virou linha há pouco, nesta câmera."""
+        agora = time.monotonic()
+        chave = (camera, pessoa_id)
+        anterior = self._corpos_identificados.get(chave)
+        if anterior is not None and (agora - anterior) < settings.INFERENCIA_CORPO_JANELA_S:
+            return True
+        self._corpos_identificados[chave] = agora
+        if len(self._corpos_identificados) > 2000:
+            corte = agora - settings.INFERENCIA_CORPO_JANELA_S
+            self._corpos_identificados = {
+                k: v for k, v in self._corpos_identificados.items() if v > corte
+            }
         return False
+
+    async def _alinhar_corpo(self, db, cena: dict, bbox_rosto, corpos: list,
+                             nome: str, pessoa_id) -> None:
+        """Leva a identidade do rosto para o corpo que o contém.
+
+        Duas coisas de uma vez: o nome passa para a caixa grande, que é a que
+        se lê no mosaico — a do rosto tem uns sessenta pixels —, e o corpo
+        deixa de ser uma "pessoa" anônima na trajetória.
+
+        Quando o corpo ainda não tem linha, ela nasce aqui. Parece rodeio mas
+        é o ponto: o registro de objeto é represado por 30 minutos, porque
+        pessoa parada não é notícia — e com isso o corpo quase nunca tinha
+        linha no instante em que o rosto foi lido. Medido, 10 coincidências
+        em 20 horas. Corpo que carrega identidade é outra coisa: é a presença
+        de alguém com nome, que é exatamente do que a trajetória é feita, e
+        por isso tem janela própria e mais curta.
+
+        O corpo sai da lista depois de casado: dois rostos no mesmo corpo
+        seriam duas pessoas na mesma caixa, e a segunda sobrescreveria o nome
+        da primeira.
+        """
+        from app.routers.deteccoes import processar_deteccao, vincular_corpo
+
+        alvo = self._corpo_do_rosto(bbox_rosto, corpos)
+        if alvo is None:
+            return
+        alvo["caixa"]["pessoa_nome"] = nome
+        corpos.remove(alvo)
+        if not pessoa_id:
+            return
+
+        if alvo["codigo"]:
+            await vincular_corpo(db, alvo["codigo"], pessoa_id)
+            self._corpos_identificados[(cena["cam"].codigo, pessoa_id)] = time.monotonic()
+            return
+
+        if self._corpo_ja_registrado(cena["cam"].codigo, pessoa_id):
+            return
+
+        cam, quadro = cena["cam"], cena["quadro"]
+        jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, tuple(alvo["bbox"]))
+        registro = await processar_deteccao(db, DeteccaoIn(
+            tipo=TipoDeteccao.OBJETO,
+            camera_codigo=cam.codigo,
+            ocorrido_em=cena["agora"],
+            classe="pessoa",
+            confianca=alvo["caixa"].get("confianca"),
+            bbox=alvo["caixa"]["bbox"],
+            track_id=alvo["caixa"].get("track_id"),
+            snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
+        ), origem="inferencia")
+        self.gerados += 1
+        codigo = registro.get("codigo")
+        if codigo:
+            alvo["codigo"] = codigo
+            await vincular_corpo(db, codigo, pessoa_id)
 
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
@@ -200,6 +359,13 @@ class Inferencia:
         # A trilha precisa durar mais que o intervalo entre duas visitas, senão
         # é descartada antes de a câmera ser vista de novo e nada acumula.
         analisador.ttl_trilha = max(8.0, self.ciclo_real * 2.5)
+        # Relido a cada volta, e não guardado na criação: a seleção muda pela
+        # tela de configuração, e o analisador vive enquanto o processo vive.
+        # Sem reler, desmarcar uma ação só valeria no próximo reinício.
+        analisador.acoes_ativas = set(cam.acoes_ativas or ())
+        # Pelo mesmo motivo: a janela de horário é editável na ficha da câmera.
+        analisador.horario_inicio = cam.horario_inicio
+        analisador.horario_fim = cam.horario_fim
 
         try:
             eventos = analisador.atualizar(objetos, largura, altura,
@@ -207,6 +373,16 @@ class Inferencia:
         except Exception as exc:  # noqa: BLE001
             log.warning("Análise de ações falhou em %s: %s", cam.codigo, exc)
             return
+
+        # Fogo e fumaça não saem das trilhas: são assinatura da imagem, e têm
+        # detector próprio. Entram aqui para seguirem pelo mesmo caminho de
+        # registro e alerta que as demais ações.
+        #
+        # As caixas de pessoa vão junto: mão em movimento borra e perde textura
+        # exatamente como fumaça, e foi assim que a Produção alarmou incêndio
+        # duas vezes. O detector de objetos já sabe onde está a gente.
+        pessoas = [o.bbox for o in objetos if o.classe == "pessoa"]
+        eventos += await self._eventos_de_chama(cam, quadro, pessoas)
 
         for ev in eventos:
             caixa = None
@@ -232,6 +408,9 @@ class Inferencia:
                 confianca=round(float(ev.confianca), 4),
                 duracao_s=ev.duracao_s,
                 envolvidos=ev.envolvidos,
+                # Qual área disparou. Sem isto o registro de área restrita
+                # diz que alguém entrou em lugar proibido, mas não em qual.
+                zona_nome=ev.zona_nome,
                 bbox=caixa,
                 track_id=ev.track_id,
                 snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
@@ -240,11 +419,259 @@ class Inferencia:
             log.info("%s: ação detectada — %s (%d envolvidos)",
                      cam.codigo, ev.rotulo, ev.envolvidos)
 
+    async def _vigiar_sala(self, db, cam: Camera, objetos, det_entrada,
+                           quadro=None, nomes=()) -> None:
+        """Alerta quando a ocupação da sala muda — não enquanto ela dura.
+
+        A contagem oscila: medido em duas capturas da mesma sala cheia, ela
+        variou de 12 para 13 e de 10 para 12 sem ninguém entrar. Reagir a cada
+        oscilação produziria "saiu" seguido de "entrou" a cada volta.
+
+        Daí a confirmação ser **assimétrica**, e não um número só:
+
+        * **Entrada sai na hora.** Contagem que sobe raramente é ruído — o
+          piso de confiança do registro já derrubou o que era duvidoso — e um
+          aviso de entrada atrasado não serve para nada.
+        * **Saída espera confirmação.** Contagem que cai costuma ser alguém
+          que o modelo perdeu num quadro: de costas, atrás de uma cadeira,
+          encoberto por quem passou na frente. Dizer "a sala esvaziou" quando
+          ainda há gente lá é o erro caro dos dois.
+        """
+        from app.models import Deteccao
+        from app.routers.deteccoes import alertar_presenca
+
+        atual = sum(1 for o in objetos
+                    if o.classe == "pessoa" and self._confiavel(o))
+        antes = self._ocupacao.get(cam.codigo)
+
+        if antes is None:                      # primeira volta nesta câmera
+            self._ocupacao[cam.codigo] = atual
+            return
+        if atual == antes:
+            self._ocupacao_pendente.pop(cam.codigo, None)
+            return
+
+        # A imagem do alerta é o quadro inteiro desta volta: o que ele afirma
+        # é sobre a sala, e é a sala que quem revisa precisa ver. Não depende
+        # de ter havido detecção — ela é deduplicada por 30 minutos, e era
+        # por isso que a segunda entrada da mesma pessoa saía sem captura.
+        jpeg = None
+        if quadro is not None:
+            altura, largura = quadro.shape[:2]
+            jpeg = await asyncio.to_thread(
+                video.recortar_bgr, quadro, (0, 0, largura, altura), 0.0
+            )
+
+        if atual > antes:
+            det = None
+            if det_entrada:
+                det = (await db.execute(
+                    select(Deteccao).where(Deteccao.codigo == det_entrada)
+                )).scalar_one_or_none()
+            await alertar_presenca(db, cam, atual - antes, atual, det, jpeg,
+                                   nomes=list(nomes))
+            log.info("%s: entrada — %d pessoa(s), agora %d na sala",
+                     cam.codigo, atual - antes, atual)
+            self._ocupacao[cam.codigo] = atual
+            self._ocupacao_pendente.pop(cam.codigo, None)
+            return
+
+        # Caiu: a ocupação é atualizada, mas **não vira alerta**.
+        #
+        # Quem opera pediu só as entradas: "a sala ficou vazia" não é
+        # ocorrência, é o fim de uma. Ainda assim a queda precisa ser
+        # registrada aqui — sem baixar a referência, a sala esvaziando e
+        # enchendo de novo iria de 1 para 0 e de volta para 1, e a entrada
+        # seguinte não seria vista como aumento. O silêncio é do alerta, não
+        # da contagem.
+        #
+        # A confirmação continua valendo pelo mesmo motivo de antes: uma
+        # queda de uma volta só costuma ser alguém que o modelo perdeu, e
+        # baixar a referência cedo demais faria a próxima leitura correta
+        # parecer uma entrada que nunca houve.
+        contagem, vezes = self._ocupacao_pendente.get(cam.codigo, (atual, 0))
+        vezes = vezes + 1 if contagem == atual else 1
+        if vezes < settings.ALERTA_PRESENCA_CONFIRMA_SAIDA:
+            self._ocupacao_pendente[cam.codigo] = (atual, vezes)
+            return
+
+        log.info("%s: saída — %d pessoa(s), restam %d (sem alerta, por projeto)",
+                 cam.codigo, antes - atual, atual)
+        self._ocupacao[cam.codigo] = atual
+        self._ocupacao_pendente.pop(cam.codigo, None)
+
+    async def _eventos_de_chama(self, cam: Camera, quadro, pessoas=()) -> list:
+        """Fogo e fumaça, por assinatura de imagem.
+
+        Duas etapas, e a ordem importa para o custo. A primeira é uma varredura
+        de cor sobre o quadro que já está em mãos — operação de matriz, barata
+        o bastante para rodar em toda visita. Só quando ela acusa algo é que se
+        pedem os quadros extras, e é a comparação entre eles que decide: chama
+        oscila, cone de sinalização não.
+
+        Sem essa separação, toda câmera que vigia fogo pagaria quatro leituras
+        por visita para, quase sempre, concluir que não há nada laranja em
+        cena.
+        """
+        ativas = set(cam.acoes_ativas or ())
+        querem = ativas & {"fogo", "fumaca"}
+        if not querem or quadro is None:
+            return []
+        if not await asyncio.to_thread(chama.ha_candidato, quadro):
+            return []
+
+        quadros = [quadro]
+        for _ in range(max(0, settings.CHAMA_QUADROS - 1)):
+            await asyncio.sleep(settings.CHAMA_INTERVALO_S)
+            extra = await asyncio.to_thread(
+                video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
+            if extra is None or extra.shape != quadro.shape:
+                return []
+            quadros.append(extra)
+
+        try:
+            achados = await asyncio.to_thread(chama.analisar, quadros, pessoas)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Detecção de fogo/fumaça falhou em %s: %s", cam.codigo, exc)
+            return []
+
+        agora = time.time()
+        eventos = []
+        for c in achados:
+            if c.classe not in querem:
+                continue
+            # Fogo não se apaga entre uma visita e a seguinte: sem represa, a
+            # mesma chama viraria uma ocorrência por volta, e o operador
+            # receberia dezenas de alertas do mesmo incêndio.
+            chave = (cam.codigo, c.classe)
+            if agora - self._ultima_chama.get(chave, 0.0) < settings.ACAO_COOLDOWN_S:
+                continue
+            self._ultima_chama[chave] = agora
+            eventos.append(vision.EventoAcao(
+                classe=c.classe,
+                rotulo=vision.ROTULO_ACAO.get(c.classe, c.classe),
+                confianca=float(c.confianca),
+                severidade=vision.SEVERIDADE_ACAO.get(c.classe, 4),
+                duracao_s=0, envolvidos=0, bbox=c.bbox,
+            ))
+        if eventos:
+            log.info("%s: %s", cam.codigo,
+                     ", ".join(f"{e.classe} ({e.confianca:.0%})" for e in eventos))
+        return eventos
+
+    @staticmethod
+    def _quer_rajada(cam: Camera) -> bool:
+        """Esta câmera vigia alguma ação que mede movimento?"""
+        ativas = set(cam.acoes_ativas or ())
+        return bool(ativas & vision.ACOES_CONTINUAS)
+
+    def _tem_cota_rajada(self, cam: Camera) -> bool:
+        """Teto de rajadas por volta, com rodízio justo entre as câmeras.
+
+        Este é o limite duro do orçamento. Medido com a rajada solta, a volta
+        do parque passou de 14–36s para 46s: análise contínua de movimento em
+        24 câmeras não cabe em 8 núcleos, e nenhum ajuste de resolução muda
+        isso — muda só o quanto não cabe.
+
+        Então a rajada vira **amostragem**: por volta, no máximo
+        `ACAO_CONTINUA_MAX_POR_VOLTA` câmeras a recebem, e a vez é de quem
+        está esperando há mais tempo. Uma câmera com movimento contínuo é
+        atendida a cada poucas voltas em vez de nunca, e o parque inteiro não
+        degrada por causa dela.
+
+        O custo honesto disto: corrida e queda duram segundos, e entre duas
+        rajadas da mesma câmera pode passar um evento. É amostragem, não
+        vigilância contínua — e a ficha da ação diz isso.
+        """
+        if self._rajadas_na_volta >= settings.ACAO_CONTINUA_MAX_POR_VOLTA:
+            return False
+        # Quem acabou de ser atendida cede a vez. Sem isto, as primeiras
+        # câmeras da ordem do parque consumiriam a cota em toda volta e as
+        # últimas nunca seriam vistas — a ordem é fixa.
+        agora = time.monotonic()
+        espera = max(self.ciclo_real * 2.0, 10.0)
+        if agora - self._ultima_rajada.get(cam.codigo, 0.0) < espera:
+            return False
+        self._rajadas_na_volta += 1
+        self._ultima_rajada[cam.codigo] = agora
+        return True
+
+    async def _ha_movimento(self, cam: Camera, quadro) -> bool:
+        """A cena mudou o bastante para valer uma rajada?
+
+        Medido no parque: em expediente, 16 a 20 das 26 câmeras têm pessoa em
+        cena, e a rajada custa ~2s cada — quarenta segundos somados a uma volta
+        que leva de catorze a trinta e seis. Mas quase toda essa gente está
+        *sentada*: corrida, queda e briga exigem movimento, e a sala de
+        trabalho não tem nenhum.
+
+        Este teste é uma leitura de quadro e uma subtração de matriz — ordem
+        de dezenas de milissegundos contra os dois segundos que ele evita.
+        """
+        import numpy as np
+
+        anterior = await asyncio.to_thread(
+            video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
+        if anterior is None or anterior.shape != quadro.shape:
+            # Sem comparação possível, segue para a rajada: perder um evento
+            # custa mais que gastar dois segundos.
+            return True
+
+        def medir():
+            a = anterior[::4, ::4].astype(np.int16)
+            b = quadro[::4, ::4].astype(np.int16)
+            dif = np.abs(a - b).max(axis=2)
+            return float(np.count_nonzero(dif > settings.MOVIMENTO_DELTA)) / dif.size
+
+        try:
+            fracao = await asyncio.to_thread(medir)
+        except Exception:                                    # noqa: BLE001
+            return True
+        return fracao >= settings.MOVIMENTO_FRACAO_MIN
+
+    async def _rajada_continua(self, cam: Camera, rastreio, fora: set) -> None:
+        """Vários quadros seguidos, só para alimentar as trilhas de movimento.
+
+        Nada daqui vira registro nem caixa na tela: o que estes quadros
+        produzem é *trajetória*. O analisador precisa de cinco posições para
+        calcular velocidade e oito para queda, e uma visita do rodízio entrega
+        uma. Sem a rajada, `corrida`, `queda` e `contrafluxo` ficavam ligáveis
+        e permanentemente mudas — era o que a ficha chamava de "exige análise
+        contínua".
+
+        Roda num lado reduzido e sem varredura em ladrilhos: aqui interessa
+        onde o corpo está, não quantos corpos distantes existem. Medido nesta
+        máquina, a diferença é de 8,3s para 2,0s por câmera.
+        """
+        analisador = self._acoes.get(cam.codigo)
+        if analisador is None:
+            return
+        zonas = self._zonas(cam)
+        for _ in range(max(0, settings.ACAO_CONTINUA_QUADROS - 1)):
+            await asyncio.sleep(settings.ACAO_CONTINUA_INTERVALO_S)
+            extra = await asyncio.to_thread(
+                video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
+            if extra is None:
+                return
+            objs = await asyncio.to_thread(
+                vision.detectar_objetos, extra, cam.limiar_objeto, False, fora,
+                "nunca", settings.ACAO_CONTINUA_IMGSZ)
+            objs = await asyncio.to_thread(rastreio.atribuir, objs)
+            # Os eventos desta passada são descartados de propósito: quem
+            # decide alerta é a análise da visita, com o quadro cheio. Aqui só
+            # se acumula a trajetória que ela vai consultar.
+            await asyncio.to_thread(
+                analisador.atualizar, objs, extra.shape[1], extra.shape[0], zonas)
+
     @staticmethod
     def _zonas(cam: Camera) -> list:
         """Zonas da câmera no formato que o analisador espera."""
+        # O nome vai junto: o analisador o escreve no alerta ("Pessoa em área
+        # restrita — Vaga proibida"), e sem ele a frase chegava ao operador
+        # com a zona em branco, mandando procurar uma região sem dizer qual.
         return [
-            {"tipo": getattr(z.tipo, "value", z.tipo),
+            {"nome": z.nome or "",
+             "tipo": getattr(z.tipo, "value", z.tipo),
              "pontos": z.pontos or [],
              "regras": z.regras or {}}
             for z in (cam.zonas or [])
@@ -261,20 +688,98 @@ class Inferencia:
         if quadro is None:
             return
         altura, largura = quadro.shape[:2]
+        if altura <= 0 or largura <= 0:
+            print(f"[BOXES-ERROR] {cam.codigo}: invalid frame dimensions: {largura}x{altura}")
+            return
         agora = datetime.now(timezone.utc)
 
         caixas_do_quadro = []
+        # Os corpos desta cena, para o rosto identificado achar o seu. Guarda
+        # a caixa por referência (é nela que o nome entra) e o código do
+        # registro, que é o que recebe a identidade no banco.
+        corpos_no_quadro: list[dict] = []
+        # Quem o facial reconheceu nesta cena. Alimenta o alerta de sala, que
+        # antes só sabia contar cabeças.
+        nomes_no_quadro: list[str] = []
+        # Declarada aqui porque a vigilância da sala passou a ocorrer depois
+        # dos rostos, fora do bloco que a preenche: sem câmera com análise de
+        # objeto o nome não existiria na hora de consultar.
+        objetos: list = []
         # `None` enquanto não se sabe: a câmera pode não ter análise de objeto,
         # e aí não há o que consultar antes de procurar rosto.
         tem_pessoa = None
+        codigo_pessoa = None     # recorte que o alerta de entrada vai levar
 
         if cam.analitico_objeto and vision.yolo_disponivel():
+            # SEM rastreio. O ByteTrack do ultralytics guarda estado entre
+            # chamadas, e aqui o mesmo modelo atende as 24 câmeras em rodízio:
+            # cada quadro chega como um corte de cena, nada associa com a
+            # trilha anterior, e o rastreador descarta o que não associou.
+            #
+            # Medido nos mesmos quadros, três voltas idênticas: com rastreio a
+            # Produção 02 relatava ZERO pessoas onde há 11, e a Produção, 3 de
+            # 5. As câmeras que não perdiam nada eram as que calhavam de vir
+            # logo depois de uma cena parecida.
+            #
+            # O custo é o `track_id`: a deduplicação do registro cai para a
+            # chave por posição, que já existe logo abaixo, e a análise de
+            # ação deixa de emitir (ela ignora objeto sem trilha). Perder a
+            # trilha vale menos que perder onze pessoas da sobreposição.
+            fora = _classes_barradas(cam)
             objetos = await asyncio.to_thread(
-                vision.detectar_objetos, quadro, cam.limiar_objeto, True
+                vision.detectar_objetos, quadro, cam.limiar_objeto, False, fora
             )
+        else:
+            if not cam.analitico_objeto:
+                print(f"[BOXES-SKIP] {cam.codigo}: analitico_objeto=False")
+            elif not vision.yolo_disponivel():
+                print(f"[BOXES-SKIP] {cam.codigo}: yolo_disponivel()=False")
+
+            # Capacete e arma de fogo não existem no COCO: quando a câmera os
+            # pede e há modelo configurado, vêm de uma passada à parte. O custo
+            # é por câmera, não do parque — o orçamento de CPU aqui é apertado
+            # e uma passada extra em 24 câmeras não caberia.
+            pedidos = [c for c in ("capacete", "arma")
+                       if getattr(cam, f"detecta_{c}", False) and extras.configurado(c)]
+            if pedidos:
+                achados = await asyncio.to_thread(extras.detectar, quadro, pedidos)
+                objetos.extend(
+                    vision.ObjetoDetectado(classe, conf, caixa, None)
+                    for classe, conf, caixa in achados
+                )
+
             tem_pessoa = any(o.classe == "pessoa" for o in objetos)
 
             if cam.analitico_acao:
+                # A identidade é dada aqui, e só onde a análise de ação está
+                # ligada: ela muda a chave de deduplicação do registro, e não
+                # há por que mexer nisso numa câmera que não analisa ação.
+                rastreio = self._rastreios.get(cam.codigo)
+                if rastreio is None:
+                    rastreio = vision.RastreioPorPosicao()
+                    self._rastreios[cam.codigo] = rastreio
+                # O objeto precisa sobreviver de uma visita até a seguinte,
+                # como a trilha — senão a identidade se perde no caminho e
+                # nada acumula.
+                rastreio.ttl_s = max(120.0, self.ciclo_real * 3)
+                objetos = await asyncio.to_thread(rastreio.atribuir, objetos)
+
+                # Corrida, queda e contrafluxo comparam posições entre quadros
+                # próximos. O quadro único da visita não dá movimento nenhum,
+                # então esta câmera recebe uma rajada antes de analisar — e só
+                # ela, porque a rajada custa segundos.
+                # Só com gente em cena. Medido no parque: 25 das 26 câmeras
+                # vigiam alguma ação de movimento, e a rajada custa ~2s cada —
+                # cinquenta segundos somados a uma volta que leva de catorze a
+                # trinta e seis. Mas corredor, arquivo e datacenter estão
+                # vazios quase sempre, e quadro sem pessoa não tem trajetória
+                # nenhuma para medir: a rajada ali seria gasto pelo gasto.
+                if (tem_pessoa
+                        and self._quer_rajada(cam)
+                        and self._tem_cota_rajada(cam)
+                        and await self._ha_movimento(cam, quadro)):
+                    await self._rajada_continua(cam, rastreio, fora)
+
                 await self._registrar_acoes(db, cam, objetos, quadro,
                                             largura, altura, agora)
 
@@ -284,12 +789,23 @@ class Inferencia:
                 # a caixa acompanha o objeto enquanto ele está em cena, e o
                 # registro nasce uma vez por passagem — o carro parado segue
                 # enquadrado no vídeo sem voltar à lista a cada ciclo.
-                caixas_do_quadro.append({
+                # Guardada por referência: a placa só se conhece depois da
+                # leitura, lá embaixo, e é nesta mesma caixa que ela entra.
+                bbox = obj.bbox_normalizado(largura, altura)
+                if not bbox or len(bbox) < 4 or not all(isinstance(v, (int, float)) and -1000 <= v <= 2000 for v in bbox):
+                    print(f"[BOXES-WARN] {cam.codigo}: invalid bbox for {obj.classe}: {bbox}")
+                    continue
+                caixa_obj = {
                     "classe": obj.classe,
                     "confianca": round(float(obj.confianca), 4),
-                    "bbox": obj.bbox_normalizado(largura, altura),
+                    "bbox": bbox,
                     "track_id": obj.track_id,
-                })
+                }
+                caixas_do_quadro.append(caixa_obj)
+                corpo = None
+                if obj.classe == "pessoa":
+                    corpo = {"bbox": obj.bbox, "caixa": caixa_obj, "codigo": None}
+                    corpos_no_quadro.append(corpo)
 
                 # O piso extra vale só para o registro: o que fica gravado com
                 # rótulo errado manda o operador atrás da coisa errada, e a
@@ -308,8 +824,22 @@ class Inferencia:
                 if self._repetido((cam.codigo, f"obj:{marca}")):
                     continue
 
+                # A placa é lida no recorte que o detector de objeto já
+                # delimitou: procurá-la no quadro inteiro seria desperdiçar
+                # essa delimitação, e ela é o que há de menor em cena.
+                texto_placa = ""
+                if obj.classe in vision.VEICULOS:
+                    x1, y1, x2, y2 = obj.bbox
+                    recorte_bgr = quadro[max(0, y1):y2, max(0, x1):x2]
+                    lida = await asyncio.to_thread(placa.ler, recorte_bgr)
+                    if lida:
+                        texto_placa, conf_placa = lida
+                        caixa_obj["placa"] = texto_placa
+                        log.info("%s: placa %s lida em %s (%.0f%%)",
+                                 cam.codigo, texto_placa, obj.classe, conf_placa * 100)
+
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, obj.bbox)
-                await processar_deteccao(db, DeteccaoIn(
+                registro = await processar_deteccao(db, DeteccaoIn(
                     tipo=TipoDeteccao.OBJETO,
                     camera_codigo=cam.codigo,
                     ocorrido_em=agora,
@@ -317,9 +847,23 @@ class Inferencia:
                     confianca=round(float(obj.confianca), 4),
                     bbox=obj.bbox_normalizado(largura, altura),
                     track_id=obj.track_id,
+                    placa=texto_placa,
                     snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
                 ), origem="inferencia")
                 self.gerados += 1
+                if corpo is not None:
+                    corpo["codigo"] = registro.get("codigo")
+                # Guarda a primeira pessoa da volta para o alerta de entrada
+                # levar um recorte: alerta de sala sem imagem obriga quem
+                # revisa a ir procurar a captura na lista.
+                if obj.classe == "pessoa" and codigo_pessoa is None:
+                    codigo_pessoa = registro.get("codigo")
+
+        # Fecha a transação antes da parte lenta. A extração de rosto leva
+        # perto de um segundo, e segurar a trava de escrita do SQLite durante
+        # ela põe na fila quem for gravar nesse meio tempo — inclusive a
+        # trilha de auditoria de quem abre uma ficha biométrica.
+        await db.commit()
 
         # Rosto só existe onde há pessoa, e procurar por um num quadro vazio
         # custava 0,97s contra 0,17s do detector de objeto — com o parque em
@@ -328,6 +872,13 @@ class Inferencia:
         # cena. Quando a câmera não tem análise de objeto, `tem_pessoa` fica
         # em None e o rosto é procurado como antes: sem detector de pessoa,
         # não há informação que justifique pular.
+        if not cam.analitico_facial:
+            print(f"[BOXES-SKIP] {cam.codigo}: analitico_facial=False")
+        elif not face_engine.modelos_disponiveis():
+            print(f"[BOXES-SKIP] {cam.codigo}: modelos_disponiveis()=False")
+        elif tem_pessoa is False:
+            print(f"[BOXES-SKIP] {cam.codigo}: tem_pessoa=False (no people detected)")
+
         if (cam.analitico_facial and face_engine.modelos_disponiveis()
                 and tem_pessoa is not False):
             # Uma passada só, com os pisos afrouxados: os filtros padrão
@@ -339,14 +890,24 @@ class Inferencia:
                 face_engine.extrair_faces, quadro,
                 0.0, settings.INFERENCIA_ROSTO_MIN_PX, 0.0,
             )
+            # O que o alinhamento precisa saber da cena para, se for o caso,
+            # fazer nascer a linha do corpo que recebe a identidade.
+            cena = {"cam": cam, "quadro": quadro, "agora": agora}
             for face in faces:
                 x1, y1, x2, y2 = face.bbox
-                caixas_do_quadro.append({
+                # Guardada por referência: a identidade só se conhece depois da
+                # busca 1:N, lá embaixo, e é nesta mesma caixa que o nome entra.
+                bbox = face.bbox_normalizado(largura, altura)
+                if not bbox or len(bbox) < 4 or not all(isinstance(v, (int, float)) and -1000 <= v <= 2000 for v in bbox):
+                    print(f"[BOXES-WARN] {cam.codigo}: invalid bbox for face: {bbox}")
+                    continue
+                caixa_rosto = {
                     "classe": "rosto",
                     "confianca": round(float(face.qualidade), 4),
-                    "bbox": face.bbox_normalizado(largura, altura),
+                    "bbox": bbox,
                     "track_id": None,
-                })
+                }
+                caixas_do_quadro.append(caixa_rosto)
 
                 # Só entra no registro o que serve para identificar: capturas
                 # ruins gravadas viram identificação que não se sustenta.
@@ -357,11 +918,23 @@ class Inferencia:
                 # apareceu: duas pessoas que passam pelo mesmo ponto são duas
                 # passagens, e a segunda não pode sumir porque a primeira
                 # esteve ali. O embedding separa uma da outra; a posição não.
-                if self._rosto_repetido(cam.codigo, face.embedding):
+                repetido, entrada = self._rosto_recente(cam.codigo, face.embedding)
+                if repetido:
+                    if entrada[2]:
+                        caixa_rosto["pessoa_nome"] = entrada[2]
+                        if entrada[2] not in nomes_no_quadro:
+                            nomes_no_quadro.append(entrada[2])
+                        # Também aqui, e não só quando o registro nasce: é
+                        # esta a volta comum — a pessoa segue em cena e o
+                        # rosto já foi identificado antes. Sem alinhar aqui, a
+                        # caixa grande ficaria anônima na maioria dos quadros.
+                        await self._alinhar_corpo(db, cena, face.bbox,
+                                                  corpos_no_quadro,
+                                                  entrada[2], entrada[3])
                     continue
 
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, face.bbox)
-                await processar_deteccao(db, DeteccaoIn(
+                resultado = await processar_deteccao(db, DeteccaoIn(
                     tipo=TipoDeteccao.FACIAL,
                     camera_codigo=cam.codigo,
                     ocorrido_em=agora,
@@ -372,9 +945,38 @@ class Inferencia:
                 ), origem="inferencia")
                 self.gerados += 1
 
+                nome = resultado.get("nome")
+                if nome:
+                    entrada[2] = nome
+                    entrada[3] = resultado.get("pessoa_id")
+                    caixa_rosto["pessoa_nome"] = nome
+                    caixa_rosto["similaridade"] = resultado.get("similaridade")
+                    await self._alinhar_corpo(db, cena, face.bbox,
+                                              corpos_no_quadro,
+                                              nome, entrada[3])
+                    if nome not in nomes_no_quadro:
+                        nomes_no_quadro.append(nome)
+                    log.info("%s: %s reconhecido (%.0f%%)", cam.codigo, nome,
+                             (resultado.get("similaridade") or 0) * 100)
+
+        # Sala vigiada: compara a ocupação com a da volta anterior — o fato é
+        # a *mudança*, e mudança só existe entre duas voltas.
+        #
+        # Fica depois do facial, e não junto da contagem: antes o alerta
+        # nascia sabendo quantas cabeças havia e nada sobre quem eram, porque
+        # os rostos só são lidos adiante. Quem opera uma sala de reunião
+        # precisa do nome, não do número — e o nome já está aqui.
+        if cam.alerta_presenca and cam.analitico_objeto:
+            await self._vigiar_sala(db, cam, objetos, codigo_pessoa, quadro,
+                                    nomes_no_quadro)
+
         # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
         # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem
         # isso a última caixa ficaria pairando sobre o vídeo até expirar.
+        if len(caixas_do_quadro) > 0:
+            print(f"[BOXES] {cam.codigo}: {len(caixas_do_quadro)} boxes "
+                  f"(obj: {len([c for c in caixas_do_quadro if c['classe'] != 'rosto'])}, "
+                  f"face: {len([c for c in caixas_do_quadro if c['classe'] == 'rosto'])})")
         await publicar("quadro_ao_vivo", {
             "camera_codigo": cam.codigo,
             "caixas": caixas_do_quadro,
