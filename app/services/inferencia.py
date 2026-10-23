@@ -985,15 +985,19 @@ class Inferencia:
             print(f"[BOXES] {cam.codigo}: {len(caixas_do_quadro)} boxes "
                   f"(obj: {len([c for c in caixas_do_quadro if c['classe'] != 'rosto'])}, "
                   f"face: {len([c for c in caixas_do_quadro if c['classe'] == 'rosto'])})")
-        await publicar("quadro_ao_vivo", {
-            "camera_codigo": cam.codigo,
-            "caixas": caixas_do_quadro,
-            # Até quando esta lista ainda vale. Vai daqui porque só o worker
-            # sabe quanto demora uma volta pelo parque, e isso muda a cada
-            # câmera cadastrada: com validade fixa, a caixa apagava entre um
-            # quadro e o seguinte assim que o parque crescia.
-            "validade_s": round(self.ciclo_real * 2.0, 1),
-        })
+        try:
+            await publicar("quadro_ao_vivo", {
+                "camera_codigo": cam.codigo,
+                "caixas": caixas_do_quadro,
+                # Até quando esta lista ainda vale. Vai daqui porque só o worker
+                # sabe quanto demora uma volta pelo parque, e isso muda a cada
+                # câmera cadastrada: com validade fixa, a caixa apagava entre um
+                # quadro e o seguinte assim que o parque crescia.
+                "validade_s": round(self.ciclo_real * 2.0, 1),
+            })
+        except Exception as exc:
+            print(f"[BOXES-PUBLISH-ERROR] {cam.codigo}: {exc}")
+            raise
 
 
 inferencia = Inferencia(settings.INFERENCIA_INTERVALO, settings.INFERENCIA_JANELA_S)
