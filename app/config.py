@@ -543,7 +543,34 @@ class Settings(BaseSettings):
     ACAO_HORARIO_INICIO: str = "07:00"
     ACAO_HORARIO_FIM: str = "19:00"
 
-    ACAO_CORRIDA_VEL: float = 0.22
+    # --- Corrida súbita ---------------------------------------------------
+    # O rótulo da ação diz "súbita", e é isso que estes números exigem: não
+    # basta estar rápido, é preciso ter *acelerado*. Quem atravessa o pátio
+    # sempre apressado não vira alerta a cada volta.
+    #
+    # A unidade é altura de corpo por segundo, e não fração de quadro. Um
+    # adulto anda a ~0,8 do próprio corpo por segundo e corre acima de 2.
+    # Medir em fração de quadro misturava velocidade com distância da lente:
+    # quem passa rente à câmera desloca muito mais quadro andando do que quem
+    # corre no fundo da sala, e o piso único disparava na frente e emudecia
+    # no fundo. Veja `Trilha.escala`.
+    ACAO_CORRIDA_RITMO: float = 1.6
+    # Quanto o ritmo tem de subir sobre o que a própria pessoa vinha tendo.
+    # É o "súbita": 0,9 corpo/s é a diferença entre andar e correr.
+    ACAO_CORRIDA_SALTO: float = 0.9
+    # 0 é seguir reto, 1 é inverter o sentido a cada passo. Correr é dirigido;
+    # oscilar no mesmo lugar é briga, ou é a caixa trocando de dono entre duas
+    # pessoas próximas.
+    ACAO_CORRIDA_AGITACAO: float = 0.35
+    # Quanto as condições precisam durar juntas. Derruba o salto de posição de
+    # um quadro só, que é quase sempre o rastreador reatribuindo a trilha.
+    ACAO_CORRIDA_DURACAO_S: float = 0.4
+    # Quando a imagem inteira anda — tremor, vento, reposicionamento da PTZ —
+    # toda trilha arranca junta e todas pareceriam correr. Mede-se a coerência
+    # dos passos: o tamanho da soma dos vetores sobre a soma dos tamanhos, de
+    # 0 (cada um para o seu lado) a 1 (o mesmo vetor para todos). Veja
+    # `AnalisadorAcoes._camera_moveu`.
+    ACAO_CORRIDA_COERENCIA: float = 0.90
 
     # --- Agressão física ------------------------------------------------
     # Três sinais exigidos ao mesmo tempo, nas duas pessoas do par. Veja
