@@ -361,6 +361,65 @@ def test_analise_de_acao_emite_com_o_rastreio_ligado():
     assert [e.classe for e in emitidos][:1] == ["permanencia"]
 
 
+def _vigiar_permanencia(caixa_do_quadro, quadros=80, limite=300.0):
+    """Roda como a câmera entrega: rajada de quadros, depois salto de visita.
+
+    `caixa_do_quadro(i)` devolve a caixa da pessoa no quadro i.
+    """
+    r = RastreioPorPosicao(ttl_s=1200.0)
+    an = AnalisadorAcoes(seg_permanencia=limite)
+    an.ttl_trilha = 1200.0
+    an.acoes_ativas = {"permanencia"}
+    eventos, t = [], 1000.0
+    for i in range(quadros):
+        objetos = [_pessoa_em(c) for c in caixa_do_quadro(i)]
+        r.atribuir(objetos, agora=t)
+        eventos += an.atualizar(objetos, 1280, 720, agora=t)
+        t += 0.15
+        if i % 8 == 7:
+            t += 80.0          # fim da rajada: a câmera só volta depois
+    return eventos
+
+
+def test_andar_de_um_lado_para_o_outro_e_permanencia():
+    """Permanência é não sair dali, não é ficar imóvel.
+
+    Quem anda de um lado para o outro do corredor por vinte minutos está lá
+    há vinte minutos — e é essa a pessoa que a ação existe para apontar.
+    Medida por velocidade, cada passo zerava o relógio e ela nunca disparava.
+    """
+    def vaivem(i):
+        x = 400 + (90 if (i // 4) % 2 == 0 else -90)
+        return [(x, 300, x + 90, 420)]
+
+    assert [e.classe for e in _vigiar_permanencia(vaivem)] == ["permanencia"], (
+        "um alerta: é uma pessoa só, por mais identidades que ela ganhe"
+    )
+
+
+def test_quem_atravessa_a_cena_nao_permanece():
+    """O contraponto: sair da área é o que a ação não procura."""
+    assert _vigiar_permanencia(
+        lambda i: [(400 + i * 14, 300, 490 + i * 14, 420)]) == []
+
+
+def test_duas_pessoas_paradas_em_cantos_distintos_alertam_as_duas():
+    """O represamento é do lugar, e não pode engolir quem está noutro canto."""
+    eventos = _vigiar_permanencia(
+        lambda i: [(150, 300, 240, 420), (1000, 300, 1090, 420)])
+    assert [e.classe for e in eventos] == ["permanencia", "permanencia"]
+
+
+def test_o_alerta_diz_quanto_tempo():
+    """A duração é o fato: sem ela o alerta diz só que havia alguém parado.
+
+    Quem recebe precisa saber de cara se é um quarto de hora ou três horas,
+    porque é disso que depende ir até lá.
+    """
+    eventos = _vigiar_permanencia(lambda i: [(400, 300, 490, 420)])
+    assert eventos[0].duracao_s > 300, "conta desde que a permanência começou"
+
+
 def test_sem_rastreio_a_analise_continua_muda():
     """A prova pelo avesso, para o defeito não voltar sem ninguém notar."""
     an = AnalisadorAcoes(seg_permanencia=300.0)

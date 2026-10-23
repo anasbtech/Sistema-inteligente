@@ -521,6 +521,20 @@ class Settings(BaseSettings):
     # inteiro trabalhando. Permanência só tem sentido onde ninguém deveria
     # ficar: corredor, hall, garagem, doca — e é por câmera que se liga.
     ACAO_PERMANENCIA_S: float = 900.0
+    # O raio da "mesma área", em alturas de corpo — cerca de três metros e
+    # meio. É o que define permanência: não é ficar imóvel, é não sair dali.
+    # Quem anda de um lado para o outro do corredor por vinte minutos está
+    # lá há vinte minutos, e é justamente essa pessoa que a ação procura.
+    #
+    # Em alturas de corpo, e não em fração de quadro, pelo motivo de sempre:
+    # os mesmos três metros e meio são meia tela rente à lente e um punhado
+    # de pixels no fundo da sala.
+    #
+    # Quem se afasta mais que isto quase sempre já perdeu a própria trilha —
+    # o rastreio por posição exige sobreposição entre visitas e dá
+    # identidade nova a quem mudou de lugar. O raio é o que cobre o caso de
+    # dentro da rajada, onde a trilha acompanha passo a passo.
+    ACAO_PERMANENCIA_RAIO: float = 2.0
 
     # O cooldown precisa ser maior que a volta pelo parque. Em 30s, com a
     # volta em 80s, a mesma pessoa parada rendia um evento por visita.

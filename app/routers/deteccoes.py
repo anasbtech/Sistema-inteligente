@@ -134,6 +134,18 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                 f"Pessoa vista às {visto:%H:%M} em {cam.nome}, fora da janela "
                 f"permitida ({ini} às {fim})."
             )
+        elif det.classe in ("permanencia", "abandono"):
+            # "por 1327s" é verdadeiro e ilegível: quem recebe o alerta
+            # precisa saber de cara se é um quarto de hora ou três, porque é
+            # disso que depende ir até lá. A duração é o fato aqui — sem ela
+            # o alerta diz apenas que havia alguém parado, que é o normal.
+            minutos = round((det.duracao_s or 0) / 60)
+            quanto = f"{minutos} min" if minutos else f"{det.duracao_s or 0}s"
+            quem = "Pessoa" if det.classe == "permanencia" else "Volume"
+            detalhe = (
+                f"{quem} na mesma área de {cam.nome} há {quanto}, sem sair "
+                "do lugar."
+            )
         elif det.classe == "briga":
             # A frase genérica dizia "evento comportamental envolvendo 2
             # pessoas", sob um título que afirmava agressão. Aqui o sistema

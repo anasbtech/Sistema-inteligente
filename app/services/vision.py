@@ -286,7 +286,9 @@ def detalhe_acao(codigo: str) -> str:
     frase deixaria a tela mentindo sobre o próprio sistema.
     """
     if codigo == "permanencia":
-        return f"Dispara com alguém parado no mesmo lugar por {_duracao(settings.ACAO_PERMANENCIA_S)}"
+        return ("Dispara com alguém na mesma área por "
+                f"{_duracao(settings.ACAO_PERMANENCIA_S)} — andar de um lado "
+                "para o outro ali conta")
     if codigo == "aglomeracao":
         return (f"Dispara com {settings.ACAO_AGLOMERACAO_N} pessoas ou mais agrupadas "
                 f"no mesmo canto do quadro")
@@ -797,6 +799,9 @@ class Trilha:
     visto_em: float = field(default_factory=time.time)
     primeiro_em: float = field(default_factory=time.time)
     parado_desde: Optional[float] = None
+    # Onde a permanência atual começou. O relógio corre enquanto a pessoa não
+    # se afastar daqui — ver `distancia_da_ancora`.
+    ancora: Optional[Tuple[float, float]] = None
     # Desde quando esta pessoa reúne as condições de corrida. Enquanto durar
     # pouco não vira alerta: um salto de posição isolado é quase sempre o
     # rastreador reatribuindo a trilha, não alguém disparando a correr.
@@ -848,6 +853,21 @@ class Trilha:
             soma += float(np.hypot(x1 - x0, y1 - y0))
         dt = max(pts[-1][2] - pts[0][2], 1e-3)
         return soma / dt
+
+    def distancia_da_ancora(self, x: float, y: float) -> float:
+        """Quanto esta pessoa se afastou de onde a permanência começou.
+
+        Em alturas de corpo, pela régua de sempre: a mesma caminhada de três
+        metros é meia tela rente à lente e um punhado de pixels no fundo da
+        sala, e um raio em fração de quadro seria dois raios diferentes na
+        mesma câmera.
+        """
+        if self.ancora is None:
+            return 0.0
+        escala = self.escala()
+        if escala <= 1e-3:
+            return 0.0
+        return float(np.hypot(x - self.ancora[0], y - self.ancora[1]) / escala)
 
     def caminho_corporal(self) -> float:
         """`caminho` na régua do próprio corpo — alturas por segundo.
@@ -1126,6 +1146,7 @@ class AnalisadorAcoes:
         self._briga_desde: Dict[Tuple[int, int], float] = {}
         self.seg_permanencia = (settings.ACAO_PERMANENCIA_S
                                 if seg_permanencia is None else seg_permanencia)
+        self.raio_permanencia = settings.ACAO_PERMANENCIA_RAIO
         self.n_aglomeracao = (settings.ACAO_AGLOMERACAO_N
                               if n_aglomeracao is None else n_aglomeracao)
         self.raio_aglomeracao = (settings.ACAO_AGLOMERACAO_RAIO
@@ -1139,6 +1160,10 @@ class AnalisadorAcoes:
         # ver `_avaliar_aglomeracao`.
         self._aglomeracao_em: Optional[float] = None
         self._aglomeracao_alertou: float = 0.0
+        # Onde e quando cada permanência já foi ao painel: (classe, x, y, t).
+        # Ver `_permanencia_repetida` — o represamento por trilha não basta
+        # quando a mesma pessoa ganha identidade nova.
+        self._permanencia_em: List[Tuple[str, float, float, float]] = []
         # Quanto uma trilha sobrevive sem ser vista. Oito segundos servem para
         # quem analisa a câmera quadro a quadro; quem a visita de tempos em
         # tempos precisa esticar isto até além do intervalo entre as visitas,
@@ -1181,6 +1206,32 @@ class AnalisadorAcoes:
             return False
         x1, y1, x2, y2 = obj.bbox
         return min(x2 - x1, y2 - y1) >= settings.INFERENCIA_LADO_MIN_PX
+
+    def _permanencia_repetida(self, classe: str, x: float, y: float,
+                              escala: float, t: float) -> bool:
+        """Este mesmo canto já rendeu alerta há pouco.
+
+        O represamento por trilha não basta aqui. O rastreio por posição dá
+        identidade nova a quem não se sobrepõe à visita anterior, e quem anda
+        de um lado para o outro faz exatamente isso: entre duas visitas
+        separadas por dezenas de segundos, está do outro lado do próprio
+        trecho. Cada identidade nova trazia o seu relógio e o seu alerta, e o
+        painel recebia a mesma pessoa no mesmo corredor várias vezes.
+
+        Olhando o *lugar*, e não só a identidade, o segundo alerta é
+        reconhecido como o primeiro. O raio é o mesmo que define a área.
+        """
+        vivos, repetido = [], False
+        for registro in self._permanencia_em:
+            cls, ax, ay, quando = registro
+            if t - quando >= self.cooldown_s:
+                continue                       # venceu: deixa de represar
+            vivos.append(registro)
+            if cls == classe and escala > 1e-3 \
+                    and float(np.hypot(x - ax, y - ay)) / escala <= self.raio_permanencia:
+                repetido = True
+        self._permanencia_em = vivos
+        return repetido
 
     def _camera_moveu(self, objetos, largura: int, altura: int) -> bool:
         """Todo mundo em cena andou junto — foi a câmera, não as pessoas.
@@ -1367,8 +1418,6 @@ class AnalisadorAcoes:
             if obj.classe == "pessoa":
                 pessoas_xy.append((nx, ny))
 
-            vel = trilha.velocidade()
-
             # --- corrida súbita ---
             if obj.classe == "pessoa" and self.ativa("corrida"):
                 self._avaliar_corrida(trilha, obj, t, camera_moveu, eventos)
@@ -1378,11 +1427,21 @@ class AnalisadorAcoes:
                 self._avaliar_queda(trilha, obj, t, camera_moveu, eventos)
 
             # --- permanência prolongada ---
-            if vel < 0.012:
+            # A pergunta é "continua na mesma área?", e não "está imóvel?".
+            # Medido por velocidade, quem anda de um lado para o outro do
+            # corredor zerava o relógio a cada passo e nunca disparava — e é
+            # exatamente essa pessoa que a ação existe para apontar. Quem
+            # fica de fato imóvel é um caso particular deste.
+            if trilha.ancora is None:
+                trilha.ancora = (nx, ny)
+            if trilha.distancia_da_ancora(nx, ny) <= self.raio_permanencia:
                 trilha.parado_desde = trilha.parado_desde or t
                 parado_ha = t - trilha.parado_desde
                 if obj.classe == "pessoa" and parado_ha > self.seg_permanencia \
+                        and not self._permanencia_repetida(
+                            "pessoa", nx, ny, trilha.escala(), t) \
                         and self._pode_alertar(trilha, "permanencia", t):
+                    self._permanencia_em.append(("pessoa", nx, ny, t))
                     eventos.append(EventoAcao(
                         "permanencia", ROTULO_ACAO["permanencia"], confianca=0.88,
                         severidade=SEVERIDADE_ACAO["permanencia"],
@@ -1390,7 +1449,10 @@ class AnalisadorAcoes:
                         bbox=obj.bbox, track_id=obj.track_id,
                     ))
                 if obj.classe in ("volume", "mochila") and parado_ha > self.seg_abandono \
+                        and not self._permanencia_repetida(
+                            "volume", nx, ny, trilha.escala(), t) \
                         and self._pode_alertar(trilha, "abandono", t):
+                    self._permanencia_em.append(("volume", nx, ny, t))
                     eventos.append(EventoAcao(
                         "abandono", ROTULO_ACAO["abandono"], confianca=0.90,
                         severidade=SEVERIDADE_ACAO["abandono"],
@@ -1398,6 +1460,9 @@ class AnalisadorAcoes:
                         bbox=obj.bbox, track_id=obj.track_id,
                     ))
             else:
+                # Saiu da área: a permanência que houver recomeça daqui, e
+                # não soma com a de onde ele estava antes.
+                trilha.ancora = (nx, ny)
                 trilha.parado_desde = None
 
             # --- arma em cena ---
