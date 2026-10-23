@@ -95,7 +95,8 @@ async def _proximo_codigo(db: AsyncSession, tipo: TipoDeteccao) -> str:
 
 async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                         pessoa: Optional[Pessoa],
-                        notificar: bool = True) -> Optional[Alerta]:
+                        notificar: bool = True,
+                        zona_nome: str = "") -> Optional[Alerta]:
     """Severidade 3+ vira alerta. Abaixo disso fica só no registro."""
     if det.severidade < 3:
         return None
@@ -133,6 +134,18 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
             detalhe = (
                 f"Pessoa vista às {visto:%H:%M} em {cam.nome}, fora da janela "
                 f"permitida ({ini} às {fim})."
+            )
+        elif det.classe in ("invasao", "area_restrita"):
+            # Qual perímetro, e por que isto é ocorrência: a zona pode ter
+            # lista de autorizados, e o alerta só nasce para quem não está
+            # nela — inclusive para quem o reconhecimento não identificou.
+            onde = f" ({zona_nome})" if zona_nome else ""
+            o_que = ("cruzou o perímetro" if det.classe == "invasao"
+                     else "entrou na área restrita")
+            detalhe = (
+                f"Pessoa sem autorização {o_que}{onde} em {cam.nome}. Quem o "
+                "reconhecimento facial não identificou conta como não "
+                "autorizado — confirme na imagem."
             )
         elif det.classe in ("permanencia", "abandono"):
             # "por 1327s" é verdadeiro e ilegível: quem recebe o alerta
@@ -485,7 +498,9 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     db.add(det)
     await db.flush()
 
-    alerta = await _criar_alerta(db, det, cam, pessoa, notificar=publicar_evento)
+    alerta = await _criar_alerta(db, det, cam, pessoa,
+                                 notificar=publicar_evento,
+                                 zona_nome=dados.zona_nome or "")
 
     if publicar_evento:
         await publicar("deteccao", {

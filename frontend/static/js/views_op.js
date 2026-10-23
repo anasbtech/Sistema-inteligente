@@ -1531,6 +1531,12 @@ function abrirEditorZonas(cam){
             ${z.regras[k] ? 'checked' : ''}><span>${esc(rot)}</span></label>`).join('')}
         <span class="hint" style="margin-top:4px">Sem nenhuma marcada, a zona é
           só desenho: nenhuma ação consulta a região.</span></div>
+      <div class="field"><label for="zAutorizados">Quem pode estar aqui</label>
+        <input class="inp mono" id="zAutorizados" placeholder="BIO-M-000012, BIO-F-000004"
+               value="${esc((z.regras.autorizados || []).join(', '))}">
+        <span class="hint">Identificadores biométricos separados por vírgula.
+          Em branco, qualquer pessoa na região vira ocorrência. Quem o
+          reconhecimento ainda não identificou conta como não autorizado.</span></div>
       <p class="hint" style="margin:8px 0 0">
         ${z.pontos.length} de ${minimo} ponto(s) mínimos.
         ${z.pontos.length >= minimo ? 'Pronta.' : 'Clique na imagem para marcar.'}</p>
@@ -1546,7 +1552,10 @@ function abrirEditorZonas(cam){
       // Regra de polígono não vale em linha, e vice-versa: deixá-la gravada
       // criaria uma zona que diz vigiar algo que o detector nunca pergunta
       // àquele tipo.
-      const validas = REGRAS_ZONA[z.tipo].map(([k]) => k);
+      // `autorizados` sobrevive à troca: é a lista de quem pode estar ali, e
+      // vale tanto para a linha quanto para o polígono. Perdê-la ao alternar
+      // o tipo apagaria sem avisar uma decisão de acesso.
+      const validas = REGRAS_ZONA[z.tipo].map(([k]) => k).concat('autorizados');
       z.regras = Object.fromEntries(
         Object.entries(z.regras).filter(([k, v]) => v && validas.includes(k)));
       listar(); formulario(); pintar();
@@ -1558,6 +1567,14 @@ function abrirEditorZonas(cam){
       z.regras = {...z.regras, [cx.dataset.regra]: cx.checked};
       listar();
     });
+    const aut = $('#zAutorizados', alvo);
+    if(aut) aut.oninput = () => {
+      // Lista vazia some da regra em vez de ficar como `[]`: é assim que o
+      // detector lê "esta zona não libera ninguém".
+      const ids = aut.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      z.regras = {...z.regras, autorizados: ids.length ? ids : undefined};
+      listar();
+    };
     $('#zLimpar').onclick = () => { z.pontos = []; formulario(); listar(); pintar(); };
   }
 
@@ -1596,7 +1613,11 @@ function abrirEditorZonas(cam){
     // é melhor que recusar — pode ser uma região desenhada agora para marcar
     // a regra depois —, mas calar seria deixar o operador achar que ligou
     // uma vigilância que não existe.
-    const mudas = zonas.filter(z => !Object.values(z.regras || {}).some(Boolean));
+    // Só as chaves de vigilância contam. `autorizados` diz *quem escapa* de
+    // uma regra, não cria regra nenhuma: uma zona que lista autorizados e não
+    // marca nada segue sem ninguém a consultando, e o aviso tem de sair.
+    const mudas = zonas.filter(z => !REGRAS_ZONA[z.tipo]
+      .some(([k]) => (z.regras || {})[k]));
     if(mudas.length){
       const segue = await confirmar('Zona sem vigilância',
         `${mudas.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} não vigia nada:

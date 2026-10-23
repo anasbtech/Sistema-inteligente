@@ -295,11 +295,11 @@ def detalhe_acao(codigo: str) -> str:
     if codigo == "abandono":
         return f"Dispararia com um volume parado por {_duracao(settings.ACAO_ABANDONO_S)}"
     if codigo == "invasao":
-        return "Dispara quando alguém cruza a linha desenhada na câmera"
+        return ("Dispara quando alguém cruza a linha desenhada na câmera, salvo quem a zona autorizar")
     if codigo == "contrafluxo":
         return "Dispara com deslocamento contra a direção definida na zona"
     if codigo == "area_restrita":
-        return "Dispara com qualquer pessoa dentro da zona marcada como restrita"
+        return ("Dispara com pessoa dentro da zona restrita, salvo quem a zona autorizar — não identificado conta como não autorizado")
     if codigo == "fora_de_horario":
         ini, fim = janela_horario()
         return (f"Dispara com pessoa vista fora da janela definida na câmera — "
@@ -1164,6 +1164,10 @@ class AnalisadorAcoes:
         # Ver `_permanencia_repetida` — o represamento por trilha não basta
         # quando a mesma pessoa ganha identidade nova.
         self._permanencia_em: List[Tuple[str, float, float, float]] = []
+        # Quem é cada corpo em cena: track_id -> identificador biométrico. É
+        # preenchido de fora, pelo worker, a partir do reconhecimento facial,
+        # porque a análise de ação roda antes dele. Ver `_autorizado`.
+        self.identidades: Dict[int, str] = {}
         # Quanto uma trilha sobrevive sem ser vista. Oito segundos servem para
         # quem analisa a câmera quadro a quadro; quem a visita de tempos em
         # tempos precisa esticar isto até além do intervalo entre as visitas,
@@ -1206,6 +1210,30 @@ class AnalisadorAcoes:
             return False
         x1, y1, x2, y2 = obj.bbox
         return min(x2 - x1, y2 - y1) >= settings.INFERENCIA_LADO_MIN_PX
+
+    def _autorizado(self, track_id: Optional[int], regras: dict) -> bool:
+        """Esta pessoa tem autorização prévia para esta zona.
+
+        A lista é da zona, e guarda identificadores biométricos: quem pode
+        estar ali é decisão de quem conhece o lugar, gravada antes do fato.
+        Zona sem lista não autoriza ninguém — é o comportamento de sempre,
+        em que qualquer pessoa na área restrita vira ocorrência.
+
+        **Desconhecido não é autorizado.** Quem o facial ainda não reconheceu
+        não está na lista, e o alerta sai. A alternativa seria um perímetro
+        que se abre justamente para quem o sistema não sabe quem é.
+
+        A identidade vem do reconhecimento da volta anterior, porque a
+        análise de ação roda antes do facial na mesma volta. Na prática isso
+        significa que quem está parado na área é reconhecido a partir da
+        segunda visita — e que quem acabou de entrar é sempre desconhecido, o
+        que para um perímetro é o lado certo do erro.
+        """
+        liberados = regras.get("autorizados") or []
+        if not liberados or track_id is None:
+            return False
+        quem = self.identidades.get(track_id)
+        return bool(quem) and quem in liberados
 
     def _permanencia_repetida(self, classe: str, x: float, y: float,
                               escala: float, t: float) -> bool:
@@ -1506,6 +1534,7 @@ class AnalisadorAcoes:
                     continue
                 nome_zona = zona.get("nome") or ""
                 if obj.classe == "pessoa" and regras.get("restrita") \
+                        and not self._autorizado(obj.track_id, regras) \
                         and self._pode_alertar(trilha, "area_restrita", t):
                     eventos.append(EventoAcao(
                         "area_restrita", ROTULO_ACAO["area_restrita"],
@@ -1531,11 +1560,15 @@ class AnalisadorAcoes:
                     regras = zona.get("regras") or {}
                     if zona.get("tipo") == "LINHA" and regras.get("invasao", True):
                         if cruzou_linha(anterior, (nx, ny), pontos) == "entrada" \
+                                and not self._autorizado(obj.track_id, regras) \
                                 and self._pode_alertar(trilha, "invasao", t):
                             eventos.append(EventoAcao(
                                 "invasao", ROTULO_ACAO["invasao"], confianca=0.93,
                                 severidade=SEVERIDADE_ACAO["invasao"],
                                 duracao_s=1, envolvidos=1,
+                                # Sem o nome da linha, o alerta diz que
+                                # alguém cruzou um perímetro e não diz qual.
+                                zona_nome=zona.get("nome") or "",
                                 bbox=obj.bbox, track_id=obj.track_id,
                             ))
                     elif zona.get("tipo") == "POLIGONO" and regras.get("contrafluxo"):

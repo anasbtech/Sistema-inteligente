@@ -493,6 +493,86 @@ def test_pessoa_fora_da_zona_restrita_nao_dispara():
     assert an.atualizar([fora], 1280, 720, zonas=[ZONA_RESTRITA], agora=1000.0) == []
 
 
+# ----------------------------------------------------------------------
+# Autorização prévia: quem a zona libera não vira ocorrência
+# ----------------------------------------------------------------------
+ZONA_COM_AUTORIZADOS = {**ZONA_RESTRITA,
+                        "regras": {"restrita": True,
+                                   "autorizados": ["BIO-M-000012"]}}
+PERIMETRO = {"nome": "Portão dos fundos", "tipo": "LINHA",
+             "pontos": [[0.5, 0.0], [0.5, 1.0]],
+             "regras": {"invasao": True, "autorizados": ["BIO-M-000012"]}}
+
+
+def test_quem_a_zona_autoriza_nao_vira_ocorrencia():
+    """O que a lista existe para evitar: a equipe que trabalha ali dentro.
+
+    Sem ela, a área restrita do datacenter acusa o próprio time de TI a cada
+    volta, e o alerta que importa se perde no meio.
+    """
+    an = _analisador(["area_restrita"])
+    an.identidades = {1: "BIO-M-000012"}
+    dentro = ObjetoDetectado("pessoa", 0.9, (100, 100, 200, 300), track_id=1)
+    assert an.atualizar([dentro], 1280, 720,
+                        zonas=[ZONA_COM_AUTORIZADOS], agora=1000.0) == []
+
+
+def test_quem_nao_esta_na_lista_dispara():
+    an = _analisador(["area_restrita"])
+    an.identidades = {1: "BIO-F-000099"}      # reconhecida, mas não liberada
+    dentro = ObjetoDetectado("pessoa", 0.9, (100, 100, 200, 300), track_id=1)
+    ev = an.atualizar([dentro], 1280, 720,
+                      zonas=[ZONA_COM_AUTORIZADOS], agora=1000.0)
+    assert [e.classe for e in ev] == ["area_restrita"]
+
+
+def test_desconhecido_nao_e_autorizado():
+    """O lado certo do erro para um perímetro.
+
+    Quem o facial ainda não reconheceu não está na lista — e não pode ser
+    tratado como se estivesse: seria um perímetro que se abre justamente
+    para quem o sistema não sabe quem é.
+    """
+    an = _analisador(["area_restrita"])
+    an.identidades = {}                        # ninguém identificado ainda
+    dentro = ObjetoDetectado("pessoa", 0.9, (100, 100, 200, 300), track_id=1)
+    ev = an.atualizar([dentro], 1280, 720,
+                      zonas=[ZONA_COM_AUTORIZADOS], agora=1000.0)
+    assert [e.classe for e in ev] == ["area_restrita"]
+
+
+def test_zona_sem_lista_segue_acusando_qualquer_um():
+    """A lista é opcional, e sem ela nada muda para quem já usava a ação."""
+    an = _analisador(["area_restrita"])
+    an.identidades = {1: "BIO-M-000012"}
+    dentro = ObjetoDetectado("pessoa", 0.9, (100, 100, 200, 300), track_id=1)
+    ev = an.atualizar([dentro], 1280, 720, zonas=[ZONA_RESTRITA], agora=1000.0)
+    assert [e.classe for e in ev] == ["area_restrita"]
+
+
+def test_autorizacao_vale_tambem_para_o_perimetro():
+    """Cruzar a linha é a mesma pergunta: quem cruzou tem permissão de estar lá?"""
+    an = _analisador(["invasao"])
+    an.identidades = {1: "BIO-M-000012"}
+    # Dois quadros: a linha precisa de duas posições para saber de que lado veio.
+    an.atualizar([ObjetoDetectado("pessoa", 0.9, (200, 300, 300, 500), 1)],
+                 1280, 720, zonas=[PERIMETRO], agora=1000.0)
+    ev = an.atualizar([ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 500), 1)],
+                      1280, 720, zonas=[PERIMETRO], agora=1000.5)
+    assert ev == [], "quem a zona autoriza atravessa sem acusar"
+
+
+def test_perimetro_acusa_quem_nao_tem_autorizacao():
+    an = _analisador(["invasao"])
+    an.identidades = {1: "BIO-F-000099"}
+    an.atualizar([ObjetoDetectado("pessoa", 0.9, (200, 300, 300, 500), 1)],
+                 1280, 720, zonas=[PERIMETRO], agora=1000.0)
+    ev = an.atualizar([ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 500), 1)],
+                      1280, 720, zonas=[PERIMETRO], agora=1000.5)
+    assert [e.classe for e in ev] == ["invasao"]
+    assert ev[0].zona_nome == "Portão dos fundos", "o alerta diz qual perímetro"
+
+
 def test_zona_sem_a_regra_nao_torna_a_area_restrita():
     """Zona desenhada para outra coisa não pode virar área restrita sozinha."""
     an = _analisador(["area_restrita"])

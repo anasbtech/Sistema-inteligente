@@ -74,6 +74,11 @@ class Inferencia:
         # não é o objeto anônimo de `_visto`, e represá-lo por 30 minutos era
         # o que deixava a trajetória só com rostos.
         self._corpos_identificados: Dict[Tuple[str, str], float] = {}
+        # Quem é cada corpo em cena, por câmera: track_id -> (id_biometrico,
+        # instante). É o que permite a zona restrita liberar quem tem
+        # autorização, e vem do facial — que roda depois da análise de ação,
+        # então a resposta é sempre a da volta anterior.
+        self._identidades: Dict[str, Dict[int, Tuple[str, float]]] = {}
         self.gerados = 0
         # Quanto uma volta completa leva de fato. Cresce com o parque, e é o
         # que o mosaico precisa saber para não apagar a caixa cedo demais.
@@ -204,11 +209,13 @@ class Inferencia:
         volta ao saguão depois de um tempo deve constar outra vez.
 
         Devolve `(repetido, entrada)`. A entrada é `[vetor, instante, nome,
-        pessoa_id]`, e a identidade fica guardada ali porque quem repete não
-        volta a passar pela busca 1:N: sem lembrá-la, ela apareceria só na
-        volta em que o registro nasce e sumiria nas seguintes, com a pessoa
-        ainda em cena. O `pessoa_id` acompanha o nome porque é ele que liga o
-        corpo ao rosto no banco, e a volta que repete tem corpo igual.
+        pessoa_id, id_biometrico]`, e a identidade fica guardada ali porque
+        quem repete não volta a passar pela busca 1:N: sem lembrá-la, ela
+        apareceria só na volta em que o registro nasce e sumiria nas
+        seguintes, com a pessoa ainda em cena. O `pessoa_id` acompanha o nome
+        porque é ele que liga o corpo ao rosto no banco, e a volta que repete
+        tem corpo igual; o `id_biometrico` acompanha os dois porque é por ele
+        que a zona restrita diz quem tem autorização para estar ali.
         """
         agora = time.monotonic()
         recentes = [
@@ -219,7 +226,7 @@ class Inferencia:
             if face_engine.similaridade_cosseno(entrada[0], embedding) >= settings.INFERENCIA_ROSTO_IGUAL:
                 self._rostos[camera] = recentes
                 return True, entrada
-        nova = [embedding, agora, None, None]
+        nova = [embedding, agora, None, None, None]
         recentes.append(nova)
         # Guarda só as últimas: o saguão cheio não pode fazer a lista crescer
         # sem teto, e comparar contra as mais recentes já resolve.
@@ -279,7 +286,7 @@ class Inferencia:
             nomes_no_quadro.append(nome)
 
     async def _alinhar_corpo(self, db, cena: dict, bbox_rosto, corpos: list,
-                             nome: str, pessoa_id) -> bool:
+                             nome: str, pessoa_id, id_biometrico=None) -> bool:
         """Leva a identidade do rosto para o corpo que o contém.
 
         Duas coisas de uma vez: o nome passa para a caixa grande, que é a que
@@ -311,6 +318,13 @@ class Inferencia:
         # pessoa: é o BIO-N, que tem registro e trajetória e não tem nome.
         if nome:
             alvo["caixa"]["pessoa_nome"] = nome
+        # Quem é este corpo, para a zona restrita poder perguntar na volta
+        # seguinte. A análise de ação roda antes do facial na mesma volta, e
+        # é por isso que a resposta vem sempre de uma volta atrás.
+        marca = alvo["caixa"].get("track_id")
+        if id_biometrico and marca is not None:
+            self._identidades.setdefault(cena["cam"].codigo, {})[marca] = (
+                id_biometrico, time.monotonic())
         corpos.remove(alvo)
         if not pessoa_id:
             return True
@@ -401,6 +415,16 @@ class Inferencia:
         # parque — o mesmo acordo do horário.
         analisador.n_aglomeracao = (cam.limite_aglomeracao
                                     or settings.ACAO_AGLOMERACAO_N)
+        # Quem é cada corpo, para a zona restrita liberar quem tem
+        # autorização. Vence junto com a trilha que o rastreio mantém: uma
+        # identidade mais velha que isso estaria falando de outra pessoa que
+        # herdou o mesmo número.
+        agora_mono = time.monotonic()
+        conhecidos = self._identidades.get(cam.codigo, {})
+        for marca in [m for m, (_, quando) in conhecidos.items()
+                      if agora_mono - quando > analisador.ttl_trilha]:
+            conhecidos.pop(marca, None)
+        analisador.identidades = {m: bio for m, (bio, _) in conhecidos.items()}
 
         try:
             eventos = analisador.atualizar(objetos, largura, altura,
@@ -942,7 +966,7 @@ class Inferencia:
                         # caixa grande ficaria anônima na maioria dos quadros.
                         no_corpo = await self._alinhar_corpo(
                             db, cena, face.bbox, corpos_no_quadro,
-                            entrada[2], entrada[3])
+                            entrada[2], entrada[3], entrada[4])
                         self._rotular(caixa_rosto, entrada[2], no_corpo,
                                       nomes_no_quadro)
                     continue
@@ -968,9 +992,11 @@ class Inferencia:
                 if nome or pessoa_id:
                     entrada[2] = nome
                     entrada[3] = pessoa_id
+                    entrada[4] = resultado.get("id_biometrico")
                     caixa_rosto["similaridade"] = resultado.get("similaridade")
                     no_corpo = await self._alinhar_corpo(
-                        db, cena, face.bbox, corpos_no_quadro, nome, pessoa_id)
+                        db, cena, face.bbox, corpos_no_quadro, nome, pessoa_id,
+                        entrada[4])
                     self._rotular(caixa_rosto, nome, no_corpo, nomes_no_quadro)
                     log.info("%s: %s reconhecido (%.0f%%)", cam.codigo,
                              nome or resultado.get("id_biometrico"),
