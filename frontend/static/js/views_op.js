@@ -1798,8 +1798,14 @@ function abrirEditorZonas(cam){
         return;
       }
     }
+    /* O botão pode já não existir. `confirmar` termina chamando
+       `fecharModal`, que esvazia a caixa do modal — a mesma que o editor
+       ocupa. Depois de qualquer aviso, `$('#zonaSalvar')` é null, e mexer
+       nele lançava TypeError bem aqui: o salvamento morria antes do pedido,
+       sem erro na tela e sem zona gravada. Era a causa real do "não salva",
+       e valia mesmo para quem clicava em "Salvar assim". */
     const bt = $('#zonaSalvar');
-    bt.disabled = true; bt.textContent = 'Salvando…';
+    if(bt){ bt.disabled = true; bt.textContent = 'Salvando…'; }
     try{
       const salva = await API.salvarCamera(cam.codigo, {zonas});
       toast('Zonas salvas', `${zonas.length} zona(s) em ${cam.nome}.`, 'ok');
@@ -1814,7 +1820,9 @@ function abrirEditorZonas(cam){
       abrirCamera(salva.codigo || cam.codigo);
     }catch(e){
       toast('Não foi possível salvar', e.message, 'err', 7000);
-      bt.disabled = false; bt.textContent = 'Salvar zonas';
+      // Devolve o editor com o rascunho. Sem isto, uma falha de rede levava
+      // junto o desenho que ainda não tinha sido gravado.
+      abrirEditorZonas({...cam, zonas});
     }
   };
 

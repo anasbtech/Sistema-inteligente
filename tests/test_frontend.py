@@ -109,6 +109,62 @@ def test_javascript_compila():
     assert not falhas, "JavaScript com erro de sintaxe:\n" + "\n".join(falhas)
 
 
+def _corpo_apos(fonte: str, inicio: int) -> str:
+    """Do ponto dado até o fim do handler, aproximado pelo fecho `\n  };`.
+
+    Para também no primeiro `abrirModal(`: ele repovoa a caixa, e o que vem
+    depois pertence a uma tela nova, onde os elementos existem de novo.
+    """
+    trecho = fonte[inicio:]
+    for marca in ("\n  };", "abrirModal("):
+        fim = trecho.find(marca)
+        if fim > 0:
+            trecho = trecho[:fim]
+    return trecho[:2000]
+
+
+def test_nada_toca_o_modal_depois_de_confirmar():
+    """`confirmar` esvazia a caixa do modal ao resolver.
+
+    Ela chama `fecharModal`, que faz `innerHTML = ''` — e a caixa é a mesma
+    que a tela por baixo ocupa. Quem perguntar e depois mexer num elemento
+    daquela tela recebe `null`.
+
+    Custou caro: o editor de zonas fazia `$('#zonaSalvar').disabled = true`
+    logo depois do aviso. Lançava `TypeError` antes do pedido ao servidor,
+    então o desenho não era gravado, nenhum erro aparecia na tela e nenhuma
+    linha entrava no log. Da interface, parecia que o botão não fazia nada.
+    """
+    suspeitas = []
+    for arquivo in _arquivos():
+        fonte = arquivo.read_text(encoding="utf-8")
+        for m in re.finditer(r"await confirmar\(", fonte):
+            corpo = _corpo_apos(fonte, m.end())
+            # Desreferência direta: `$('#id').algo`, sem passar por variável
+            # que possa ser conferida antes do uso.
+            for d in re.finditer(r"\$\(\s*'#[\w-]+'\s*\)\s*\.", corpo):
+                linha = fonte[:m.end()].count("\n") + corpo[:d.start()].count("\n") + 1
+                suspeitas.append(f"{arquivo.name}:{linha} — {d.group(0).strip()}")
+
+    assert not suspeitas, (
+        "elemento acessado sem guarda depois de `await confirmar` "
+        "(a caixa do modal já foi esvaziada):\n  " + "\n  ".join(suspeitas)
+    )
+
+
+def test_salvar_zonas_tolera_o_botao_que_sumiu():
+    """A guarda específica do editor de zonas, pelo nome.
+
+    O teste acima pega a desreferência direta; este exige que a variável
+    continue sendo conferida, porque é a forma que o editor usa.
+    """
+    fonte = (JS / "views_op.js").read_text(encoding="utf-8")
+    assert re.search(r"const bt = \$\('#zonaSalvar'\);\s*\n\s*if\(bt\)\{", fonte), (
+        "o salvamento de zonas voltou a mexer no botão sem conferir se ele "
+        "ainda existe — depois de um aviso, não existe"
+    )
+
+
 def test_botoes_de_camera_estao_ligados():
     """Os dois caminhos de cadastro de câmera, explicitamente.
 
