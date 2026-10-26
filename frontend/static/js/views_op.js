@@ -1739,26 +1739,17 @@ function abrirEditorZonas(cam){
     // regra está marcada e o detector não tem contra o quê comparar.
     const semSentido = zonas.filter(
       z => z.regras && z.regras.contrafluxo && !(z.regras.direcao || []).length);
-    if(semSentido.length){
-      const segue = await confirmar('Contrafluxo sem sentido',
-        `${semSentido.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} vigia
-         contrafluxo mas não diz qual é o sentido permitido — sem isso a
-         regra nunca dispara. Salvar assim mesmo?`,
-        {rotulo: 'Salvar assim'});
-      if(!segue) return;
-    }
-    if(mudas.length){
-      const segue = await confirmar('Zona sem vigilância',
-        `${mudas.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} não vigia nada:
-         nenhuma ação consulta a região. Salvar assim mesmo?`,
-        {rotulo: 'Salvar assim'});
-      if(!segue) return;
-    }
-    /* O último degrau, e o que mais engana: a zona está desenhada, a regra
-       marcada — e a câmera está com a análise de ação desligada, ou sem
-       aquela ação na lista. Nada dispara, e nada diz por quê. Aconteceu de
-       fato no parque: Datacenter e Térreo Arquivo têm área restrita
-       desenhada e marcada há semanas, com o interruptor desligado. */
+    /* Um aviso só, e que não destrói o editor.
+
+       `confirmar` reaproveita a mesma caixa de modal do editor: ao abrir,
+       apaga o desenho da tela. Enquanto cada checagem perguntava por sua
+       conta, cancelar qualquer uma delas levava junto o traçado que a
+       pessoa acabara de fazer — e, como a maioria das câmeras está com a
+       análise de ação desligada, o aviso que eu mesmo acrescentei fazia
+       isso acontecer quase sempre. Era o "não está salvando".
+
+       Agora as três checagens viram um texto só, e cancelar devolve o
+       editor com o desenho intacto. */
     const ACAO_DA_REGRA = {restrita: 'area_restrita', invasao: 'invasao',
                            veiculo_proibido: 'veiculo_proibido',
                            contrafluxo: 'contrafluxo'};
@@ -1767,15 +1758,45 @@ function abrirEditorZonas(cam){
       z => Object.entries(ACAO_DA_REGRA)
         .filter(([regra, acao]) => z.regras[regra] && !ligadas.has(acao))
         .map(([, acao]) => ROTULO_ACAO_UI[acao] || acao)))];
-    if(desligadas.length){
-      const segue = await confirmar('Ação desligada nesta câmera',
-        `A zona pede <b>${desligadas.join('</b>, <b>')}</b>, mas
+
+    /* Gravar zonas substitui a lista inteira da câmera: o que não for
+       enviado deixa de existir. Hoje a Garagem perdeu duas zonas e o
+       corredor do 4º andar perdeu a dele por esse caminho, e os pontos não
+       voltam — a auditoria guarda que a câmera mudou, não o traçado. Dizer
+       o nome do que vai sumir é barato e teria evitado isso. */
+    const originais = (cam.zonas || []).map(z => z.nome);
+    const removidas = originais.filter(n => !zonas.some(z => z.nome === n));
+
+    const avisos = [];
+    if(removidas.length)
+      avisos.push(`<b>${removidas.map(esc).join('</b>, <b>')}</b>
+         ${removidas.length > 1 ? 'serão apagadas' : 'será apagada'} desta
+         câmera. O traçado não volta depois.`);
+    if(semSentido.length)
+      avisos.push(`${semSentido.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} vigia
+         contrafluxo mas não diz o sentido permitido — sem isso a regra nunca
+         dispara.`);
+    if(mudas.length)
+      avisos.push(`${mudas.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} não vigia
+         nada: nenhuma ação consulta a região.`);
+    if(desligadas.length)
+      avisos.push(`A zona pede <b>${desligadas.join('</b>, <b>')}</b>, mas
          ${cam.analitico_acao
-            ? 'essa ação não está marcada na configuração da câmera'
-            : '<b>a análise de ação está desligada</b> nesta câmera'} —
-         o desenho fica gravado e nenhum alerta nasce. Salvar assim mesmo?`,
+            ? 'essa ação não está marcada na configuração desta câmera'
+            : '<b>a análise de ação está desligada</b> nesta câmera'} — o
+         desenho fica gravado e nenhum alerta nasce.`);
+
+    if(avisos.length){
+      const segue = await confirmar('Confira antes de salvar',
+        avisos.join('<br><br>') + '<br><br>Salvar assim mesmo?',
         {rotulo: 'Salvar assim'});
-      if(!segue) return;
+      if(!segue){
+        // O aviso ocupou a caixa do editor. Devolvê-lo com `zonas` — o
+        // rascunho em memória, e não `cam.zonas` — é o que preserva o que
+        // ainda não foi gravado.
+        abrirEditorZonas({...cam, zonas});
+        return;
+      }
     }
     const bt = $('#zonaSalvar');
     bt.disabled = true; bt.textContent = 'Salvando…';
