@@ -271,34 +271,43 @@ def test_parque_varre_sempre():
 # ----------------------------------------------------------------------
 # Um nome por pessoa, e só onde há nome
 # ----------------------------------------------------------------------
-def _rotular(nome, no_corpo):
+def _rotular(nome):
     from app.services.inferencia import Inferencia
 
     caixa_rosto, nomes = {"classe": "rosto"}, []
-    Inferencia._rotular(caixa_rosto, nome, no_corpo, nomes)
+    Inferencia._rotular(caixa_rosto, nome, nomes)
     return caixa_rosto, nomes
 
 
-def test_nome_fica_na_caixa_do_corpo_e_nao_tambem_na_do_rosto():
-    """O nome repetido do Service Desk: duas tarjas iguais, empilhadas.
+def test_o_nome_fica_na_caixa_do_rosto():
+    """Um nome por pessoa, e é o rosto que identifica.
 
-    Rosto e corpo da mesma pessoa são duas caixas, e cada uma escrevia o
-    nome. A do corpo é a que se lê no mosaico — a do rosto tem uns sessenta
-    pixels —, então é ela que fica com a tarja.
+    Rosto e corpo da mesma pessoa são duas caixas, e escrever nas duas
+    repetia o nome empilhado no vídeo — era o "ANDRÉ LUIZ CARDOSO" em dobro
+    do Service Desk. Fica com o rosto porque é ali que a leitura aconteceu e
+    é ali que quem confere vai olhar para decidir se o sistema acertou.
     """
-    caixa_rosto, nomes = _rotular("ANDRÉ LUIZ CARDOSO", no_corpo=True)
+    caixa_rosto, nomes = _rotular("ANDRÉ LUIZ CARDOSO")
 
-    assert "pessoa_nome" not in caixa_rosto, "a do corpo já leva o nome"
+    assert caixa_rosto["pessoa_nome"] == "ANDRÉ LUIZ CARDOSO"
     assert nomes == ["ANDRÉ LUIZ CARDOSO"], "quem está em cena segue contado"
 
 
-def test_rosto_sem_corpo_achado_fica_com_o_nome():
-    """Quando o detector de objeto não achou o corpo, o rosto é tudo o que há
-    dela em cena — sem a tarja aqui, a identificação sumiria da tela."""
-    caixa_rosto, nomes = _rotular("VITOR GABRIEL FARIAS", no_corpo=False)
+def test_a_caixa_do_corpo_nao_leva_tarja():
+    """A contrapartida, assumida: só o rosto rotula.
 
-    assert caixa_rosto["pessoa_nome"] == "VITOR GABRIEL FARIAS"
-    assert nomes == ["VITOR GABRIEL FARIAS"]
+    `_rotular` é o único lugar que escreve `pessoa_nome`. Quem foi
+    identificado antes e está de costas agora aparece como "pessoa", porque
+    não há rosto em cena para rotular — o corpo segue recebendo a identidade
+    no banco, que é do que a trajetória é feita, mas não a tarja na tela.
+    """
+    import re
+    from pathlib import Path
+
+    fonte = Path("app/services/inferencia.py").read_text(encoding="utf-8")
+    escritas = re.findall(r'(\w+)\[.?pessoa_nome.?\]\s*=', fonte)
+    assert escritas == ["caixa_rosto"], (
+        f"só a caixa do rosto pode levar o nome; escrevem nela: {escritas}")
 
 
 def test_registro_sem_nome_nao_escreve_nada_no_video():
@@ -308,10 +317,9 @@ def test_registro_sem_nome_nao_escreve_nada_no_video():
     mesma tarja laranja de quem tem nome — quem opera lê isso como falha do
     reconhecimento. Sem nome, a caixa volta a ser a de qualquer um em cena.
     """
-    for no_corpo in (True, False):
-        caixa_rosto, nomes = _rotular("", no_corpo=no_corpo)
-        assert "pessoa_nome" not in caixa_rosto
-        assert nomes == [], "não há nome para o alerta de sala anunciar"
+    caixa_rosto, nomes = _rotular("")
+    assert "pessoa_nome" not in caixa_rosto
+    assert nomes == [], "não há nome para o alerta de sala anunciar"
 
 
 # ----------------------------------------------------------------------

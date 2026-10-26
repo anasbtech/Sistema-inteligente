@@ -265,37 +265,38 @@ class Inferencia:
         return False
 
     @staticmethod
-    def _rotular(caixa_rosto: dict, nome: str, no_corpo: bool,
-                 nomes_no_quadro: list) -> None:
-        """Um nome por pessoa na tela, na maior das duas caixas dela.
+    def _rotular(caixa_rosto: dict, nome: str, nomes_no_quadro: list) -> None:
+        """Um nome por pessoa na tela, sempre na caixa do rosto.
 
         Rosto e corpo da mesma pessoa são duas caixas, e escrever o nome nas
-        duas o repetia empilhado no vídeo. Fica com o corpo quando há corpo —
-        é a caixa que se lê no mosaico —, e só sobra para o rosto quando o
-        detector de objeto não achou o corpo, que é quando o rosto é tudo o
-        que há dela em cena.
+        duas o repetia empilhado no vídeo. Fica com o **rosto** porque é ele
+        que identifica: é ali que a leitura aconteceu, e é ali que quem
+        confere vai olhar para decidir se o sistema acertou. A caixa do corpo
+        segue existindo e segue recebendo a identidade no banco — o que ela
+        não leva é a tarja.
+
+        A troca tem preço, assumido: quem foi identificado antes e está de
+        costas agora aparece só como "pessoa", porque não há rosto em cena
+        para rotular.
 
         Sem nome não há tarja: a caixa volta a ser a de qualquer um em cena,
         que é o que ela de fato sabe dizer do BIO-N.
         """
         if not nome:
             return
-        if not no_corpo:
-            caixa_rosto["pessoa_nome"] = nome
+        caixa_rosto["pessoa_nome"] = nome
         if nome not in nomes_no_quadro:
             nomes_no_quadro.append(nome)
 
     async def _alinhar_corpo(self, db, cena: dict, bbox_rosto, corpos: list,
-                             nome: str, pessoa_id, id_biometrico=None) -> bool:
+                             nome: str, pessoa_id, id_biometrico=None) -> None:
         """Leva a identidade do rosto para o corpo que o contém.
 
-        Duas coisas de uma vez: o nome passa para a caixa grande, que é a que
-        se lê no mosaico — a do rosto tem uns sessenta pixels —, e o corpo
-        deixa de ser uma "pessoa" anônima na trajetória.
-
-        Devolve se o corpo ficou com o rótulo. Quem chama precisa saber: o
-        nome é um por pessoa, e deixá-lo também na caixa do rosto é o que
-        escrevia duas vezes o mesmo nome, uma sobre a outra, no vídeo.
+        A identidade vai para o *registro*, não para a tela: o corpo deixa de
+        ser uma "pessoa" anônima na trajetória, mas a tarja com o nome fica
+        só na caixa do rosto. Escrever nas duas repetia o mesmo nome
+        empilhado no vídeo, e entre as duas é a do rosto que identifica — é
+        ali que a leitura aconteceu e é ali que quem confere vai olhar.
 
         Quando o corpo ainda não tem linha, ela nasce aqui. Parece rodeio mas
         é o ponto: o registro de objeto é represado por 30 minutos, porque
@@ -313,11 +314,7 @@ class Inferencia:
 
         alvo = self._corpo_do_rosto(bbox_rosto, corpos)
         if alvo is None:
-            return False
-        # Sem nome o corpo não ganha tarja, mas ainda assim é dele a caixa da
-        # pessoa: é o BIO-N, que tem registro e trajetória e não tem nome.
-        if nome:
-            alvo["caixa"]["pessoa_nome"] = nome
+            return
         # Quem é este corpo, para a zona restrita poder perguntar na volta
         # seguinte. A análise de ação roda antes do facial na mesma volta, e
         # é por isso que a resposta vem sempre de uma volta atrás.
@@ -327,15 +324,15 @@ class Inferencia:
                 id_biometrico, time.monotonic())
         corpos.remove(alvo)
         if not pessoa_id:
-            return True
+            return
 
         if alvo["codigo"]:
             await vincular_corpo(db, alvo["codigo"], pessoa_id)
             self._corpos_identificados[(cena["cam"].codigo, pessoa_id)] = time.monotonic()
-            return True
+            return
 
         if self._corpo_ja_registrado(cena["cam"].codigo, pessoa_id):
-            return True
+            return
 
         cam, quadro = cena["cam"], cena["quadro"]
         jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, tuple(alvo["bbox"]))
@@ -354,7 +351,6 @@ class Inferencia:
         if codigo:
             alvo["codigo"] = codigo
             await vincular_corpo(db, codigo, pessoa_id)
-        return True
 
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
@@ -964,11 +960,10 @@ class Inferencia:
                         # esta a volta comum — a pessoa segue em cena e o
                         # rosto já foi identificado antes. Sem alinhar aqui, a
                         # caixa grande ficaria anônima na maioria dos quadros.
-                        no_corpo = await self._alinhar_corpo(
+                        await self._alinhar_corpo(
                             db, cena, face.bbox, corpos_no_quadro,
                             entrada[2], entrada[3], entrada[4])
-                        self._rotular(caixa_rosto, entrada[2], no_corpo,
-                                      nomes_no_quadro)
+                        self._rotular(caixa_rosto, entrada[2], nomes_no_quadro)
                     continue
 
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, face.bbox)
@@ -994,10 +989,10 @@ class Inferencia:
                     entrada[3] = pessoa_id
                     entrada[4] = resultado.get("id_biometrico")
                     caixa_rosto["similaridade"] = resultado.get("similaridade")
-                    no_corpo = await self._alinhar_corpo(
+                    await self._alinhar_corpo(
                         db, cena, face.bbox, corpos_no_quadro, nome, pessoa_id,
                         entrada[4])
-                    self._rotular(caixa_rosto, nome, no_corpo, nomes_no_quadro)
+                    self._rotular(caixa_rosto, nome, nomes_no_quadro)
                     log.info("%s: %s reconhecido (%.0f%%)", cam.codigo,
                              nome or resultado.get("id_biometrico"),
                              (resultado.get("similaridade") or 0) * 100)
