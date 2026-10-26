@@ -1235,15 +1235,52 @@ async function editarCamera(codigo){
     }
   };
 
-  // Dois caminhos para a mesma coisa, de propósito: o da seção fica junto da
-  // lista de ações, onde se marca "Invasão de perímetro" e onde a pergunta
-  // "e onde eu desenho isso?" nasce; o do rodapé não exige rolar o modal,
-  // que é longo. Sem o segundo a seção ficava no fim e não era encontrada.
+  /* Dois caminhos para a mesma coisa, de propósito: o da seção fica junto da
+     lista de zonas; o do rodapé não exige rolar o modal, que é longo.
+
+     Abrir o editor **não** salva a configuração. A primeira versão salvava
+     antes de abrir, para não perder o que estivesse digitado — mas isso
+     obriga quem só quer desenhar uma linha a gravar a tela inteira, e um
+     salvamento recusado por qualquer outro campo passa a impedir o desenho.
+     Foi o que aconteceu: o servidor recusava `limite_aglomeracao` e o botão
+     parava junto. Agora só se pergunta quando há mesmo o que perder.
+
+     Câmera nova é a exceção: o editor precisa dela gravada para ter código. */
+  /* Preso ao corpo do modal, e não à caixa: a caixa é reaproveitada por
+     todos os modais do sistema, e ouvintes presos a ela sobreviveriam a esta
+     tela. O corpo é recriado a cada abertura e leva os ouvintes junto. */
+  let mexeu = false;
+  const corpo = $('.modal-bd', box);
+  if(corpo){
+    const marcar = () => { mexeu = true; };
+    corpo.addEventListener('input', marcar);
+    corpo.addEventListener('change', marcar);
+    // Os interruptores desta tela são `span` com `onclick`, não controles de
+    // formulário: não emitem `change`, e sem isto trocar um analítico ou uma
+    // ação vigiada passaria por "nada mudou" — e seria perdido em silêncio.
+    corpo.addEventListener('click', e => {
+      if(e.target.closest('[data-csw],[data-acao],[data-acoes-todas],[data-acoes-nenhuma],[data-sentido]'))
+        marcar();
+    });
+  }
+
   ['#cZonas', '#cZonasFt'].forEach(sel => {
     const bt = $(sel, box);
-    if(bt) bt.onclick = () => {
-      abrirZonasDepois = true;
-      $('#cSave', box).click();
+    if(bt) bt.onclick = async () => {
+      if(novo){
+        abrirZonasDepois = true;
+        $('#cSave', box).click();
+        return;
+      }
+      if(mexeu){
+        const segue = await confirmar('Alterações não salvas',
+          'O editor de zonas abre no lugar desta tela, e o que você mudou aqui '
+          + 'será perdido. Salve antes, ou abra o editor assim mesmo.',
+          {rotulo: 'Abrir o editor'});
+        if(!segue) return;
+      }
+      fecharModal();
+      abrirEditorZonas(c);
     };
   });
 }
