@@ -972,6 +972,7 @@ async function editarCamera(codigo){
     <div class="modal-ft">
       ${novo ? '' : `<button class="btn btn-danger" id="cDel">${ico('trash',14)} Remover câmera</button>`}
       <span style="flex:1"></span>
+      <button class="btn btn-ghost" id="cZonasFt">${ico('edit',14)} Desenhar zonas</button>
       <button class="btn btn-ghost" data-close>Cancelar</button>
       <button class="btn btn-primary" id="cSave">${ico('check',14)} ${novo ? 'Cadastrar câmera' : 'Salvar alterações'}</button>
     </div>`);
@@ -1234,11 +1235,17 @@ async function editarCamera(codigo){
     }
   };
 
-  const bzc = $('#cZonas', box);
-  if(bzc) bzc.onclick = () => {
-    abrirZonasDepois = true;
-    $('#cSave', box).click();
-  };
+  // Dois caminhos para a mesma coisa, de propósito: o da seção fica junto da
+  // lista de ações, onde se marca "Invasão de perímetro" e onde a pergunta
+  // "e onde eu desenho isso?" nasce; o do rodapé não exige rolar o modal,
+  // que é longo. Sem o segundo a seção ficava no fim e não era encontrada.
+  ['#cZonas', '#cZonasFt'].forEach(sel => {
+    const bt = $(sel, box);
+    if(bt) bt.onclick = () => {
+      abrirZonasDepois = true;
+      $('#cSave', box).click();
+    };
+  });
 }
 
 async function abrirCamera(codigo){
