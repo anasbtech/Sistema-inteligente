@@ -1571,16 +1571,23 @@ function abrirEditorZonas(cam){
       if(!pts.length) return;
       const ativo = i === atual;
       ctx.save();
-      ctx.strokeStyle = z.cor;
-      ctx.lineWidth = ativo ? 2.2 : 1.3;
-      ctx.setLineDash(z.tipo === 'LINHA' ? [] : [5, 4]);
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.beginPath();
       pts.forEach((p, k) => { const x = p[0]*W, y = p[1]*H; k ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
       if(z.tipo === 'POLIGONO' && pts.length > 2){
         ctx.closePath();
-        ctx.fillStyle = z.cor + (ativo ? '2A' : '14');
+        ctx.fillStyle = z.cor + (ativo ? '2A' : '1F');
         ctx.fill();
       }
+      ctx.setLineDash(z.tipo === 'LINHA' ? [] : [6, 4]);
+      // Mesmo contorno escuro do mosaico: aqui se desenha sobre o quadro
+      // real da câmera, então o fundo é tão claro quanto lá — e é pior
+      // errar o traçado por não enxergá-lo do que por descuido.
+      ctx.strokeStyle = 'rgba(0,0,0,0.60)';
+      ctx.lineWidth = ativo ? 5 : 4;
+      ctx.stroke();
+      ctx.strokeStyle = z.cor;
+      ctx.lineWidth = ativo ? 2.4 : 1.8;
       ctx.stroke(); ctx.setLineDash([]);
       // Alça em cada vértice, só na zona em edição: é o que mostra onde se
       // clicou e permite conferir a forma antes de salvar.
