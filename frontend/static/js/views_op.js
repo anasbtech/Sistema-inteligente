@@ -954,6 +954,19 @@ async function editarCamera(codigo){
         <div class="field"><label for="cLon">Longitude</label>
           <input class="inp mono" id="cLon" type="number" step="0.00001" value="${c&&c.longitude!=null?c.longitude:''}" placeholder="-48.49017"></div>
       </div>
+      <div class="eyebrow" style="margin:17px 0 8px">Zonas e perímetros</div>
+      <div class="zone-list">${(c && c.zonas || []).map(z => `<div class="zone-item">
+        <span class="zone-swatch" style="background:${esc(z.cor)}"></span><b>${esc(z.nome)}</b>
+        <span class="chip c-gray">${z.tipo === 'LINHA' ? 'Linha' : 'Polígono'}</span>
+        <span class="mono" style="font-size:10.5px;color:var(--txt-4)">${(z.pontos||[]).length} pts</span></div>`).join('')
+        || `<p class="hint">Nenhuma zona desenhada. Invasão de perímetro, área
+             restrita, veículo em área proibida e contrafluxo não têm onde
+             disparar sem uma região marcada na imagem.</p>`}</div>
+      <button class="btn btn-ghost btn-sm" id="cZonas" style="width:100%;margin-top:8px">
+        ${ico('edit',13)} ${novo ? 'Cadastrar e desenhar na imagem' : 'Desenhar na imagem'}</button>
+      <span class="hint" style="display:block;margin-top:4px">Abre o editor sobre
+        o vídeo desta câmera. ${novo ? 'A câmera é cadastrada primeiro — o editor precisa dela gravada.'
+          : 'As alterações desta tela são salvas antes de abrir.'}</span>
       ${novo ? '' : `<div class="note" style="margin-top:15px">${ico('alert',15)}<div>Mudança de limiar facial fica registrada com destaque na trilha de auditoria. O worker relê a configuração no próximo ciclo.</div></div>`}
     </div>
     <div class="modal-ft">
@@ -969,6 +982,11 @@ async function editarCamera(codigo){
      morto de "análise ligada sem nenhuma ação" — que não vigia nada e não
      diz por quê. A chave vale como atalho de tudo/nada; a lista é onde a
      escolha mora. */
+  // Ligado pelo botão de zonas: diz ao salvamento que, em vez de voltar
+  // para a lista, ele deve abrir o editor de desenho. Zerado em todo
+  // caminho que não chega lá, senão um salvamento comum depois de uma
+  // tentativa falha abriria o editor sem ninguém ter pedido.
+  let abrirZonasDepois = false;
   const btTodas = $('[data-acoes-todas]', box), btNenhuma = $('[data-acoes-nenhuma]', box);
   ['#cHoraIni', '#cHoraFim', '#cAglomN'].forEach(sel => {
     const el = $(sel, box);
@@ -1169,7 +1187,7 @@ async function editarCamera(codigo){
       (dados.limiar_facial < 0.5 || dados.limiar_facial > 1) ? ['Limiar facial fora da faixa', 'Informe entre 50% e 100%.'] :
       (dados.limiar_objeto < 0.1 || dados.limiar_objeto > 1) ? ['Limiar de objeto fora da faixa', 'Informe entre 10% e 100%.'] :
       null;
-    if(erro){ toast(erro[0], erro[1], 'err'); return; }
+    if(erro){ abrirZonasDepois = false; toast(erro[0], erro[1], 'err'); return; }
 
     const btn = $('#cSave');
     btn.disabled = true;
@@ -1189,6 +1207,7 @@ async function editarCamera(codigo){
       }
     }catch(e){
       btn.disabled = false;
+      abrirZonasDepois = false;
       erroToast(e, novo ? 'Câmera não foi cadastrada' : 'Configuração não foi salva');
       return;
     }
@@ -1196,12 +1215,29 @@ async function editarCamera(codigo){
     fecharModal();
     toast(novo ? 'Câmera cadastrada' : 'Configuração salva',
       `${salva.codigo} — ${salva.nome}.`, 'ok');
+
+    // O editor de zonas desenha sobre o vídeo e mora no mesmo `#modalBox`
+    // desta tela — abri-lo direto apagaria o formulário e o que estivesse
+    // digitado nele. Por isso o caminho é gravar primeiro e abrir depois,
+    // com a câmera que o servidor devolveu: é ela que tem código (a nova
+    // acabou de ganhar um) e as zonas já normalizadas.
+    if(abrirZonasDepois){
+      abrirZonasDepois = false;
+      abrirEditorZonas(salva);
+      return;
+    }
     try{
       await carregarCatalogoCameras();
       irPara('cams');
     }catch(e){
       erroToast(e, 'Salvo, mas a lista não recarregou');
     }
+  };
+
+  const bzc = $('#cZonas', box);
+  if(bzc) bzc.onclick = () => {
+    abrirZonasDepois = true;
+    $('#cSave', box).click();
   };
 }
 
@@ -1671,6 +1707,29 @@ function abrirEditorZonas(cam){
       const segue = await confirmar('Zona sem vigilância',
         `${mudas.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} não vigia nada:
          nenhuma ação consulta a região. Salvar assim mesmo?`,
+        {rotulo: 'Salvar assim'});
+      if(!segue) return;
+    }
+    /* O último degrau, e o que mais engana: a zona está desenhada, a regra
+       marcada — e a câmera está com a análise de ação desligada, ou sem
+       aquela ação na lista. Nada dispara, e nada diz por quê. Aconteceu de
+       fato no parque: Datacenter e Térreo Arquivo têm área restrita
+       desenhada e marcada há semanas, com o interruptor desligado. */
+    const ACAO_DA_REGRA = {restrita: 'area_restrita', invasao: 'invasao',
+                           veiculo_proibido: 'veiculo_proibido',
+                           contrafluxo: 'contrafluxo'};
+    const ligadas = new Set(cam.analitico_acao ? (cam.acoes_ativas || []) : []);
+    const desligadas = [...new Set(zonas.flatMap(
+      z => Object.entries(ACAO_DA_REGRA)
+        .filter(([regra, acao]) => z.regras[regra] && !ligadas.has(acao))
+        .map(([, acao]) => ROTULO_ACAO_UI[acao] || acao)))];
+    if(desligadas.length){
+      const segue = await confirmar('Ação desligada nesta câmera',
+        `A zona pede <b>${desligadas.join('</b>, <b>')}</b>, mas
+         ${cam.analitico_acao
+            ? 'essa ação não está marcada na configuração da câmera'
+            : '<b>a análise de ação está desligada</b> nesta câmera'} —
+         o desenho fica gravado e nenhum alerta nasce. Salvar assim mesmo?`,
         {rotulo: 'Salvar assim'});
       if(!segue) return;
     }
