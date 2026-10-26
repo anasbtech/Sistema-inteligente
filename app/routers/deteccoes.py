@@ -147,6 +147,12 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                 "reconhecimento facial não identificou conta como não "
                 "autorizado — confirme na imagem."
             )
+        elif det.classe == "contrafluxo":
+            onde = f" ({zona_nome})" if zona_nome else ""
+            detalhe = (
+                f"Pessoa andando contra o sentido permitido{onde} em "
+                f"{cam.nome}, por {det.duracao_s or 0}s seguidos."
+            )
         elif det.classe in ("permanencia", "abandono"):
             # "por 1327s" é verdadeiro e ilegível: quem recebe o alerta
             # precisa saber de cara se é um quarto de hora ou três, porque é

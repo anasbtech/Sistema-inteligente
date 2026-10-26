@@ -297,7 +297,8 @@ def detalhe_acao(codigo: str) -> str:
     if codigo == "invasao":
         return ("Dispara quando alguém cruza a linha desenhada na câmera, salvo quem a zona autorizar")
     if codigo == "contrafluxo":
-        return "Dispara com deslocamento contra a direção definida na zona"
+        return ("Dispara com quem anda contra o sentido definido na zona e "
+                "insiste — recuar para dar passagem não conta")
     if codigo == "area_restrita":
         return ("Dispara com pessoa dentro da zona restrita, salvo quem a zona autorizar — não identificado conta como não autorizado")
     if codigo == "fora_de_horario":
@@ -809,6 +810,9 @@ class Trilha:
     # Desde quando o corpo está na horizontal, tendo despencado para chegar
     # lá. Quem se abaixa levanta em seguida e zera isto; quem caiu, não.
     caido_desde: Optional[float] = None
+    # Desde quando esta pessoa anda contra o sentido da zona. Virar-se por um
+    # instante, ou recuar para dar passagem, não é contrafluxo.
+    contrafluxo_desde: Optional[float] = None
     alertou: Dict[str, float] = field(default_factory=dict)
 
     def registrar(self, x: float, y: float, t: float, altura: float = 0.0) -> None:
@@ -833,6 +837,24 @@ class Trilha:
         v = np.array([x1 - x0, y1 - y0])
         n = float(np.linalg.norm(v))
         return tuple(v / n) if n > 1e-4 else None
+
+    def avanco(self) -> float:
+        """Quanto o corpo andou de fato na janela de `direcao`, em alturas
+        de corpo.
+
+        `direcao` devolve um vetor unitário, e vetor unitário não tem
+        tamanho: o tremor de quem está parado aponta para algum lado com a
+        mesma força de quem atravessa o corredor. Sem medir o avanço, a
+        pessoa imóvel contra o fluxo vira contrafluxo.
+        """
+        if len(self.pontos) < 6:
+            return 0.0
+        escala = self.escala()
+        if escala <= 1e-3:
+            return 0.0
+        x0, y0, _ = self.pontos[-6]
+        x1, y1, _ = self.pontos[-1]
+        return float(np.hypot(x1 - x0, y1 - y0) / escala)
 
     def caminho(self) -> float:
         """Distância *percorrida* por segundo, somando passo a passo.
@@ -1147,6 +1169,10 @@ class AnalisadorAcoes:
         self.seg_permanencia = (settings.ACAO_PERMANENCIA_S
                                 if seg_permanencia is None else seg_permanencia)
         self.raio_permanencia = settings.ACAO_PERMANENCIA_RAIO
+        # Contrafluxo: o quanto contra, o quanto andou e por quanto tempo.
+        self.cosseno_contrafluxo = settings.ACAO_CONTRAFLUXO_COSSENO
+        self.avanco_contrafluxo = settings.ACAO_CONTRAFLUXO_AVANCO
+        self.duracao_contrafluxo = settings.ACAO_CONTRAFLUXO_DURACAO_S
         self.n_aglomeracao = (settings.ACAO_AGLOMERACAO_N
                               if n_aglomeracao is None else n_aglomeracao)
         self.raio_aglomeracao = (settings.ACAO_AGLOMERACAO_RAIO
@@ -1210,6 +1236,57 @@ class AnalisadorAcoes:
             return False
         x1, y1, x2, y2 = obj.bbox
         return min(x2 - x1, y2 - y1) >= settings.INFERENCIA_LADO_MIN_PX
+
+    def _avaliar_contrafluxo(self, trilha: Trilha, obj, ponto, zona: dict,
+                             regras: dict, t: float, camera_moveu: bool,
+                             eventos: List[EventoAcao]) -> None:
+        """Anda contra o sentido do corredor, e insiste nisso.
+
+        Quatro condições, e as três últimas existem porque a primeira sozinha
+        acusa muita gente que só está circulando:
+
+        * **dentro da zona**, e com sentido permitido declarado. Zona que
+          marca contrafluxo sem dizer a direção não tem contra o quê comparar.
+        * **contra**, pelo cosseno: ir ao contrário, e não atravessar de lado
+          para entrar numa porta.
+        * **andou**. `Trilha.direcao` devolve vetor unitário, e vetor
+          unitário não tem tamanho: sem exigir avanço, o tremor de quem está
+          parado aponta contra o fluxo com a mesma força de quem atravessa o
+          corredor inteiro.
+        * **insistiu**. Virar-se para falar com alguém, recuar para dar
+          passagem ou contornar um obstáculo são movimentos contra o fluxo
+          que duram menos de um segundo. É o "persistentemente" da regra.
+
+        `camera_moveu` veta: com a imagem deslizando, toda trilha ganha a
+        mesma direção de uma vez, e metade delas será a contrária.
+        """
+        esperado = regras.get("direcao")
+        atual = trilha.direcao()
+        contra = (not camera_moveu
+                  and esperado and atual
+                  and ponto_em_poligono(ponto, zona.get("pontos") or [])
+                  and float(np.dot(atual, esperado)) < self.cosseno_contrafluxo
+                  and trilha.avanco() >= self.avanco_contrafluxo)
+        if not contra:
+            trilha.contrafluxo_desde = None
+            return
+
+        trilha.contrafluxo_desde = trilha.contrafluxo_desde or t
+        insistindo = t - trilha.contrafluxo_desde
+        if insistindo < self.duracao_contrafluxo:
+            return
+        if not self._pode_alertar(trilha, "contrafluxo", t):
+            return
+
+        eventos.append(EventoAcao(
+            "contrafluxo", ROTULO_ACAO["contrafluxo"], confianca=0.79,
+            severidade=SEVERIDADE_ACAO["contrafluxo"],
+            # O tempo andando contra, e não a idade da trilha: quem está em
+            # cena há dez minutos e virou agora não anda contra há dez minutos.
+            duracao_s=max(1, int(insistindo)), envolvidos=1,
+            zona_nome=zona.get("nome") or "",
+            bbox=obj.bbox, track_id=obj.track_id,
+        ))
 
     def _autorizado(self, track_id: Optional[int], regras: dict) -> bool:
         """Esta pessoa tem autorização prévia para esta zona.
@@ -1572,17 +1649,9 @@ class AnalisadorAcoes:
                                 bbox=obj.bbox, track_id=obj.track_id,
                             ))
                     elif zona.get("tipo") == "POLIGONO" and regras.get("contrafluxo"):
-                        esperado = regras.get("direcao")  # ex.: [1, 0]
-                        atual_dir = trilha.direcao()
-                        if esperado and atual_dir and ponto_em_poligono((nx, ny), pontos):
-                            if float(np.dot(atual_dir, esperado)) < -0.6 \
-                                    and self._pode_alertar(trilha, "contrafluxo", t):
-                                eventos.append(EventoAcao(
-                                    "contrafluxo", ROTULO_ACAO["contrafluxo"], confianca=0.79,
-                                    severidade=SEVERIDADE_ACAO["contrafluxo"],
-                                    duracao_s=int(t - trilha.primeiro_em), envolvidos=1,
-                                    bbox=obj.bbox, track_id=obj.track_id,
-                                ))
+                        self._avaliar_contrafluxo(trilha, obj, (nx, ny), zona,
+                                                  regras, t, camera_moveu,
+                                                  eventos)
 
         # --- aglomeração (nível de cena, não de indivíduo) ---
         # Checada aqui, e não em `_pode_alertar`: aglomeração é da cena

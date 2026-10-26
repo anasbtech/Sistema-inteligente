@@ -573,6 +573,89 @@ def test_perimetro_acusa_quem_nao_tem_autorizacao():
     assert ev[0].zona_nome == "Portão dos fundos", "o alerta diz qual perímetro"
 
 
+# ----------------------------------------------------------------------
+# Contrafluxo: andar contra o sentido do corredor, e insistir
+#
+# Corredor com o fluxo permitido para baixo — y cresce para baixo, como no
+# canvas e como o detector compara. Corpo de 120 px num quadro de 720.
+# ----------------------------------------------------------------------
+CORREDOR = {"nome": "Corredor", "tipo": "POLIGONO",
+            "pontos": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            "regras": {"contrafluxo": True, "direcao": [0, 1]}}
+
+
+def _contrafluxo(y_do_quadro, zona=CORREDOR, quadros=24):
+    from app.config import settings
+
+    an = _analisador(["contrafluxo"])
+    eventos, t = [], 5000.0
+    for i in range(quadros):
+        y = y_do_quadro(i)
+        eventos += an.atualizar(
+            [ObjetoDetectado("pessoa", 0.9, (600, y, 690, y + 120), 7)],
+            1280, 720, zonas=[zona],
+            agora=t + i * settings.ACAO_CONTINUA_INTERVALO_S)
+    return an, eventos
+
+
+def test_andar_contra_o_fluxo_e_insistir_dispara():
+    _, eventos = _contrafluxo(lambda i: 500 - i * 18)
+    assert [e.classe for e in eventos] == ["contrafluxo"]
+    assert eventos[0].zona_nome == "Corredor", "o alerta diz qual corredor"
+
+
+def test_andar_a_favor_do_fluxo_nao_dispara():
+    assert _contrafluxo(lambda i: 100 + i * 18)[1] == []
+
+
+def test_recuar_para_dar_passagem_nao_e_contrafluxo():
+    """O "persistentemente" da regra.
+
+    Virar-se para falar com alguém, recuar para deixar passar ou contornar
+    um obstáculo são movimentos contra o fluxo — e duram menos de um
+    segundo. Sem a exigência de insistir, cada um deles é um alerta.
+    """
+    assert _contrafluxo(
+        lambda i: (300 - i * 18) if i < 3 else (246 + (i - 3) * 18))[1] == []
+
+
+def test_pessoa_parada_tremendo_nao_anda_contra_o_fluxo():
+    """O defeito do vetor unitário, que é o pior desta ação.
+
+    `Trilha.direcao` normaliza: um pixel de tremor devolve um vetor do mesmo
+    tamanho que uma passada inteira. Medido nesta cena — pessoa imóvel
+    oscilando 1 px — o cosseno dá -1,0, exatamente contra o fluxo, com
+    avanço de 0,008 altura de corpo. A regra antiga, que olhava só o
+    cosseno, acusava quem estava parado.
+    """
+    import numpy as np
+
+    an, eventos = _contrafluxo(lambda i: 300 - (1 if i % 2 else 0))
+    trilha = an.trilhas[7]
+
+    assert float(np.dot(trilha.direcao(), [0, 1])) < -0.6, (
+        "a direção aponta contra o fluxo: era o que bastava antes")
+    assert trilha.avanco() < 0.05, "e o corpo não saiu do lugar"
+    assert eventos == []
+
+
+def test_zona_que_nao_declara_o_sentido_fica_muda():
+    """Marcar contrafluxo sem dizer a direção não deixa contra o quê comparar.
+
+    A zona grava e não vigia nada — o editor avisa antes de salvar, e aqui
+    fica registrado que o detector realmente não inventa um sentido.
+    """
+    sem_sentido = {**CORREDOR, "regras": {"contrafluxo": True}}
+    assert _contrafluxo(lambda i: 500 - i * 18, zona=sem_sentido)[1] == []
+
+
+def test_a_duracao_e_o_tempo_andando_contra_e_nao_a_idade_da_trilha():
+    """Quem está em cena há dez minutos e virou agora não anda contra há dez
+    minutos. O alerta relatava a idade da trilha."""
+    _, eventos = _contrafluxo(lambda i: 500 - i * 18, quadros=40)
+    assert eventos[0].duracao_s <= 6, "é o tempo insistindo, não o da trilha"
+
+
 def test_zona_sem_a_regra_nao_torna_a_area_restrita():
     """Zona desenhada para outra coisa não pode virar área restrita sozinha."""
     an = _analisador(["area_restrita"])

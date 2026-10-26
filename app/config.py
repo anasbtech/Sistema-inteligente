@@ -536,6 +536,26 @@ class Settings(BaseSettings):
     # dentro da rajada, onde a trilha acompanha passo a passo.
     ACAO_PERMANENCIA_RAIO: float = 2.0
 
+    # --- Deslocamento em contrafluxo --------------------------------------
+    # O sentido permitido é da zona (`regras.direcao`), porque é o corredor
+    # que tem mão, não a câmera. Estes três dizem quando andar contra ele
+    # vira ocorrência.
+    #
+    # Cosseno entre o movimento e o sentido permitido: -1 é exatamente ao
+    # contrário, 0 é atravessar de lado. -0,6 exige ir claramente contra, e
+    # deixa passar quem corta o corredor para entrar numa porta.
+    ACAO_CONTRAFLUXO_COSSENO: float = -0.6
+    # Quanto o corpo precisa ter andado para a direção valer alguma coisa.
+    # `Trilha.direcao` devolve vetor unitário, e vetor unitário não tem
+    # tamanho: sem este piso, o tremor de quem está parado aponta contra o
+    # fluxo com a mesma força de quem atravessa o corredor. Meia altura de
+    # corpo é quase um passo.
+    ACAO_CONTRAFLUXO_AVANCO: float = 0.5
+    # Quanto tem de durar. Virar-se para falar com alguém, recuar para dar
+    # passagem ou contornar um obstáculo são movimentos contra o fluxo que
+    # duram menos de um segundo — e não são contrafluxo.
+    ACAO_CONTRAFLUXO_DURACAO_S: float = 0.8
+
     # O cooldown precisa ser maior que a volta pelo parque. Em 30s, com a
     # volta em 80s, a mesma pessoa parada rendia um evento por visita.
     ACAO_COOLDOWN_S: float = 600.0

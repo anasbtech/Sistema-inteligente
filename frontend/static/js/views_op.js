@@ -1397,6 +1397,32 @@ function abrirEditorZonas(cam){
     LINHA: [['invasao', 'Invasão de perímetro']],
   };
 
+  /* O sentido permitido do corredor, em coordenadas da imagem — y cresce
+     para baixo, como no canvas e como o detector compara. Marcar
+     "contrafluxo" sem dizer a direção deixa a zona sem contra o quê
+     comparar: ela grava, e fica muda. */
+  const SENTIDOS = [
+    [[0, -1], 'Para cima',    '↑'],
+    [[0,  1], 'Para baixo',   '↓'],
+    [[-1, 0], 'Para a esquerda', '←'],
+    [[1,  0], 'Para a direita',  '→'],
+  ];
+
+  const editorSentido = z => {
+    if(!z.regras.contrafluxo) return '';
+    const atual = z.regras.direcao || [];
+    return `<div class="field" id="zSentido">
+      <label>Sentido permitido do fluxo</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${SENTIDOS.map(([v, rot, seta]) => `
+        <button type="button" class="btn btn-sm ${atual[0]===v[0]&&atual[1]===v[1] ? '' : 'btn-ghost'}"
+          data-sentido="${v[0]},${v[1]}" title="${esc(rot)}">${seta} ${esc(rot)}</button>`).join('')}
+      </div>
+      <span class="hint" style="margin-top:4px">${atual.length
+        ? 'Quem andar contra este sentido, e insistir, vira ocorrência.'
+        : 'Sem sentido escolhido a zona grava e fica muda — não há contra o quê comparar.'}</span>
+    </div>`;
+  };
+
   abrirModal(`
     <div class="modal-hd"><h3>Zonas de ${esc(cam.nome)}</h3><span class="sp" style="flex:1"></span>
       <button class="x" data-close>${ico('x',17)}</button></div>
@@ -1531,6 +1557,7 @@ function abrirEditorZonas(cam){
             ${z.regras[k] ? 'checked' : ''}><span>${esc(rot)}</span></label>`).join('')}
         <span class="hint" style="margin-top:4px">Sem nenhuma marcada, a zona é
           só desenho: nenhuma ação consulta a região.</span></div>
+      ${editorSentido(z)}
       <div class="field"><label for="zAutorizados">Quem pode estar aqui</label>
         <input class="inp mono" id="zAutorizados" placeholder="BIO-M-000012, BIO-F-000004"
                value="${esc((z.regras.autorizados || []).join(', '))}">
@@ -1555,7 +1582,10 @@ function abrirEditorZonas(cam){
       // `autorizados` sobrevive à troca: é a lista de quem pode estar ali, e
       // vale tanto para a linha quanto para o polígono. Perdê-la ao alternar
       // o tipo apagaria sem avisar uma decisão de acesso.
-      const validas = REGRAS_ZONA[z.tipo].map(([k]) => k).concat('autorizados');
+      // `direcao` acompanha `contrafluxo`, e some com ele — mas não pode
+      // sumir por ser desconhecida do filtro, que a apagava em silêncio.
+      const validas = REGRAS_ZONA[z.tipo].map(([k]) => k)
+        .concat('autorizados', 'direcao');
       z.regras = Object.fromEntries(
         Object.entries(z.regras).filter(([k, v]) => v && validas.includes(k)));
       listar(); formulario(); pintar();
@@ -1565,7 +1595,14 @@ function abrirEditorZonas(cam){
     });
     $$('[data-regra]', alvo).forEach(cx => cx.onchange = () => {
       z.regras = {...z.regras, [cx.dataset.regra]: cx.checked};
+      // O seletor de sentido só existe enquanto contrafluxo está marcado.
+      if(cx.dataset.regra === 'contrafluxo') formulario();
       listar();
+    });
+    $$('[data-sentido]', alvo).forEach(bt => bt.onclick = () => {
+      z.regras = {...z.regras,
+                  direcao: bt.dataset.sentido.split(',').map(Number)};
+      formulario(); listar();
     });
     const aut = $('#zAutorizados', alvo);
     if(aut) aut.oninput = () => {
@@ -1618,6 +1655,18 @@ function abrirEditorZonas(cam){
     // marca nada segue sem ninguém a consultando, e o aviso tem de sair.
     const mudas = zonas.filter(z => !REGRAS_ZONA[z.tipo]
       .some(([k]) => (z.regras || {})[k]));
+    // Contrafluxo sem sentido declarado é o mesmo caso, um nível adiante: a
+    // regra está marcada e o detector não tem contra o quê comparar.
+    const semSentido = zonas.filter(
+      z => z.regras && z.regras.contrafluxo && !(z.regras.direcao || []).length);
+    if(semSentido.length){
+      const segue = await confirmar('Contrafluxo sem sentido',
+        `${semSentido.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} vigia
+         contrafluxo mas não diz qual é o sentido permitido — sem isso a
+         regra nunca dispara. Salvar assim mesmo?`,
+        {rotulo: 'Salvar assim'});
+      if(!segue) return;
+    }
     if(mudas.length){
       const segue = await confirmar('Zona sem vigilância',
         `${mudas.map(z => `<b>${esc(z.nome)}</b>`).join(', ')} não vigia nada:
