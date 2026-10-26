@@ -1782,6 +1782,11 @@ function abrirEditorZonas(cam){
     try{
       const salva = await API.salvarCamera(cam.codigo, {zonas});
       toast('Zonas salvas', `${zonas.length} zona(s) em ${cam.nome}.`, 'ok');
+      // O catálogo em memória é de onde o mosaico tira as zonas que desenha.
+      // Sem recarregá-lo, a zona era gravada no banco e o "Ao vivo" seguia
+      // mostrando a de antes até a página ser recarregada inteira.
+      try{ await carregarCatalogoCameras(); }
+      catch(e){ /* a zona está salva; o desenho se corrige na próxima volta */ }
       fecharModal();
       // A ficha reabre com o que foi gravado — inclusive o que o servidor
       // tenha normalizado.

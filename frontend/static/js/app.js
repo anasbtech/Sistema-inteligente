@@ -20,12 +20,13 @@ const APP = {
 /* ==========================================================
    AUTENTICAÇÃO
    ========================================================== */
-let REC = {email:'', expira:0, timer:null};
+let REC = {email:'', token:'', expira:0, timer:null};
 
 function authAlert(alvo, tipo, msg){
   const el = $(alvo);
   if(!msg){ el.innerHTML = ''; return; }
-  const icone = tipo === 'ok' ? 'i-check' : tipo === 'err' ? 'i-alert' : 'i-info';
+  const icone = tipo === 'ok' ? 'i-check'
+              : (tipo === 'err' || tipo === 'warn') ? 'i-alert' : 'i-info';
   el.innerHTML = `<div class="alert alert-${tipo}">${ico(icone,15)}<div>${msg}</div></div>`;
 }
 
@@ -118,19 +119,51 @@ async function enviarCodigo(){
   try{
     const r = await API.recuperar(e);
     REC.email = e;
-    REC.expira = Date.now() + (r.expira_em_segundos || 600) * 1000;
     $('#recMailEcho').textContent = e;
-    $$('.otp').forEach(o => { o.value = ''; o.classList.remove('filled'); });
+
+    // Sem SMTP configurado nada sai, e sem este atalho a instalação ficaria
+    // sem forma nenhuma de entrar. Só existe em desenvolvimento.
+    const atalho = r.link_debug
+      ? `<br><a href="${esc(r.link_debug)}" class="mono" style="font-size:11px;color:var(--acc-2)">abrir o link de redefinição</a>`
+      : '';
+
+    /* O e-mail pode ter falhado e a mensagem padrão não sabe disso — ela é a
+       mesma exista ou não a conta, para o endpoint não virar um oráculo de
+       endereços válidos. Sem este aviso, a tela dizia "enviamos um link"
+       mesmo quando nada saiu, e quem esperava o e-mail não tinha como saber
+       se o sistema falhou, se caiu no spam ou se só demorava.
+
+       E quando falha a tela fica na etapa 1: a etapa 2 manda abrir a caixa de
+       entrada e esperar, com um relógio de 30 minutos correndo. Avançar até
+       ela depois de o envio falhar é pedir para aguardar uma mensagem que não
+       foi despachada — contradiz, na mesma tela, o aviso logo acima. */
+    if(r.erro_envio){
+      authAlert('#recAlert', 'warn',
+        `<b>O e-mail não saiu.</b><br><span style="font-size:11.5px">${esc(r.erro_envio)}</span>` +
+        (atalho ? atalho.replace('abrir o link de redefinição', 'abrir o link mesmo assim') : ''));
+      return;
+    }
+
+    /* Instalação sem envio de e-mail configurado. Não é defeito, e alarmar
+       aqui manda procurar problema onde não há: o que falta é configuração, e
+       quem está na tela precisa do outro caminho, não do diagnóstico.
+
+       O motivo técnico só aparece junto do atalho de desenvolvimento — em
+       produção quem lê isto é operador, e "falta SMTP_PASSWORD" não é frase
+       que ajude alguém a entrar no sistema. */
+    if(r.aviso_envio){
+      authAlert('#recAlert', 'info',
+        '<b>Esta instalação ainda não envia e-mail.</b><br>' + (atalho
+          ? `<span style="font-size:11.5px">${esc(r.aviso_envio)}</span>${atalho}`
+          : '<span style="font-size:11.5px">Peça a um administrador que emita ' +
+            'seu link de redefinição.</span>'));
+      return;
+    }
+
+    REC.expira = Date.now() + (r.expira_em_segundos || 1800) * 1000;
     recStep(2);
     iniciarTimerOTP();
-    // A resposta é a mesma exista ou não a conta — do contrário o endpoint
-    // viraria um oráculo de e-mails válidos.
-    let msg = esc(r.mensagem);
-    if(r.codigo_debug){
-      msg += `<br><span class="mono" style="font-size:11px;color:var(--txt-3)">Ambiente de desenvolvimento — código gerado: <b style="color:var(--acc-2)">${esc(r.codigo_debug)}</b></span>`;
-    }
-    authAlert('#recAlert', 'info', msg);
-    setTimeout(() => $('#otp0').focus(), 120);
+    authAlert('#recAlert', 'info', esc(r.mensagem) + atalho);
   }catch(err){
     authAlert('#recAlert', 'err', esc(err.message));
   }finally{ btn.disabled = false; }
@@ -146,22 +179,64 @@ function iniciarTimerOTP(){
   }, 1000);
 }
 
-/* ---------- Etapa 2 ---------- */
-async function verificarCodigo(){
-  const cod = $$('.otp').map(o => o.value).join('');
-  if(cod.length < 6){ authAlert('#recAlert', 'err', 'Digite os 6 dígitos do código.'); return; }
-  const btn = $('#btnRecVerify');
-  btn.disabled = true;
+/* ---------- Abertura pelo link do e-mail ---------- */
+/* O segredo vem no fragmento da URL (`#redefinir=...`), não na query.
+
+   O fragmento não é enviado ao servidor em requisição nenhuma: não entra em
+   log de acesso nem em cabeçalho de referência, que é o que aconteceria com
+   `?token=`. Para um segredo que dá acesso à conta, é a diferença entre ficar
+   só no navegador de quem abriu o e-mail e ficar gravado em cada intermediário
+   do caminho. */
+/* Um link abre o formulário uma vez por aba.
+
+   Guardar isso é o que impede a etapa 3 de voltar sozinha num F5. O segredo
+   sai da barra de endereço assim que é lido, então em tese o recarregamento
+   já cairia no login — mas "em tese" depende de o `replaceState` ter valido,
+   e basta um app.js velho em cache para a página voltar ao formulário de
+   senha. Aqui a resposta não depende da URL: a aba lembra que já abriu aquele
+   link, e recarregar passa a dizer isso em vez de reabrir a troca de senha.
+
+   Fica em `sessionStorage` e não em `localStorage` de propósito: morre com a
+   aba, então reabrir o e-mail numa aba nova continua funcionando — que é o
+   caso de quem fechou a página sem querer. */
+const LINKS_ABERTOS = 'seguranca.links_abertos';
+function linkJaAberto(token){
   try{
-    await API.verificarCodigo(REC.email, cod);
-    clearInterval(REC.timer);
-    authAlert('#recAlert', 'ok', 'Código validado. Defina sua nova senha.');
+    return (JSON.parse(sessionStorage.getItem(LINKS_ABERTOS)) || []).includes(token);
+  }catch(e){ return false; }
+}
+function marcarLinkAberto(token){
+  try{
+    const vistos = JSON.parse(sessionStorage.getItem(LINKS_ABERTOS)) || [];
+    vistos.push(token);
+    // Só os últimos: a lista não precisa crescer, e o que interessa é o link
+    // recém-aberto, não o histórico da aba.
+    sessionStorage.setItem(LINKS_ABERTOS, JSON.stringify(vistos.slice(-5)));
+  }catch(e){}
+}
+
+async function abrirPorLink(token){
+  mostrarRecover();
+  authAlert('#recAlert', 'info', 'Validando o link…');
+  marcarLinkAberto(token);
+  try{
+    const r = await API.verificarLink(token);
+    REC.token = token;
+    REC.email = r.email;
+    REC.expira = Date.now() + (r.expira_em_segundos || 1800) * 1000;
+    const eco = $('#recMailEcho'); if(eco) eco.textContent = r.email;
+    // A etapa 3 só aparece depois de o servidor aceitar o link. Mostrá-la
+    // antes fazia um link vencido piscar o formulário de nova senha para só
+    // então recuar — e quem viu o formulário entende que ele valia.
     recStep(3);
+    authAlert('#recAlert', 'ok',
+      `Link validado. Defina a nova senha de <b>${esc(r.email)}</b>.`);
+    iniciarTimerOTP();
     setTimeout(() => $('#recPass').focus(), 120);
   }catch(e){
+    recStep(1);
     authAlert('#recAlert', 'err', esc(e.message));
-    if(/novo código|expirad/i.test(e.message)) recStep(1);
-  }finally{ btn.disabled = false; }
+  }
 }
 
 /* ---------- Etapa 3 ---------- */
@@ -191,41 +266,17 @@ async function salvarSenha(){
   if(p !== p2){ authAlert('#recAlert', 'err', 'As senhas não conferem.'); return; }
   if(score < 3){ authAlert('#recAlert', 'err', 'Escolha uma senha mais forte.'); return; }
 
-  const cod = $$('.otp').map(o => o.value).join('');
   const btn = $('#btnRecSave');
   btn.disabled = true;
   try{
-    await API.redefinirSenha(REC.email, cod, p);
-    authAlert('#recAlert', 'ok', 'Senha redefinida. Entrando no sistema…');
-    const usuario = await API.login(REC.email, p, false);
-    setTimeout(async () => { mostrarLogin(); await entrarNoSistema(usuario); }, 700);
+    await API.redefinirSenha(REC.token, p);
+    authAlert('#recAlert', 'ok', 'Senha redefinida com sucesso. Voltando ao login…');
+    // Volta ao login para fazer o processo completo: e-mail + senha + enter
+    setTimeout(() => { mostrarLogin(); $('#loginUser').focus(); }, 1200);
   }catch(e){
     authAlert('#recAlert', 'err', esc(e.message));
   }finally{ btn.disabled = false; }
 }
-
-/* ---------- Campo OTP ---------- */
-$$('.otp').forEach((o, i, arr) => {
-  o.addEventListener('input', () => {
-    o.value = o.value.replace(/\D/g, '').slice(0, 1);
-    o.classList.toggle('filled', !!o.value);
-    if(o.value && i < arr.length - 1) arr[i+1].focus();
-    if(arr.every(x => x.value)) setTimeout(verificarCodigo, 150);
-  });
-  o.addEventListener('keydown', e => {
-    if(e.key === 'Backspace' && !o.value && i > 0){
-      arr[i-1].focus(); arr[i-1].value = ''; arr[i-1].classList.remove('filled');
-    }
-    if(e.key === 'ArrowLeft'  && i > 0) arr[i-1].focus();
-    if(e.key === 'ArrowRight' && i < arr.length - 1) arr[i+1].focus();
-  });
-  o.addEventListener('paste', e => {
-    e.preventDefault();
-    const d = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
-    d.split('').forEach((c, k) => { if(arr[k]){ arr[k].value = c; arr[k].classList.add('filled'); } });
-    if(d.length === 6) setTimeout(verificarCodigo, 150);
-  });
-});
 
 $('#btnLogin').onclick = fazerLogin;
 $('#loginPass').addEventListener('keydown', e => { if(e.key === 'Enter') fazerLogin(); });
@@ -236,7 +287,6 @@ $('#btnRecBack2').onclick = () => { clearInterval(REC.timer); recStep(1); };
 $('#btnRecSend').onclick = enviarCodigo;
 $('#recEmail').addEventListener('keydown', e => { if(e.key === 'Enter') enviarCodigo(); });
 $('#btnResend').onclick = enviarCodigo;
-$('#btnRecVerify').onclick = verificarCodigo;
 $('#btnRecSave').onclick = salvarSenha;
 $('#recPass').addEventListener('input', atualizarMedidor);
 $('#recPass2').addEventListener('keydown', e => { if(e.key === 'Enter') salvarSenha(); });
@@ -303,7 +353,6 @@ async function montarApp(usuario){
 
   try{ APP.cfg = await API.info(); }catch(e){ APP.cfg = {}; }
 
-  FEED.watermark = false;
   FEED.aoMedirFps = fps => { const e = $('#mFps'); if(e) e.textContent = fps; };
   // O token vai na URL porque <img> não envia cabeçalho. Se a câmera não
   // responder, o onerror do próprio <img> devolve o tile à cena sintética.
@@ -330,6 +379,19 @@ const iniciais = nome => String(nome || '').split(' ')
 async function carregarCatalogoCameras(){
   try{ APP.cameras = await API.cameras(); }
   catch(e){ APP.cameras = []; }
+  /* Os tiles no ar guardam o objeto de câmera que receberam ao nascer. Sem
+     repontá-los, o mosaico segue desenhando a zona de antes depois de ela
+     ter sido salva — a gravação deu certo, a tela continuou mentindo.
+
+     Trocar a referência basta, e é melhor que redesenhar a tela: cada tile
+     é uma conexão MJPEG viva, e recriá-los derrubaria e reconectaria o
+     vídeo de todas as câmeras para mostrar uma linha nova. */
+  if(typeof FEED !== 'undefined' && FEED.tiles){
+    FEED.tiles.forEach(t => {
+      const atual = t.cam && camPorCodigo(t.cam.codigo);
+      if(atual) t.cam = atual;
+    });
+  }
 }
 const camPorCodigo = c => APP.cameras.find(x => x.codigo === c);
 
@@ -409,6 +471,122 @@ async function atualizarContadores(){
   }catch(e){ /* contadores são informativos: falha não interrompe a operação */ }
 }
 
+/* ==========================================================
+   PAINEL DE ALERTA
+
+   Um alerta de um sistema integrado a presídio não pode terminar numa linha
+   de lista que alguém abre depois. Ele interrompe: aparece acima de tudo,
+   apita, e só sai quando uma pessoa confirma que viu.
+
+   Não cobre a tela inteira de propósito — quem recebe o alerta pode precisar
+   mexer no sistema antes de encerrá-lo, e um bloqueio total atrapalharia
+   justamente no momento em que a resposta importa.
+   ========================================================== */
+const ALERTA = {
+  fila: [],
+  atual: null,
+  audio: null,
+
+  /* Dois bipes curtos, sintetizados — sem arquivo para baixar, sem depender
+     de o navegador ter carregado um asset antes do primeiro alerta. O
+     AudioContext só é criado depois do login, que já é o gesto do usuário
+     que as políticas de autoplay exigem. */
+  apitar(critico){
+    try{
+      this.audio = this.audio || new (window.AudioContext || window.webkitAudioContext)();
+      if(this.audio.state === 'suspended') this.audio.resume();
+      const t0 = this.audio.currentTime;
+      [0, 0.22].forEach((atraso, i) => {
+        const osc = this.audio.createOscillator(), g = this.audio.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = critico ? (i ? 760 : 980) : 620;
+        g.gain.setValueAtTime(0.0001, t0 + atraso);
+        g.gain.exponentialRampToValueAtTime(0.16, t0 + atraso + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + atraso + 0.17);
+        osc.connect(g).connect(this.audio.destination);
+        osc.start(t0 + atraso); osc.stop(t0 + atraso + 0.2);
+      });
+    }catch(e){ /* som é reforço, não o aviso: sem ele o painel continua */ }
+  },
+
+  enfileirar(a){
+    this.fila.push(a);
+    this.apitar(a.severidade >= 4);
+    // Já há cartão na tela: o novo espera, mas o contador precisa subir na
+    // hora. Sem isto uma rajada aparecia como um alerta só — o cartão fora
+    // desenhado quando a fila ainda estava vazia e nunca mais se atualizava.
+    if(this.atual) this.atualizarFila(); else this.mostrar();
+  },
+
+  atualizarFila(){
+    const acoes = $('#alertaFaixa .acoes');
+    if(!acoes) return;
+    let marca = $('.alerta-fila', acoes);
+    if(!this.fila.length){ if(marca) marca.remove(); return; }
+    if(!marca){
+      marca = document.createElement('span');
+      marca.className = 'alerta-fila';
+      acoes.appendChild(marca);
+    }
+    marca.textContent = `+${this.fila.length} na fila`;
+  },
+
+  mostrar(){
+    const a = this.atual = this.fila.shift();
+    const faixa = $('#alertaFaixa');
+    if(!a){ faixa.hidden = true; faixa.innerHTML = ''; return; }
+
+    const critico = a.severidade >= 4;
+    const restam = this.fila.length;
+    const img = a.deteccao_codigo ? {codigo: a.deteccao_codigo, fonte: 'deteccoes'}
+              : a.tem_imagem      ? {codigo: a.codigo, fonte: 'alertas'} : null;
+
+    faixa.hidden = false;
+    faixa.innerHTML = `
+      <div class="alerta-cartao ${critico ? '' : 'sev-media'}" role="alertdialog"
+           aria-live="assertive" aria-label="${esc(a.titulo)}">
+        <div class="sino">${ico('alert', 28)}</div>
+        <div class="corpo">
+          <span class="faixa-sev">Alerta · ${esc(SEVERIDADE[a.severidade] || '')}</span>
+          <b>${esc(a.titulo)}</b>
+          <p>${esc(a.detalhe || '')}</p>
+          <div class="meta">
+            <span>${esc(a.codigo)}</span><span>·</span>
+            <span>${esc(a.camera_codigo || '')} ${esc(a.camera_nome || '')}</span>
+            ${a.ocorrido_em ? `<span>·</span><span>${fmtTime(a.ocorrido_em)}</span>` : ''}
+          </div>
+          <div class="acoes">
+            <button class="btn btn-primary" data-al-ver>Abrir alerta</button>
+            <button class="btn btn-ghost" data-al-ciente>Ciente</button>
+            ${restam ? `<span class="alerta-fila">+${restam} na fila</span>` : ''}
+          </div>
+        </div>
+        ${img ? '<canvas data-al-img width="110" height="150"></canvas>' : ''}
+      </div>`;
+
+    const cv = $('[data-al-img]', faixa);
+    /* A moldura assume a proporção do recorte, em vez de o recorte se encaixar
+       numa moldura fixa. Numa caixa 4:3 sobrava preto dos dois lados: medido
+       nos 40 recortes mais recentes, 37 são mais altos que largos (mediana
+       0,73 contra 1,33 da caixa). Preencher cortando seria pior — no recorte
+       de 201x570 só caberia 26% da pessoa, sem cabeça nem pés.
+
+       O teto de 150px é o do cartão, não o da janela: aqui a imagem acompanha
+       o alerta, e não pode crescer até empurrar os botões para fora. */
+    if(cv && img){
+      molduraVazia(cv, 110, 150);
+      carregarRecorte(cv, img.codigo, 176, img.fonte, 150);
+    }
+
+    $('[data-al-ciente]', faixa).onclick = () => this.mostrar();
+    $('[data-al-ver]', faixa).onclick = () => {
+      const codigo = a.codigo;
+      this.mostrar();
+      if(API.pode('alerts')) abrirAlerta(codigo);
+    };
+  }
+};
+
 /* ---------- Eventos ao vivo ---------- */
 EventosAoVivo.ao(msg => {
   if(msg.tipo === 'conexao'){
@@ -418,9 +596,8 @@ EventosAoVivo.ao(msg => {
   }
   if(msg.tipo === 'deteccao'){
     const d = msg.dados;
-    if(d.alerta && d.severidade >= 4){
-      toast('⚠ Alerta crítico', `${d.alerta.titulo} · ${d.camera_nome}`, 'err', 7000);
-    }
+    // Sem toast aqui: o alerta desta detecção chega pelo evento `alerta` e
+    // vira painel. Avisar duas vezes o mesmo fato só ensina a ignorar.
     if(APP.view === 'live')  aoVivoNovoEvento(d);
     if(APP.view === 'dash')  painelNovoEvento(d);
     atualizarContadoresDebounced();
@@ -429,9 +606,11 @@ EventosAoVivo.ao(msg => {
     // Sobreposição do mosaico: a cena atual, que não vira registro.
     FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas, msg.dados.validade_s);
   }
-  if(msg.tipo === 'identificacao'){
-    // Pessoa identificada: renderizar o nome sobre a câmera
-    FEED.adicionarIdentificacao(msg.dados.camera_codigo, msg.dados);
+  /* Todo alerta — de detecção ou de sala — entra na fila do painel. */
+  if(msg.tipo === 'alerta'){
+    ALERTA.enfileirar(msg.dados);
+    atualizarContadoresDebounced();
+    if(APP.view === 'alerts') irPara('alerts');
   }
   if(msg.tipo === 'alerta_atualizado'){
     atualizarContadoresDebounced();
@@ -471,7 +650,7 @@ async function abrirPerfil(){
       <dl class="kv">
         <dt>Matrícula</dt><dd class="mono">${esc(u.matricula)}</dd>
         <dt>E-mail</dt><dd class="mono">${esc(u.email)}</dd>
-        <dt>Unidade</dt><dd>${esc(u.unidade || '—')}</dd>
+        <dt>Setor</dt><dd>${esc(u.unidade || '—')}</dd>
         <dt>MFA</dt><dd>${u.mfa_ativo ? '<span class="chip c-green">Ativo</span>' : '<span class="chip c-amber">Inativo</span>'}</dd>
         <dt>Último acesso</dt><dd class="mono">${u.ultimo_acesso ? fmtDT(u.ultimo_acesso) : '—'}</dd>
         <dt>Permissões</dt><dd style="display:flex;gap:4px;flex-wrap:wrap">${(u.permissoes||[]).map(p => `<span class="chip c-gray">${esc(p)}</span>`).join('')}</dd>
@@ -508,6 +687,32 @@ document.addEventListener('visibilitychange', () => {
    ========================================================== */
 (async function iniciar(){
   AUTHFX.iniciar();
+
+  /* Link de redefinição no endereço? Ele manda em tudo o mais.
+
+     Vem antes da sessão salva de propósito: quem clica no link do e-mail quer
+     trocar a senha, e entrar direto com uma sessão antiga numa máquina
+     compartilhada abriria a conta de outra pessoa. */
+  const deLink = /[#&]redefinir=([\w\-]+)/.exec(location.hash || '');
+  if(deLink){
+    const token = deLink[1];
+    // Some da barra de endereço antes de qualquer outra coisa: o segredo não
+    // precisa continuar visível, nem ir parar no histórico de quem usar a
+    // máquina depois. Fica aqui, e não em `abrirPorLink`, porque quem lê o
+    // fragmento é quem deve apagá-lo — inclusive no caminho em que o link já
+    // foi aberto e `abrirPorLink` nem chega a rodar.
+    try{ history.replaceState(null, '', location.pathname + location.search); }catch(e){}
+    API.limparSessao();
+    if(linkJaAberto(token)){
+      mostrarRecover();
+      authAlert('#recAlert', 'warn',
+        'Este link já foi aberto nesta aba. Se ainda precisar trocar a senha, ' +
+        'peça um novo abaixo.');
+    }else{
+      await abrirPorLink(token);
+    }
+    return;
+  }
 
   // Sessão salva? Valida contra o servidor antes de confiar nela.
   if(API.restaurar()){
