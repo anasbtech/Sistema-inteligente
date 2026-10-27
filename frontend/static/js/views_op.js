@@ -1472,6 +1472,10 @@ function abrirEditorZonas(cam){
       ['restrita',         'Pessoa em área restrita'],
       ['veiculo_proibido', 'Veículo em área proibida'],
       ['contrafluxo',      'Deslocamento em contrafluxo'],
+      // Não vigia nada: apaga. Serve para o canto da imagem onde o detector
+      // insiste em ver gente que não existe — hidrante, manequim, cartaz —
+      // e onde se sabe que ninguém passa.
+      ['ignorar',          'Ignorar detecções nesta região'],
     ],
     // Perímetro é cruzamento de linha: é a única coisa que uma linha decide.
     LINHA: [['invasao', 'Invasão de perímetro']],

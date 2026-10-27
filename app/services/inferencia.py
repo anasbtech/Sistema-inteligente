@@ -719,6 +719,40 @@ class Inferencia:
                 analisador.atualizar, objs, extra.shape[1], extra.shape[0], zonas)
 
     @staticmethod
+    def _fora_das_zonas_ignoradas(objetos: list, cam: Camera, quadro) -> list:
+        """Tira o que cai numa região marcada como "ignorar".
+
+        O detector confunde objeto fixo com pessoa, e não há limiar que
+        resolva: o hidrante da Garagem sai com 0,9 de confiança, acima de
+        qualquer piso que ainda deixe passar gente de verdade. O que o
+        distingue não é a aparência — é saber que *naquele pedaço de parede*
+        não passa ninguém, e isso quem sabe é quem conhece a câmera.
+
+        Deliberadamente **não** se suprime "pessoa que não se mexe". Seria o
+        filtro óbvio e destruiria a permanência prolongada, cuja razão de
+        existir é alertar sobre quem fica parado — e numa portaria apagaria
+        o vigia no posto.
+
+        O critério é o pé da caixa, não o centro: é por onde a pessoa toca o
+        chão, e é o que decide de que lado de uma borda ela está. Pelo centro
+        um corpo alto rente à zona ficaria metade fora.
+        """
+        zonas = [z for z in (cam.zonas or [])
+                 if (z.regras or {}).get("ignorar") and (z.pontos or [])]
+        if not zonas or not objetos:
+            return objetos
+
+        altura, largura = quadro.shape[0], quadro.shape[1]
+        sobraram = []
+        for obj in objetos:
+            x1, y1, x2, y2 = obj.bbox
+            pe = ((x1 + x2) / 2 / largura, y2 / altura)
+            if any(vision.ponto_em_poligono(pe, z.pontos) for z in zonas):
+                continue
+            sobraram.append(obj)
+        return sobraram
+
+    @staticmethod
     def _zonas(cam: Camera) -> list:
         """Zonas da câmera no formato que o analisador espera."""
         # O nome vai junto: o analisador o escreve no alerta ("Pessoa em área
@@ -794,6 +828,8 @@ class Inferencia:
                     vision.ObjetoDetectado(classe, conf, caixa, None)
                     for classe, conf, caixa in achados
                 )
+
+            objetos = self._fora_das_zonas_ignoradas(objetos, cam, quadro)
 
             tem_pessoa = any(o.classe == "pessoa" for o in objetos)
 

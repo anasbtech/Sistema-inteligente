@@ -592,3 +592,66 @@ def test_carimbo_de_data_e_hora_nao_e_fumaca():
         "região colada na borda é carimbo da câmera, não fumaça")
 
 
+
+
+# ----------------------------------------------------------------------
+# Região ignorada: o que o operador sabe e o detector não
+# ----------------------------------------------------------------------
+class _CamFalsa:
+    def __init__(self, zonas):
+        self.zonas = zonas
+
+
+class _ZonaFalsa:
+    def __init__(self, pontos, regras):
+        self.pontos, self.regras = pontos, regras
+
+
+class _QuadroFalso:
+    shape = (720, 1280, 3)
+
+
+# O hidrante da Garagem: canto esquerdo da parede, onde ninguém passa.
+HIDRANTE = _ZonaFalsa([[0.10, 0.42], [0.25, 0.42], [0.25, 0.62], [0.10, 0.62]],
+                      {"ignorar": True})
+
+
+def _filtrar(objetos, zonas):
+    from app.services.inferencia import Inferencia
+
+    return Inferencia._fora_das_zonas_ignoradas(
+        objetos, _CamFalsa(zonas), _QuadroFalso())
+
+
+def test_o_que_cai_na_regiao_ignorada_some():
+    """O hidrante sai do detector com 0,9 de confiança.
+
+    Não há limiar que o separe de uma pessoa — qualquer piso alto o bastante
+    para barrá-lo barra gente de verdade primeiro. O que o distingue é saber
+    que naquele pedaço de parede não passa ninguém.
+    """
+    # Caixa em pixels; o pé fica em x≈0,18 y≈0,58, dentro da zona.
+    hidrante = ObjetoDetectado("pessoa", 0.93, (205, 310, 260, 420), track_id=1)
+    assert _filtrar([hidrante], [HIDRANTE]) == []
+
+
+def test_quem_passa_ao_lado_continua_sendo_visto():
+    """A região apaga o que está dentro dela, e só isso."""
+    pessoa = ObjetoDetectado("pessoa", 0.88, (600, 300, 690, 520), track_id=2)
+    assert _filtrar([pessoa], [HIDRANTE]) == [pessoa]
+
+
+def test_a_regiao_decide_pelo_pe_e_nao_pelo_centro():
+    """É por onde a pessoa toca o chão que se sabe de que lado da borda ela
+    está. Pelo centro, um corpo alto rente à zona ficaria metade fora."""
+    # Centro em y≈0,33 (acima da zona), pé em y≈0,58 (dentro).
+    alta = ObjetoDetectado("pessoa", 0.9, (205, 60, 260, 420), track_id=3)
+    assert _filtrar([alta], [HIDRANTE]) == [], "o pé manda"
+
+
+def test_camera_sem_regiao_ignorada_nao_perde_nada():
+    objs = [ObjetoDetectado("pessoa", 0.9, (205, 310, 260, 420), track_id=1)]
+    assert _filtrar(objs, []) == objs
+    semregra = _ZonaFalsa(HIDRANTE.pontos, {"restrita": True})
+    assert _filtrar(objs, [semregra]) == objs, (
+        "só `ignorar` apaga; área restrita vigia, não esconde")
