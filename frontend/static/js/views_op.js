@@ -50,8 +50,10 @@ async function renderPainel(alvo){
     API.resumoDeteccoes({desde: inicio.toISOString(), ate: fim.toISOString()}),
     API.pode('alerts') ? API.resumoAlertas() : Promise.resolve({}),
     API.pode('biometrics') ? API.esquemaIds() : Promise.resolve({prefixos:{}}),
-    // Rosto ou corpo: os 6 mais recentes de ambos. O tipo aparece em d.tipo.
-    API.deteccoes({apenas_match:true, por_pagina:6}),
+    // Só rosto: é o rosto que identifica. O corpo chegava aqui porque o
+    // worker costurava identidade à caixa do corpo, e o painel anunciava
+    // como identificação algo que nenhum reconhecimento havia lido.
+    API.deteccoes({apenas_match:true, tipo:'FACIAL', por_pagina:6}),
     API.pode('alerts') ? API.alertas({status:'ABERTO', por_pagina:6}) : Promise.resolve({itens:[]})
   ]);
 
@@ -226,26 +228,20 @@ async function renderPainel(alvo){
   $$('#periodoAtalhos button').forEach(b => b.onclick = () =>
     aplicarPeriodo(diasAtras({hoje:0, '7d':6, '30d':29}[b.dataset.atalho]), hojeStr));
 
-  // Identificações recentes (rosto ou corpo)
+  // Identificações recentes — rosto, e só.
   const itens = ultimas.itens || [];
   $('#dashFacial').innerHTML = itens.length ? `<div class="rank">${itens.map(d => {
-    const p = d.pessoa, st = STATUS_PESSOA[p.status] || STATUS_PESSOA.CIDADAO;
-    const ehRosto = d.tipo === 'FACIAL';
-    // Rosto traz similaridade; corpo, confiança. Mostrar qual está disponível.
-    const metrica = ehRosto ? (d.similaridade ? pct100(d.similaridade) : '—')
-                            : (d.confianca ? pct100(d.confianca) : '—');
+    const p = d.pessoa;
+    const metrica = d.similaridade ? pct100(d.similaridade) : '—';
     return `<div class="rank-row clickable" data-det="${esc(d.codigo)}" style="cursor:pointer">
-      ${ehRosto ? `<canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="38" height="38"></canvas>`
-                : `<canvas data-snap="${snapAttr(d)}" width="38" height="48"></canvas>`}
+      <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="38" height="38"></canvas>
       <div class="rank-bd"><b>${esc(p.nome)}</b>
         <span class="sub">${esc(p.id_biometrico)} · ${esc((d.camera ? d.camera.nome : '').slice(0,26))}</span></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        <span class="chip" style="font-size:9.5px;padding:3px 6px">${ehRosto ? 'Rosto' : 'Corpo'}</span>
         <span class="mono" style="font-size:10.5px;color:var(--txt-3)">${relTime(d.ocorrido_em)} · ${metrica}</span>
       </div></div>`;
   }).join('')}</div>` : vazio('face','Nenhuma identificação positiva recente.');
   pintarFaces($('#dashFacial'));
-  pintarSnaps($('#dashFacial'));
   $$('#dashFacial .rank-row').forEach(r => r.onclick = () => abrirDeteccao(r.dataset.det));
 
   // Alertas prioritários
