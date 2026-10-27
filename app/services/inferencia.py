@@ -719,6 +719,20 @@ class Inferencia:
             video.quadro_bgr, cam.codigo, cam.rtsp_url, True
         )
         if quadro is None:
+            # Sem quadro não há o que afirmar sobre a cena — e sair calado
+            # deixa a sobreposição anterior de pé até a validade vencer, que
+            # é `ciclo_real * 2`: de 28 a 72 segundos de caixa sobre gente
+            # que já saiu. O rastro não vem do rastreador, vem daqui.
+            #
+            # Publicar vazio apaga a marcação e assume a ignorância. Numa
+            # câmera que oscila isso faz a caixa piscar por uma volta; a
+            # alternativa é afirmar presença sem imagem que a sustente, que
+            # num sistema de vigilância é o erro pior.
+            await publicar("quadro_ao_vivo", {
+                "camera_codigo": cam.codigo,
+                "caixas": [],
+                "validade_s": round(self.ciclo_real * 2.0, 1),
+            })
             return
         altura, largura = quadro.shape[:2]
         agora = datetime.now(timezone.utc)

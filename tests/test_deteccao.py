@@ -703,3 +703,52 @@ def test_a_zona_restrita_continua_sabendo_quem_entrou():
     fonte = inspect.getsource(Inferencia._marcar_corpo)
     assert "_identidades" in fonte, (
         "a ponte rosto→corpo sumiu; a zona restrita não saberia quem entrou")
+
+
+# ----------------------------------------------------------------------
+# A caixa não sobrevive ao quadro que a sustentava
+# ----------------------------------------------------------------------
+def test_quadro_ilegivel_apaga_a_sobreposicao():
+    """O rastro não vem do rastreador — vem do worker saindo calado.
+
+    Quando a leitura do quadro falha (e falha: o parque opera com 24 das 26
+    câmeras on-line), `_processar` devolvia sem publicar. A tela mantinha a
+    marcação anterior até a validade vencer, que é `ciclo_real * 2` — de 28
+    a 72 segundos de caixa sobre gente que já saiu de cena.
+
+    Afirmar presença sem imagem que a sustente é, num sistema de vigilância,
+    pior que a caixa piscar por uma volta.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.services import inferencia as mod
+
+    publicados = []
+
+    async def _publicar_falso(tipo, dados):
+        publicados.append((tipo, dados))
+
+    async def _cenario():
+        motor = mod.Inferencia()
+        motor.ciclo_real = 20.0
+        cam = SimpleNamespace(codigo="CAM-999", rtsp_url="rtsp://x", nome="Teste")
+
+        original_quadro = mod.video.quadro_bgr
+        original_pub = mod.publicar
+        mod.video.quadro_bgr = lambda *a, **k: None      # câmera muda
+        mod.publicar = _publicar_falso
+        try:
+            await motor._processar(None, cam)
+        finally:
+            mod.video.quadro_bgr = original_quadro
+            mod.publicar = original_pub
+
+    asyncio.run(_cenario())
+
+    assert publicados, "sem quadro, o worker saía sem dizer nada à tela"
+    tipo, dados = publicados[-1]
+    assert tipo == "quadro_ao_vivo"
+    assert dados["camera_codigo"] == "CAM-999"
+    assert dados["caixas"] == [], "a marcação anterior tem de ser apagada"
+
