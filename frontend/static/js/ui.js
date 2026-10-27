@@ -69,7 +69,11 @@ const STATUS_ALERTA = {
 const ROTULO_OBJ = {
   pessoa:'Pessoa', carro:'Carro', caminhao:'Caminhão', onibus:'Ônibus',
   motocicleta:'Motocicleta', bicicleta:'Bicicleta', animal:'Animal',
-  mochila:'Mochila', volume:'Volume abandonado', capacete:'Capacete',
+  // `volume` é a classe do objeto, não um veredito. Abandono é ação, e
+  // só se decide depois de segundos parado — chamar a caixa de "Volume
+  // abandonado" afirmava na tela algo que nada havia avaliado, sobre uma
+  // scooter estacionada na Portaria.
+  mochila:'Mochila', volume:'Volume', capacete:'Capacete',
   placa:'Placa veicular', arma:'Objeto tipo arma',
   veiculo:'Veículo'   // registros anteriores à separação por tipo
 };
