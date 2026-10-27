@@ -752,3 +752,28 @@ def test_quadro_ilegivel_apaga_a_sobreposicao():
     assert dados["camera_codigo"] == "CAM-999"
     assert dados["caixas"] == [], "a marcação anterior tem de ser apagada"
 
+
+
+def test_objeto_cortado_pela_borda_ainda_cai_na_regiao_ignorada():
+    """O pé de quem está em primeiro plano fica exatamente na borda.
+
+    A caixa do detector é recortada no quadro, então um objeto encostado na
+    base termina em y=1,0 — e um ponto *sobre* a aresta do polígono é caso
+    degenerado do ray casting: responde "fora" mesmo com o polígono indo
+    até 1,0. Foi o que fez a zona sobre a placa de incêndio da CAM-010 não
+    pegar nada: a placa é cortada pela borda inferior.
+    """
+    canto = _ZonaFalsa([[0.80, 0.78], [1.0, 0.78], [1.0, 1.0], [0.80, 1.0]],
+                       {"ignorar": True})
+    # Caixa encostada na base do quadro de 1280x720.
+    placa = ObjetoDetectado("pessoa", 0.9, (1100, 640, 1190, 720), track_id=1)
+    assert _filtrar([placa], [canto]) == []
+
+
+def test_quem_anda_no_fundo_nao_e_afetado_pela_borda():
+    """A tolerância de borda não pode virar uma zona maior do que foi
+    desenhada: quem passa longe segue aparecendo."""
+    canto = _ZonaFalsa([[0.80, 0.78], [1.0, 0.78], [1.0, 1.0], [0.80, 1.0]],
+                       {"ignorar": True})
+    pessoa = ObjetoDetectado("pessoa", 0.9, (400, 300, 490, 719), track_id=2)
+    assert _filtrar([pessoa], [canto]) == [pessoa]

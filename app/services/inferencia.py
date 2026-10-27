@@ -75,6 +75,11 @@ class Inferencia:
         # então a resposta é sempre a da volta anterior.
         self._identidades: Dict[str, Dict[int, Tuple[str, float]]] = {}
         self.gerados = 0
+        # Quantas vezes uma câmera estourou no meio do processamento, e qual
+        # foi a última. Uma câmera que falha não publica sobreposição: a
+        # publicação é a última linha de `_processar`.
+        self.falhas = 0
+        self.ultima_falha = ""
         # Quanto uma volta completa leva de fato. Cresce com o parque, e é o
         # que o mosaico precisa saber para não apagar a caixa cedo demais.
         self.ciclo_real = intervalo
@@ -190,6 +195,12 @@ class Inferencia:
                 async with db_context() as db:
                     await self._processar(db, cam)
             except Exception as exc:  # noqa: BLE001
+                # Contado, e não só logado: a falha por câmera é invisível na
+                # tela — some como "não apareceu caixa nenhuma" — e o console
+                # do worker não é lido. Sem número, a conversa sobre caixa
+                # faltando vira palpite.
+                self.falhas += 1
+                self.ultima_falha = f"{cam.codigo}: {exc}"
                 log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
 
     def _rosto_recente(self, camera: str, embedding) -> Tuple[bool, list]:
@@ -687,10 +698,23 @@ class Inferencia:
             return objetos
 
         altura, largura = quadro.shape[0], quadro.shape[1]
+
+        def dentro_do_quadro(v: float) -> float:
+            """Encosta o ponto na borda sem ficar *sobre* ela.
+
+            A caixa do detector é recortada no quadro, então quem está em
+            primeiro plano termina exatamente em 1,0 — e um ponto sobre a
+            aresta do polígono é caso degenerado do ray casting: dá "fora"
+            mesmo com o polígono indo até 1,0. Era por isso que a zona sobre
+            a placa de incêndio não pegava nada: o pé caía sempre na borda.
+            """
+            return min(max(v, 0.001), 0.999)
+
         sobraram = []
         for obj in objetos:
             x1, y1, x2, y2 = obj.bbox
-            pe = ((x1 + x2) / 2 / largura, y2 / altura)
+            pe = (dentro_do_quadro((x1 + x2) / 2 / largura),
+                  dentro_do_quadro(y2 / altura))
             if any(vision.ponto_em_poligono(pe, z.pontos) for z in zonas):
                 continue
             sobraram.append(obj)
