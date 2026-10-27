@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
@@ -551,33 +551,6 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         "severidade": severidade,
         "alerta": alerta.codigo if alerta else None,
     }
-
-
-async def vincular_corpo(db: AsyncSession, codigo: str, pessoa_id: str) -> bool:
-    """Dá ao registro do corpo a identidade que o rosto dentro dele revelou.
-
-    O detector de objeto marca a pessoa inteira; o motor facial marca o rosto,
-    que é onde a identidade aparece. São dois registros do mesmo alguém no
-    mesmo instante, e sem costurá-los a passagem fica partida: o corpo consta
-    como "pessoa" anônima e só o rosto sabe quem é.
-
-    Costurar importa além da etiqueta no vídeo. Rosto legível é a exceção —
-    quem está de costas, longe ou de perfil aparece como corpo e mais nada.
-    Vinculado, esse tempo todo entra na trajetória; solto, a pessoa some do
-    mapa justamente nos trechos em que estava andando.
-
-    Só preenche o que está vazio: um registro que já aponta para alguém foi
-    decidido pela busca 1:N ou por um operador, e nenhum dos dois deve ser
-    sobrescrito por inferência geométrica.
-    """
-    atingidos = (
-        await db.execute(
-            update(Deteccao)
-            .where(Deteccao.codigo == codigo, Deteccao.pessoa_id.is_(None))
-            .values(pessoa_id=uuid.UUID(pessoa_id))
-        )
-    ).rowcount
-    return bool(atingidos)
 
 
 @router.post("/ingest", status_code=status.HTTP_201_CREATED,

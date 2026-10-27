@@ -69,11 +69,6 @@ class Inferencia:
         self._task: Optional[asyncio.Task] = None
         self._visto: Dict[Tuple[str, str], float] = {}
         self._rostos: Dict[str, list] = {}
-        # Última vez que o corpo de cada pessoa virou linha, por câmera. Tem
-        # dicionário próprio porque a janela é outra: o corpo identificado
-        # não é o objeto anônimo de `_visto`, e represá-lo por 30 minutos era
-        # o que deixava a trajetória só com rostos.
-        self._corpos_identificados: Dict[Tuple[str, str], float] = {}
         # Quem é cada corpo em cena, por câmera: track_id -> (id_biometrico,
         # instante). É o que permite a zona restrita liberar quem tem
         # autorização, e vem do facial — que roda depois da análise de ação,
@@ -249,21 +244,6 @@ class Inferencia:
                   >= settings.FACE_CORPO_CONTENCAO]
         return min(dentro, key=lambda c: area(c["bbox"])) if dentro else None
 
-    def _corpo_ja_registrado(self, camera: str, pessoa_id: str) -> bool:
-        """Este corpo já virou linha há pouco, nesta câmera."""
-        agora = time.monotonic()
-        chave = (camera, pessoa_id)
-        anterior = self._corpos_identificados.get(chave)
-        if anterior is not None and (agora - anterior) < settings.INFERENCIA_CORPO_JANELA_S:
-            return True
-        self._corpos_identificados[chave] = agora
-        if len(self._corpos_identificados) > 2000:
-            corte = agora - settings.INFERENCIA_CORPO_JANELA_S
-            self._corpos_identificados = {
-                k: v for k, v in self._corpos_identificados.items() if v > corte
-            }
-        return False
-
     @staticmethod
     def _rotular(caixa_rosto: dict, nome: str, nomes_no_quadro: list) -> None:
         """Um nome por pessoa na tela, sempre na caixa do rosto.
@@ -288,69 +268,33 @@ class Inferencia:
         if nome not in nomes_no_quadro:
             nomes_no_quadro.append(nome)
 
-    async def _alinhar_corpo(self, db, cena: dict, bbox_rosto, corpos: list,
-                             nome: str, pessoa_id, id_biometrico=None) -> None:
-        """Leva a identidade do rosto para o corpo que o contém.
+    def _marcar_corpo(self, cena: dict, bbox_rosto, corpos: list,
+                      id_biometrico=None) -> None:
+        """Anota de quem é o corpo que contém este rosto — só em memória.
 
-        A identidade vai para o *registro*, não para a tela: o corpo deixa de
-        ser uma "pessoa" anônima na trajetória, mas a tarja com o nome fica
-        só na caixa do rosto. Escrever nas duas repetia o mesmo nome
-        empilhado no vídeo, e entre as duas é a do rosto que identifica — é
-        ali que a leitura aconteceu e é ali que quem confere vai olhar.
+        Não registra nada e não rotula a caixa do corpo no vídeo. O sistema
+        reconhece **pelo rosto**; o corpo não identifica ninguém, e a
+        identidade dele não vira linha no banco nem consta na ficha da
+        pessoa. Isto aqui existe por um motivo só: a zona restrita precisa
+        saber quem está dentro dela, e o que ela recebe do analisador é um
+        `track_id` de corpo. Sem a ponte, autorizar alguém a entrar numa área
+        seria impossível — todo mundo seria desconhecido.
 
-        Quando o corpo ainda não tem linha, ela nasce aqui. Parece rodeio mas
-        é o ponto: o registro de objeto é represado por 30 minutos, porque
-        pessoa parada não é notícia — e com isso o corpo quase nunca tinha
-        linha no instante em que o rosto foi lido. Medido, 10 coincidências
-        em 20 horas. Corpo que carrega identidade é outra coisa: é a presença
-        de alguém com nome, que é exatamente do que a trajetória é feita, e
-        por isso tem janela própria e mais curta.
+        A anotação vale uma volta e morre com a trilha. A análise de ação
+        roda antes do facial na mesma volta, então a resposta é sempre a da
+        volta anterior.
 
         O corpo sai da lista depois de casado: dois rostos no mesmo corpo
-        seriam duas pessoas na mesma caixa, e a segunda sobrescreveria o nome
-        da primeira.
+        seriam duas pessoas na mesma caixa.
         """
-        from app.routers.deteccoes import processar_deteccao, vincular_corpo
-
         alvo = self._corpo_do_rosto(bbox_rosto, corpos)
         if alvo is None:
             return
-        # Quem é este corpo, para a zona restrita poder perguntar na volta
-        # seguinte. A análise de ação roda antes do facial na mesma volta, e
-        # é por isso que a resposta vem sempre de uma volta atrás.
         marca = alvo["caixa"].get("track_id")
         if id_biometrico and marca is not None:
             self._identidades.setdefault(cena["cam"].codigo, {})[marca] = (
                 id_biometrico, time.monotonic())
         corpos.remove(alvo)
-        if not pessoa_id:
-            return
-
-        if alvo["codigo"]:
-            await vincular_corpo(db, alvo["codigo"], pessoa_id)
-            self._corpos_identificados[(cena["cam"].codigo, pessoa_id)] = time.monotonic()
-            return
-
-        if self._corpo_ja_registrado(cena["cam"].codigo, pessoa_id):
-            return
-
-        cam, quadro = cena["cam"], cena["quadro"]
-        jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, tuple(alvo["bbox"]))
-        registro = await processar_deteccao(db, DeteccaoIn(
-            tipo=TipoDeteccao.OBJETO,
-            camera_codigo=cam.codigo,
-            ocorrido_em=cena["agora"],
-            classe="pessoa",
-            confianca=alvo["caixa"].get("confianca"),
-            bbox=alvo["caixa"]["bbox"],
-            track_id=alvo["caixa"].get("track_id"),
-            snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
-        ), origem="inferencia")
-        self.gerados += 1
-        codigo = registro.get("codigo")
-        if codigo:
-            alvo["codigo"] = codigo
-            await vincular_corpo(db, codigo, pessoa_id)
 
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
@@ -992,13 +936,8 @@ class Inferencia:
                     # mesmo assim é alguém, com corpo para ligar e trajetória
                     # para alimentar.
                     if entrada[3] or entrada[2]:
-                        # Também aqui, e não só quando o registro nasce: é
-                        # esta a volta comum — a pessoa segue em cena e o
-                        # rosto já foi identificado antes. Sem alinhar aqui, a
-                        # caixa grande ficaria anônima na maioria dos quadros.
-                        await self._alinhar_corpo(
-                            db, cena, face.bbox, corpos_no_quadro,
-                            entrada[2], entrada[3], entrada[4])
+                        self._marcar_corpo(cena, face.bbox, corpos_no_quadro,
+                                           entrada[4])
                         self._rotular(caixa_rosto, entrada[2], nomes_no_quadro)
                     continue
 
@@ -1025,9 +964,8 @@ class Inferencia:
                     entrada[3] = pessoa_id
                     entrada[4] = resultado.get("id_biometrico")
                     caixa_rosto["similaridade"] = resultado.get("similaridade")
-                    await self._alinhar_corpo(
-                        db, cena, face.bbox, corpos_no_quadro, nome, pessoa_id,
-                        entrada[4])
+                    self._marcar_corpo(cena, face.bbox, corpos_no_quadro,
+                                       entrada[4])
                     self._rotular(caixa_rosto, nome, nomes_no_quadro)
                     log.info("%s: %s reconhecido (%.0f%%)", cam.codigo,
                              nome or resultado.get("id_biometrico"),

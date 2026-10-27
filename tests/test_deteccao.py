@@ -655,3 +655,51 @@ def test_camera_sem_regiao_ignorada_nao_perde_nada():
     semregra = _ZonaFalsa(HIDRANTE.pontos, {"restrita": True})
     assert _filtrar(objs, [semregra]) == objs, (
         "só `ignorar` apaga; área restrita vigia, não esconde")
+
+
+# ----------------------------------------------------------------------
+# Quem identifica é o rosto
+# ----------------------------------------------------------------------
+def test_corpo_nao_vira_registro_identificado():
+    """O worker não costura mais identidade a caixa de corpo.
+
+    Era o "Registros por corpo" da ficha: o rosto era lido, o corpo que o
+    continha virava um registro de objeto e recebia a mesma pessoa. Rendia
+    um segundo nome na tela e um segundo caminho de identificação que não
+    passou por reconhecimento nenhum — o corpo foi deduzido por geometria,
+    não reconhecido.
+
+    O que sobrou é uma anotação em memória, usada só para a zona restrita
+    saber de quem é o corpo que entrou nela. Ela não grava nada, e este
+    teste existe para que o registro não volte sem alguém decidir.
+    """
+    import inspect
+    from pathlib import Path
+    from app.services.inferencia import Inferencia
+
+    assert not hasattr(Inferencia, "_alinhar_corpo"), (
+        "o costurador de identidade ao corpo voltou")
+
+    fonte = inspect.getsource(Inferencia._marcar_corpo)
+    for proibido in ("processar_deteccao", "vincular_corpo", "TipoDeteccao.OBJETO"):
+        assert proibido not in fonte, (
+            f"`_marcar_corpo` voltou a gravar: encontrou {proibido}")
+
+    app = Path("app")
+    assert "vincular_corpo" not in (app / "routers" / "deteccoes.py").read_text(
+        encoding="utf-8"), "vincular_corpo voltou ao router"
+
+
+def test_a_zona_restrita_continua_sabendo_quem_entrou():
+    """A contrapartida que precisa sobreviver à remoção.
+
+    A autorização de perímetro compara o `track_id` do corpo com a lista de
+    quem pode estar ali. Sem a anotação em memória, todo mundo viraria
+    desconhecido e a lista de autorizados deixaria de ter efeito.
+    """
+    import inspect
+    from app.services.inferencia import Inferencia
+
+    fonte = inspect.getsource(Inferencia._marcar_corpo)
+    assert "_identidades" in fonte, (
+        "a ponte rosto→corpo sumiu; a zona restrita não saberia quem entrou")
