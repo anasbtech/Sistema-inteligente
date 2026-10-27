@@ -64,6 +64,23 @@ EXIBINDO_S = 8.0
 OCIOSO_S = 180.0
 FALHAS_ATE_DESISTIR = 60
 
+# Quanto o leitor espera de fato antes de desistir. `OCIOSO_S` é só o piso: o
+# worker ajusta isto a cada volta, porque é ele quem sabe de quanto em quanto
+# tempo volta a cada câmera — e o número cresce com o parque.
+#
+# Deixá-lo fixo já custou caro duas vezes. A 30s o leitor morria entre duas
+# visitas e o log virava vaivém de abrir e fechar. Subiu para 180, e a volta
+# chegou a 168,7s medidos: onze segundos de margem. Quando ela passa de 180,
+# toda visita reabre o RTSP — e numa câmera lenta a reabertura estoura o
+# limite de abertura e o tile fica preto, que foi o caso do Elevador.
+_ocioso_s = OCIOSO_S
+
+
+def definir_ocioso(segundos: float) -> None:
+    """O worker informa de quanto em quanto tempo volta a cada câmera."""
+    global _ocioso_s
+    _ocioso_s = max(OCIOSO_S, float(segundos))
+
 
 class LeitorIndisponivel(RuntimeError):
     """OpenCV ausente — a ponte não pode funcionar."""
@@ -149,7 +166,7 @@ class Leitor:
         falhas = 0
 
         while not self._parar.is_set():
-            if time.monotonic() - self._ultimo_uso > OCIOSO_S:
+            if time.monotonic() - self._ultimo_uso > _ocioso_s:
                 log.info("[%s] sem espectadores, encerrando leitor", self.codigo)
                 break
 

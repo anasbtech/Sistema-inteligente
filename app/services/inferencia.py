@@ -153,6 +153,10 @@ class Inferencia:
             # Encolher aos poucos custa uma caixa parada por alguns segundos
             # depois que o parque alivia; o contrário custa o vídeo limpo.
             self.ciclo_real = max(medido, anterior * 0.7 + medido * 0.3)
+            # O leitor RTSP precisa sobreviver até a visita seguinte. Fixo, ele
+            # morria entre duas voltas assim que o parque crescia, e cada
+            # reabertura custa segundos — nas câmeras lentas, custa o tile.
+            video.definir_ocioso(self.ciclo_real * 1.5)
             # Em info, e não debug, porque é o número que explica a sobreposição
             # ficar parada: a caixa de uma câmera só se renova quando o worker
             # volta a ela. Logar só a mudança relevante evita uma linha por
