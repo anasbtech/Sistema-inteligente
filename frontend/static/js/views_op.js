@@ -1455,6 +1455,13 @@ function abrirEditorZonas(cam){
     pontos: (z.pontos || []).map(p => [p[0], p[1]]),
     regras: z.regras || {},
   }));
+  /* O que esta aba viu ao abrir. Gravar zonas substitui a lista inteira da
+     câmera, então uma aba velha — aberta antes de alguém mais mexer — apaga
+     o trabalho do outro sem nada avisar. Aconteceu três vezes seguidas na
+     CAM-010: a região sobre a placa de incêndio era criada e some ao
+     próximo salvamento vindo de uma aba que não a conhecia. Guardar o
+     retrato de abertura é o que permite perceber isso antes de gravar. */
+  const naAbertura = JSON.stringify(zonas.map(z => z.nome).sort());
   let atual = zonas.length ? 0 : -1;
 
   const PALETA = ['#35A7DE', '#E5484D', '#F5A524', '#30A46C', '#8E4EC6'];
@@ -1811,6 +1818,24 @@ function abrirEditorZonas(cam){
        nele lançava TypeError bem aqui: o salvamento morria antes do pedido,
        sem erro na tela e sem zona gravada. Era a causa real do "não salva",
        e valia mesmo para quem clicava em "Salvar assim". */
+    /* Alguém mexeu nestas zonas depois que esta tela abriu? Pergunta ao
+       servidor agora, não ao que foi carregado — é a diferença entre
+       avisar e apagar em silêncio. Falha de rede aqui não impede salvar:
+       recusar por não conseguir checar seria pior que o risco. */
+    try{
+      const atualNoServidor = await API.camera(cam.codigo);
+      const agora = JSON.stringify(
+        (atualNoServidor.zonas || []).map(z => z.nome).sort());
+      if(agora !== naAbertura){
+        const segue = await confirmar('As zonas mudaram enquanto esta tela estava aberta',
+          'Outra aba ou outro operador alterou as zonas desta câmera. Salvar '
+          + 'agora substitui o que está gravado pelo que você vê aqui, e o que '
+          + 'o outro fez se perde. Reabrir o editor traz a versão atual.',
+          {rotulo: 'Salvar assim', perigo: true});
+        if(!segue){ abrirEditorZonas({...cam, zonas}); return; }
+      }
+    }catch(e){ /* sem conferência possível: segue, e o salvamento decide */ }
+
     const bt = $('#zonaSalvar');
     if(bt){ bt.disabled = true; bt.textContent = 'Salvando…'; }
     try{
