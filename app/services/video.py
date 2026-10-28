@@ -24,6 +24,14 @@ os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;8000000"
 )
 
+# Quanto esperar pela negociação RTSP antes de desistir.
+#
+# Tentei 25s, porque o Elevador leva de 12 a 30 para negociar. Medido, não
+# resolveu — a câmera seguiu alternando entre entregar e emudecer — e custou
+# caro: a volta pelo parque passou de ~130s para 181,8s, porque a câmera que
+# falha passa a bloquear por 25 em vez de 8. Revertido.
+ABERTURA_MS = 8000
+
 # Mosaico: dezesseis tiles pequenos ao mesmo tempo. Aqui o limite é a CPU do
 # servidor, e 640px já cobre o tamanho em que cada tile é exibido.
 LARGURA_SAIDA = 640
@@ -63,6 +71,19 @@ EXIBINDO_S = 8.0
 # reabertura custa segundos negociando RTSP, que saem do tempo de análise.
 OCIOSO_S = 180.0
 FALHAS_ATE_DESISTIR = 60
+# Quanto tempo um leitor pode ficar sem produzir imagem antes de ser dado
+# por perdido e reconectado.
+#
+# Contar falhas não basta, e o Elevador provou: um `grab` que estoura o
+# tempo limite gasta oito segundos por tentativa, então sessenta delas são
+# oito minutos de leitor *vivo, sem erro e sem quadro*. E um `retrieve` que
+# falha nem contava — o laço voltava ao topo sem registrar nada, girando
+# para sempre. Medido na CAM-018: leitor saudável por toda medida que o
+# sistema tinha, com o último quadro de 28,6s.
+#
+# Abaixo dos 15s que o snapshot aceita, para a reconexão começar antes de o
+# tile apagar. Reabrir custa segundos; ficar faminto custa para sempre.
+SEM_IMAGEM_S = 12.0
 
 # Quanto o leitor espera de fato antes de desistir. `OCIOSO_S` é só o piso: o
 # worker ajusta isto a cada volta, porque é ele quem sabe de quanto em quanto
@@ -150,7 +171,7 @@ class Leitor:
         import cv2
 
         cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, ABERTURA_MS)
         cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
 
         if not cap.isOpened():
@@ -164,10 +185,20 @@ class Leitor:
         log.info("[%s] fluxo RTSP aberto", self.codigo)
         proximo = 0.0
         falhas = 0
+        # Quando saiu o último quadro de verdade. É o sinal de saúde que
+        # importa: `vivo` só diz que a thread existe.
+        ultima_imagem = time.monotonic()
 
         while not self._parar.is_set():
             if time.monotonic() - self._ultimo_uso > _ocioso_s:
                 log.info("[%s] sem espectadores, encerrando leitor", self.codigo)
+                break
+
+            if time.monotonic() - ultima_imagem > SEM_IMAGEM_S:
+                self.erro = "sem imagem"
+                log.warning("[%s] %s há %.0fs, reconectando",
+                            self.codigo, self.erro,
+                            time.monotonic() - ultima_imagem)
                 break
 
             if not cap.grab():
@@ -198,6 +229,10 @@ class Leitor:
 
             ok, quadro = cap.retrieve()
             if not ok or quadro is None:
+                # `grab` separa o pacote; `retrieve` o decodifica. Só o
+                # segundo produz imagem, e voltar ao topo sem registrar nada
+                # era o que deixava o leitor girando sem entregar.
+                time.sleep(0.05)
                 continue
 
             altura, largura = quadro.shape[:2]
@@ -241,7 +276,8 @@ class Leitor:
             )
             if codificou:
                 self.quadro = buffer.tobytes()
-                _ultimos[self.codigo] = (time.monotonic(), self.quadro)
+                ultima_imagem = time.monotonic()
+                _ultimos[self.codigo] = (ultima_imagem, self.quadro)
                 self.pronto.set()
 
         cap.release()
