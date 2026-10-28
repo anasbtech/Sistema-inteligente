@@ -192,7 +192,7 @@ class Inferencia:
             ).scalars().unique().all()
             self.ultimo_total = len(cameras)
 
-        for cam in cameras:
+        for cam in self._ordem_da_volta(cameras):
             if not cam.rtsp_url:
                 continue
             try:
@@ -206,6 +206,44 @@ class Inferencia:
                 self.falhas += 1
                 self.ultima_falha = f"{cam.codigo}: {exc}"
                 log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
+
+    def _ordem_da_volta(self, cameras) -> list:
+        """A volta, com quem está sendo olhado reaparecendo no meio dela.
+
+        A sobreposição de uma câmera só se renova quando o worker volta a
+        ela, e a volta leva perto de dois minutos. Quem está assistindo vê a
+        caixa de alguém que já saiu continuar de pé todo esse tempo — é a
+        queixa de "trava depois que a pessoa sai", e ela não vem do
+        rastreador: vem de ninguém ter olhado a cena de novo ainda.
+
+        Câmera com espectador volta algumas vezes por volta. O custo sai do
+        tempo das outras, e a troca é deliberada: a câmera que ninguém está
+        vendo pode esperar, a que está na tela não.
+
+        `exibindo` vence sozinho poucos segundos depois que a tela fecha,
+        então isto se desfaz sem ninguém precisar desligar nada.
+        """
+        orcamento = settings.INFERENCIA_REVISITAS
+        if orcamento <= 0 or len(cameras) < 2:
+            return list(cameras)
+
+        vistas = [c for c in cameras
+                  if (video._leitores.get(c.codigo) is not None
+                      and video._leitores[c.codigo].exibindo
+                      and c.rtsp_url)]
+        if not vistas:
+            return list(cameras)
+
+        fila = list(cameras)
+        passo = max(1, len(fila) // (orcamento + 1))
+        ordem: list = []
+        inseridas = 0
+        for i, cam in enumerate(fila):
+            ordem.append(cam)
+            if inseridas < orcamento and (i + 1) % passo == 0:
+                ordem.append(vistas[inseridas % len(vistas)])
+                inseridas += 1
+        return ordem
 
     def _rosto_recente(self, camera: str, embedding) -> Tuple[bool, list]:
         """Mesmo rosto que já entrou há pouco naquela câmera.

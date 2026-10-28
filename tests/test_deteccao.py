@@ -777,3 +777,63 @@ def test_quem_anda_no_fundo_nao_e_afetado_pela_borda():
                        {"ignorar": True})
     pessoa = ObjetoDetectado("pessoa", 0.9, (400, 300, 490, 719), track_id=2)
     assert _filtrar([pessoa], [canto]) == [pessoa]
+
+
+# ----------------------------------------------------------------------
+# A câmera que está na tela é reolhada mais vezes
+# ----------------------------------------------------------------------
+def _cams(n):
+    from types import SimpleNamespace
+    return [SimpleNamespace(codigo=f"CAM-{i:03d}", rtsp_url="rtsp://x")
+            for i in range(1, n + 1)]
+
+
+def _com_espectador(monkeypatch, codigos):
+    from types import SimpleNamespace
+    from app.services import inferencia as mod
+
+    leitores = {c: SimpleNamespace(exibindo=(c in codigos))
+                for c in [f"CAM-{i:03d}" for i in range(1, 30)]}
+    monkeypatch.setattr(mod.video, "_leitores", leitores)
+
+
+def test_sem_espectador_a_volta_e_a_lista_crua(monkeypatch):
+    from app.services.inferencia import Inferencia
+
+    _com_espectador(monkeypatch, set())
+    cams = _cams(24)
+    assert Inferencia()._ordem_da_volta(cams) == cams
+
+
+def test_camera_na_tela_volta_varias_vezes(monkeypatch):
+    """A queixa de "trava depois que a pessoa sai".
+
+    A sobreposição só se renova quando o worker volta àquela cena, e a volta
+    leva perto de dois minutos. Quem assiste vê a caixa de alguém que já
+    saiu continuar de pé todo esse tempo.
+    """
+    from app.config import settings
+    from app.services.inferencia import Inferencia
+
+    _com_espectador(monkeypatch, {"CAM-007"})
+    ordem = Inferencia()._ordem_da_volta(_cams(24))
+    vezes = [c.codigo for c in ordem].count("CAM-007")
+    assert vezes == 1 + settings.INFERENCIA_REVISITAS, (
+        f"a câmera na tela foi olhada {vezes}x na volta")
+    # Nenhuma outra perdeu a vez.
+    for i in range(1, 25):
+        assert any(c.codigo == f"CAM-{i:03d}" for c in ordem)
+
+
+def test_revisitas_se_dividem_entre_as_cameras_vistas(monkeypatch):
+    """No 2x2 são quatro telas: o orçamento se reparte, não se multiplica."""
+    from app.config import settings
+    from app.services.inferencia import Inferencia
+
+    vistas = {"CAM-002", "CAM-005", "CAM-011", "CAM-020"}
+    _com_espectador(monkeypatch, vistas)
+    ordem = [c.codigo for c in Inferencia()._ordem_da_volta(_cams(24))]
+    extras = len(ordem) - 24
+    assert extras == settings.INFERENCIA_REVISITAS, "o orçamento é por volta"
+    for cod in vistas:
+        assert ordem.count(cod) >= 2, f"{cod} precisa de ao menos uma revisita"

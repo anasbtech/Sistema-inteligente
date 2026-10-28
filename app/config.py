@@ -484,6 +484,15 @@ class Settings(BaseSettings):
     # era gente.
     OBJECT_VARREDURA_CLASSES: tuple = ("pessoa",)
 
+    # Quantas revisitas extras por volta para as câmeras que alguém está
+    # olhando. A volta leva perto de dois minutos, e a caixa de quem já
+    # saiu fica de pé até o worker voltar àquela cena — com seis
+    # revisitas a câmera na tela é reolhada a cada ~17s em vez de ~115s.
+    # Cada uma custa o tempo de uma passada e sai do tempo das outras
+    # câmeras: é a troca deliberada de quem não está sendo visto por
+    # quem está. Zero desliga.
+    INFERENCIA_REVISITAS: int = 6
+
     # --- Alerta por presença ----------------------------------------------
     # Severidade do alerta que uma câmera com `alerta_presenca` gera.
     #
