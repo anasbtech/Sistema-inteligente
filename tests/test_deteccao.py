@@ -894,3 +894,105 @@ def test_camera_sem_leitor_nao_quebra_a_publicacao(monkeypatch):
     motor.ciclo_real = 100.0
     monkeypatch.setattr(mod.video, "_leitores", {})
     assert motor._validade_de("CAM-QUE-NAO-ABRIU") == 200.0
+
+
+# ----------------------------------------------------------------------
+# Cena cheia: nada do nosso código pode engolir gente
+# ----------------------------------------------------------------------
+def _multidao(n, largura=1920, altura=1080):
+    """`n` pessoas lado a lado, sem sobreposição, em grade."""
+    colunas = 7
+    objs = []
+    for i in range(n):
+        cx = (i % colunas + 0.5) / colunas * largura
+        cy = (i // colunas + 0.5) / ((n // colunas) + 1) * altura
+        objs.append(ObjetoDetectado(
+            "pessoa", 0.85, (int(cx - 45), int(cy - 110),
+                             int(cx + 45), int(cy + 110)), track_id=i + 1))
+    return objs
+
+
+def test_vinte_e_cinco_pessoas_sobrevivem_a_fusao():
+    """O parque não tem cena com 25 pessoas, então o modelo não pode ser
+    verificado aqui — mas o nosso código pode, e é ele que poderia engolir
+    gente ao deduplicar. Nenhuma caixa distinta pode cair na fusão."""
+    gente = _multidao(25)
+    assert len(fundir_sobrepostas(gente)) == 25
+
+
+def test_rastreio_da_identidade_propria_a_cada_uma():
+    from app.services.vision import RastreioPorPosicao
+
+    rastreio = RastreioPorPosicao()
+    marcados = rastreio.atribuir(_multidao(25))
+    marcas = {o.track_id for o in marcados}
+    assert len(marcas) == 25, f"25 pessoas renderam {len(marcas)} identidades"
+
+
+def test_multidao_inteira_chega_a_sobreposicao():
+    """A caixa do vídeo sai antes das podas de registro: ninguém em cena
+    pode ficar sem marcação porque o represamento já viu aquela trilha."""
+    from app.services.vision import AnalisadorAcoes
+
+    an = AnalisadorAcoes()
+    an.acoes_ativas = {"aglomeracao"}
+    an.n_aglomeracao = 8
+    gente = _multidao(25)
+    eventos = an.atualizar(gente, 1920, 1080, agora=5000.0)
+    # A cena é de 25; o analisador não pode perder ninguém na contagem.
+    assert all(e.envolvidos <= 25 for e in eventos)
+    assert len(an.trilhas) == 25, "cada pessoa precisa da própria trilha"
+
+
+def test_pessoas_encostadas_nao_viram_uma():
+    """Fila de elevador: ombro a ombro, e ainda assim duas."""
+    a = ObjetoDetectado("pessoa", 0.9, (500, 300, 600, 760), track_id=1)
+    b = ObjetoDetectado("pessoa", 0.9, (575, 300, 675, 760), track_id=2)
+    assert len(fundir_sobrepostas([a, b])) == 2
+
+
+def _andar(rastreio, passos, passo_px):
+    """Duas pessoas em sentidos opostos, um quadro por passo."""
+    vistos = []
+    for p in range(passos):
+        xe, xd = 300 + p * passo_px, 1500 - p * passo_px
+        objs = rastreio.atribuir([
+            ObjetoDetectado("pessoa", 0.9, (xe - 45, 290, xe + 45, 510)),
+            ObjetoDetectado("pessoa", 0.9, (xd - 45, 290, xd + 45, 510)),
+        ])
+        vistos.append(tuple(o.track_id for o in objs))
+    return vistos
+
+
+def test_na_rajada_a_identidade_persiste_e_nao_troca():
+    """Quadros próximos — a escala em que corrida, queda e contrafluxo medem.
+
+    A rajada tira oito quadros a 0,15s. Um adulto anda ~1,4 m/s, o que nesse
+    intervalo dá poucos pixels: as caixas se sobrepõem bastante e cada pessoa
+    mantém a própria identidade. É o que impede o nome saltar de uma para a
+    outra quando duas se cruzam.
+    """
+    from app.services.vision import RastreioPorPosicao
+
+    vistos = _andar(RastreioPorPosicao(), 6, passo_px=8)
+    assert len(set(vistos)) == 1, f"a identidade mudou entre quadros: {vistos}"
+    assert len(set(vistos[0])) == 2, "duas pessoas, duas identidades"
+
+
+def test_entre_visitas_distantes_quem_atravessou_e_outra_passagem():
+    """O limite declarado do rastreio, e ele é deliberado.
+
+    Entre duas visitas à mesma câmera passam dezenas de segundos. Nessa
+    escala a caixa de quem andou não se sobrepõe à anterior, e o objeto
+    ganha identidade nova — o que está certo para permanência e aglomeração,
+    que perguntam *quem ficou no lugar*, e é por isso que corrida, queda e
+    contrafluxo exigem a rajada em vez do rodízio.
+
+    Este teste existe para que a troca de identidade aqui não seja lida como
+    defeito por quem vier depois: é o contrato do `RastreioPorPosicao`.
+    """
+    from app.services.vision import RastreioPorPosicao
+
+    vistos = _andar(RastreioPorPosicao(), 3, passo_px=60)
+    assert vistos[0] != vistos[1], (
+        "passo de visita distante deveria render identidade nova")
