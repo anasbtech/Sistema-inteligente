@@ -214,13 +214,30 @@ class Inferencia:
                 self.ultima_falha = f"{cam.codigo}: {exc}"
                 log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
 
+    def _validade_de(self, codigo: str) -> float:
+        """Até quando a sobreposição desta câmera ainda descreve a cena.
+
+        Não é o ciclo: é o intervalo entre duas visitas *a esta câmera*. A
+        câmera com espectador volta `INFERENCIA_REVISITAS` vezes por volta,
+        então sua cena se renova muito antes das outras — e publicar a
+        validade da volta inteira fazia a caixa de quem já saiu ficar de pé
+        por minutos numa câmera reolhada a cada quinze segundos.
+
+        O dobro do intervalo, e não o intervalo exato, porque uma volta pode
+        demorar mais que a anterior: apertado demais, a caixa pisca entre
+        duas visitas. Esta é a folga mínima que não devolve o fantasma.
+        """
+        leitor = video._leitores.get(codigo)
+        revisitas = (settings.INFERENCIA_REVISITAS
+                     if leitor is not None and leitor.exibindo else 0)
+        intervalo = self.ciclo_real / (1 + revisitas)
+        return round(max(4.0, intervalo * 2.0), 1)
+
     async def _publicar_caixas(self, codigo: str, caixas: list) -> None:
         """Publica a sobreposição e guarda o que foi publicado.
 
-        A validade vai junto porque só o worker sabe quanto demora uma volta
-        pelo parque, e isso muda a cada câmera cadastrada: com validade fixa,
-        a caixa apagava entre um quadro e o seguinte assim que o parque
-        crescia.
+        A validade vai junto porque só o worker sabe quando volta a esta
+        câmera, e isso muda com o parque e com quem está assistindo.
 
         Guardar a mesma carga é o que permite a tela abrir já marcada. O
         WebSocket entrega o que vier daqui para a frente; quem chega no meio
@@ -229,7 +246,7 @@ class Inferencia:
         carga = {
             "camera_codigo": codigo,
             "caixas": caixas,
-            "validade_s": round(self.ciclo_real * 2.0, 1),
+            "validade_s": self._validade_de(codigo),
             "em": time.monotonic(),
         }
         self._ultimas_caixas[codigo] = carga

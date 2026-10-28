@@ -837,3 +837,60 @@ def test_revisitas_se_dividem_entre_as_cameras_vistas(monkeypatch):
     assert extras == settings.INFERENCIA_REVISITAS, "o orçamento é por volta"
     for cod in vistas:
         assert ordem.count(cod) >= 2, f"{cod} precisa de ao menos uma revisita"
+
+
+# ----------------------------------------------------------------------
+# A caixa não sobrevive muito além da próxima visita
+# ----------------------------------------------------------------------
+def test_validade_segue_o_intervalo_da_camera_nao_o_da_volta(monkeypatch):
+    """A caixa fantasma de quem já saiu.
+
+    A câmera com espectador é reolhada várias vezes por volta, mas a
+    validade publicada era a da volta inteira — com o ciclo em 139s, a
+    marcação de alguém que saiu ficava de pé por quase cinco minutos numa
+    câmera reolhada a cada quinze segundos.
+    """
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.services import inferencia as mod
+
+    motor = mod.Inferencia()
+    motor.ciclo_real = 140.0
+    monkeypatch.setattr(mod.video, "_leitores", {
+        "CAM-VISTA": SimpleNamespace(exibindo=True),
+        "CAM-ESQUECIDA": SimpleNamespace(exibindo=False),
+    })
+
+    vista = motor._validade_de("CAM-VISTA")
+    esquecida = motor._validade_de("CAM-ESQUECIDA")
+
+    # Sem espectador nada muda: a validade segue sendo a da volta.
+    assert esquecida == 280.0
+    # Com espectador, acompanha o intervalo real entre duas visitas.
+    esperado = 140.0 / (1 + settings.INFERENCIA_REVISITAS) * 2
+    assert abs(vista - esperado) < 0.2
+    assert vista < esquecida / 5, "a caixa tem de morrer muito antes"
+
+
+def test_validade_tem_piso_para_nao_piscar(monkeypatch):
+    """Apertada demais, a caixa some entre duas visitas — e o vídeo fica
+    limpo com gente em cena, que é o erro oposto e pior."""
+    from types import SimpleNamespace
+
+    from app.services import inferencia as mod
+
+    motor = mod.Inferencia()
+    motor.ciclo_real = 3.0
+    monkeypatch.setattr(mod.video, "_leitores",
+                        {"CAM-RAPIDA": SimpleNamespace(exibindo=True)})
+    assert motor._validade_de("CAM-RAPIDA") >= 4.0
+
+
+def test_camera_sem_leitor_nao_quebra_a_publicacao(monkeypatch):
+    from app.services import inferencia as mod
+
+    motor = mod.Inferencia()
+    motor.ciclo_real = 100.0
+    monkeypatch.setattr(mod.video, "_leitores", {})
+    assert motor._validade_de("CAM-QUE-NAO-ABRIU") == 200.0
