@@ -38,6 +38,16 @@ from app.services.events import publicar
 log = logging.getLogger("seguranca.inferencia")
 
 
+def _pixels(bbox) -> tuple:
+    """`[x, y, w, h]` normalizado vira `(x1, y1, x2, y2)` numa escala comum.
+
+    A comparação é entre caixas do mesmo quadro, então qualquer escala serve
+    desde que seja a mesma para as duas.
+    """
+    x, y, w, h = bbox
+    return (int(x * 1000), int(y * 1000), int((x + w) * 1000), int((y + h) * 1000))
+
+
 def _classes_barradas(cam) -> set:
     """O que esta câmera NÃO pode registrar.
 
@@ -114,17 +124,31 @@ class Inferencia:
         # cheia de gente. Guardar o último quadro permite semear a tela na
         # abertura, em vez de esperar.
         self._ultimas_caixas: Dict[str, dict] = {}
+        # As câmeras on-line da última volta. O laço de sobreposição lê daqui
+        # em vez de consultar o banco: ele roda a cada poucos segundos, e uma
+        # consulta por iteração disputaria o escritor único do SQLite com a
+        # própria volta.
+        self._cameras_cache: list = []
+        self._task_sobreposicao: Optional[asyncio.Task] = None
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
             return
         self._task = asyncio.create_task(self._loop())
+        self._task_sobreposicao = asyncio.create_task(self._loop_sobreposicao())
         log.info(
             "Inferência ativa (ciclo ~%.1fs, objeto=%s, face=%s)",
             self.intervalo, vision.yolo_disponivel(), face_engine.modelos_disponiveis(),
         )
 
     async def parar(self) -> None:
+        if self._task_sobreposicao:
+            self._task_sobreposicao.cancel()
+            try:
+                await self._task_sobreposicao
+            except asyncio.CancelledError:
+                pass
+            self._task_sobreposicao = None
         if self._task:
             self._task.cancel()
             try:
@@ -198,6 +222,7 @@ class Inferencia:
                 )
             ).scalars().unique().all()
             self.ultimo_total = len(cameras)
+            self._cameras_cache = list(cameras)
 
         for cam in self._ordem_da_volta(cameras):
             if not cam.rtsp_url:
@@ -273,6 +298,92 @@ class Inferencia:
                 "validade_s": round(carga["validade_s"] - idade, 1),
             })
         return vivas
+
+    async def _loop_sobreposicao(self) -> None:
+        """Laço curto que só renova a marcação do que está na tela.
+
+        A volta completa leva perto de dois minutos porque cada câmera paga a
+        varredura em ladrilhos: medido nesta máquina, 1.295 ms a passada
+        inteira contra 4.989 ms com a varredura — ela é três quartos do custo.
+
+        Para *saber quem está em cena agora* a varredura não é necessária: ela
+        existe para achar quem está longe demais para a passada inteira. Este
+        laço roda só a passada inteira, só nas câmeras com espectador, e só
+        publica a sobreposição — não registra nada, não roda facial nem ação.
+
+        É o que faz a caixa sumir logo depois de a pessoa sair. Com uma tela
+        aberta a marcação se renova a cada ~1,3s; com nove, a cada ~12s, em
+        vez dos ~50s que a revisita no rodízio alcançava.
+
+        O preço, e é declarado: entre duas passadas completas, quem só a
+        varredura acha pode ficar sem caixa. Em tela de mosaico essa pessoa
+        tem poucos pixels, e o rodízio continua cobrindo-a.
+        """
+        await asyncio.sleep(8)
+        while True:
+            try:
+                await self._renovar_sobreposicoes()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Falha ao renovar sobreposição: %s", exc)
+            await asyncio.sleep(settings.INFERENCIA_SOBREPOSICAO_S)
+
+    async def _renovar_sobreposicoes(self) -> None:
+        if not vision.yolo_disponivel():
+            return
+        vistas = [c for c, l in self._camaras_em_tela()]
+        if not vistas:
+            return
+        for cam in vistas[:settings.INFERENCIA_SOBREPOSICAO_MAX]:
+            quadro = await asyncio.to_thread(
+                video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
+            if quadro is None:
+                await self._publicar_caixas(cam.codigo, [])
+                continue
+            altura, largura = quadro.shape[:2]
+            objetos = await asyncio.to_thread(
+                vision.detectar_objetos, quadro, cam.limiar_objeto, False,
+                _classes_barradas(cam), "ocupado",
+            )
+            objetos = self._fora_das_zonas_ignoradas(objetos, cam, quadro)
+            caixas = [{
+                "classe": o.classe,
+                "confianca": round(float(o.confianca), 4),
+                "bbox": o.bbox_normalizado(largura, altura),
+                "track_id": o.track_id,
+            } for o in objetos]
+            self._herdar_nomes(cam.codigo, caixas)
+            await self._publicar_caixas(cam.codigo, caixas)
+
+    def _camaras_em_tela(self) -> list:
+        """As câmeras on-line que alguém está assistindo agora."""
+        achadas = []
+        for cam in self._cameras_cache:
+            leitor = video._leitores.get(cam.codigo)
+            if leitor is not None and leitor.exibindo and cam.rtsp_url:
+                achadas.append((cam, leitor))
+        return achadas
+
+    def _herdar_nomes(self, codigo: str, caixas: list) -> None:
+        """Leva o nome da publicação anterior para a caixa que ocupa o lugar.
+
+        A passada leve não roda facial — sem isto o nome de quem foi
+        reconhecido piscaria a cada renovação, aparecendo só nas voltas
+        completas. Herda por sobreposição de caixa, que na escala de poucos
+        segundos é a mesma pessoa.
+        """
+        anterior = self._ultimas_caixas.get(codigo)
+        if not anterior:
+            return
+        nomeadas = [c for c in anterior["caixas"] if c.get("pessoa_nome")]
+        if not nomeadas:
+            return
+        for nova in caixas:
+            for velha in nomeadas:
+                if vision.iou(_pixels(nova["bbox"]), _pixels(velha["bbox"])) >= 0.5:
+                    nova["pessoa_nome"] = velha["pessoa_nome"]
+                    break
 
     def _ordem_da_volta(self, cameras) -> list:
         """A volta, com quem está sendo olhado reaparecendo no meio dela.

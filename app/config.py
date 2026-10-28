@@ -493,6 +493,23 @@ class Settings(BaseSettings):
     # quem está. Zero desliga.
     INFERENCIA_REVISITAS: int = 6
 
+    # Laço curto que renova só a marcação das câmeras que estão na tela.
+    #
+    # A volta completa leva perto de dois minutos porque cada câmera paga a
+    # varredura em ladrilhos — medido nesta máquina, 1.295 ms a passada
+    # inteira contra 4.989 ms com a varredura. Para saber quem está em cena
+    # agora a varredura não é necessária: ela existe para achar quem está
+    # longe demais para a passada inteira.
+    #
+    # Intervalo entre duas rodadas do laço. Cada câmera em tela custa ~1,3s,
+    # então com uma tela aberta a marcação se renova em ~1,3s e com nove em
+    # ~12s. Zero desliga o laço.
+    INFERENCIA_SOBREPOSICAO_S: float = 1.0
+    # Teto de câmeras por rodada. No 4x4 são dezesseis telas, e renovar todas
+    # custaria vinte segundos — mais que o rodízio já entrega. O teto mantém
+    # o laço curto; as demais seguem pela volta.
+    INFERENCIA_SOBREPOSICAO_MAX: int = 9
+
     # --- Alerta por presença ----------------------------------------------
     # Severidade do alerta que uma câmera com `alerta_presenca` gera.
     #

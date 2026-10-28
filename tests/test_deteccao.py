@@ -305,9 +305,26 @@ def test_a_caixa_do_corpo_nao_leva_tarja():
     from pathlib import Path
 
     fonte = Path("app/services/inferencia.py").read_text(encoding="utf-8")
-    escritas = re.findall(r'(\w+)\[.?pessoa_nome.?\]\s*=', fonte)
-    assert escritas == ["caixa_rosto"], (
-        f"só a caixa do rosto pode levar o nome; escrevem nela: {escritas}")
+    escritas = set(re.findall(r'(\w+)\[.?pessoa_nome.?\]\s*=', fonte))
+    # `caixa_rosto` é `_rotular`, o único lugar que *cria* a tarja, e ela sai
+    # de um rosto lido. `nova` é `_herdar_nomes`, que não identifica ninguém:
+    # copia para a caixa da passada leve o nome que a publicação anterior já
+    # carregava, para o nome não piscar entre duas voltas completas. Nenhum
+    # dos dois aceita identidade vinda do corpo, que é o que este teste
+    # guarda.
+    assert escritas == {"caixa_rosto", "nova"}, (
+        f"quem escreve a tarja mudou: {sorted(escritas)}")
+
+    import inspect
+
+    from app.services.inferencia import Inferencia
+
+    herdar = inspect.getsource(Inferencia._herdar_nomes)
+    assert "_ultimas_caixas" in herdar, (
+        "a herança tem de vir da publicação anterior, não de leitura nova")
+    for proibido in ("corpos", "_corpo_do_rosto", "buscar_pessoa"):
+        assert proibido not in herdar, (
+            f"`_herdar_nomes` passou a identificar por conta própria: {proibido}")
 
 
 def test_registro_sem_nome_nao_escreve_nada_no_video():
@@ -996,3 +1013,103 @@ def test_entre_visitas_distantes_quem_atravessou_e_outra_passagem():
     vistos = _andar(RastreioPorPosicao(), 3, passo_px=60)
     assert vistos[0] != vistos[1], (
         "passo de visita distante deveria render identidade nova")
+
+
+# ----------------------------------------------------------------------
+# A passada leve: renova só a marcação de quem está na tela
+# ----------------------------------------------------------------------
+def _motor_com_tela(monkeypatch, objetos, exibindo=True):
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.services import inferencia as mod
+
+    cam = SimpleNamespace(codigo="CAM-700", rtsp_url="rtsp://x", nome="Tela",
+                          limiar_objeto=0.25, detecta_veiculo=False,
+                          detecta_bagagem=False, detecta_animal=False,
+                          zonas=[])
+    motor = mod.Inferencia()
+    motor.ciclo_real = 100.0
+    motor._cameras_cache = [cam]
+
+    monkeypatch.setattr(mod.video, "_leitores",
+                        {"CAM-700": SimpleNamespace(exibindo=exibindo)})
+    monkeypatch.setattr(mod.video, "quadro_bgr",
+                        lambda *a, **k: SimpleNamespace(shape=(1080, 1920, 3)))
+    monkeypatch.setattr(mod.vision, "yolo_disponivel", lambda: True)
+    monkeypatch.setattr(mod.vision, "detectar_objetos", lambda *a, **k: objetos)
+
+    publicados = []
+
+    async def _pub(tipo, dados):
+        publicados.append(dados)
+
+    monkeypatch.setattr(mod, "publicar", _pub)
+    return motor, publicados, asyncio
+
+
+def test_passada_leve_publica_o_que_esta_em_cena(monkeypatch):
+    """O que faz a caixa sumir logo depois de a pessoa sair.
+
+    A volta completa leva perto de dois minutos porque paga a varredura em
+    ladrilhos — medido, 1.295 ms a passada inteira contra 4.989 ms com ela.
+    Para saber quem está em cena agora a varredura não é necessária.
+    """
+    pessoa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa])
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    assert len(publicados) == 1
+    assert publicados[0]["camera_codigo"] == "CAM-700"
+    assert len(publicados[0]["caixas"]) == 1
+    assert publicados[0]["caixas"][0]["classe"] == "pessoa"
+
+
+def test_cena_vazia_publica_lista_vazia(monkeypatch):
+    """A pessoa saiu: a marcação tem de ser apagada, não apenas não renovada."""
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [])
+    aio.run(motor._renovar_sobreposicoes())
+    assert publicados and publicados[0]["caixas"] == []
+
+
+def test_camera_sem_espectador_nao_paga_a_passada(monkeypatch):
+    """O laço existe para o que está na tela. Sem ninguém olhando, nada roda
+    — senão ele dobraria o custo do parque inteiro."""
+    pessoa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa], exibindo=False)
+    aio.run(motor._renovar_sobreposicoes())
+    assert publicados == []
+
+
+def test_o_nome_nao_pisca_entre_duas_voltas(monkeypatch):
+    """A passada leve não roda facial.
+
+    Sem herdar, o nome de quem foi reconhecido sumiria a cada renovação e
+    voltaria só na volta completa — piscando a cada segundo.
+    """
+    pessoa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa])
+    motor._ultimas_caixas["CAM-700"] = {
+        "camera_codigo": "CAM-700",
+        "caixas": [{"classe": "pessoa", "pessoa_nome": "ANDRÉ LUIZ CARDOSO",
+                    "bbox": [800 / 1920, 300 / 1080, 100 / 1920, 460 / 1080]}],
+        "validade_s": 50.0, "em": 0.0,
+    }
+    aio.run(motor._renovar_sobreposicoes())
+    assert publicados[0]["caixas"][0].get("pessoa_nome") == "ANDRÉ LUIZ CARDOSO"
+
+
+def test_nome_nao_salta_para_quem_esta_noutro_lugar(monkeypatch):
+    """Herdar por sobreposição, não por ordem na lista: uma caixa distante
+    não pode receber o nome de quem estava do outro lado da cena."""
+    longe = ObjetoDetectado("pessoa", 0.9, (100, 300, 200, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [longe])
+    motor._ultimas_caixas["CAM-700"] = {
+        "camera_codigo": "CAM-700",
+        "caixas": [{"classe": "pessoa", "pessoa_nome": "ANDRÉ LUIZ CARDOSO",
+                    "bbox": [1600 / 1920, 300 / 1080, 100 / 1920, 460 / 1080]}],
+        "validade_s": 50.0, "em": 0.0,
+    }
+    aio.run(motor._renovar_sobreposicoes())
+    assert "pessoa_nome" not in publicados[0]["caixas"][0]
