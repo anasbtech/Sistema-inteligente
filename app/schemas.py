@@ -326,6 +326,33 @@ class CameraUpdate(BaseModel):
         return validar_hora(v)
 
 
+CREDENCIAL_OCULTA = "•••"
+
+
+def mascarar_credencial(url: str) -> str:
+    """Tira usuário e senha de uma URL de fluxo antes de ela sair daqui.
+
+    As 26 câmeras deste parque têm a senha de administrador embutida no
+    endereço RTSP, e `CameraOut` entregava o endereço inteiro a quem tivesse
+    a permissão `live` — que é ADMIN, SUPER, OPERADOR e ANALISTA, seis dos
+    sete usuários cadastrados. O navegador recebia as senhas e não fazia
+    nada com elas: `rtsp_url` não aparece uma única vez no JavaScript.
+
+    O que sobra ainda serve para conferir host, porta e caminho, que é para
+    o que alguém olharia o endereço numa tela de diagnóstico. A URL real
+    continua no banco, onde o worker a lê para abrir o fluxo.
+    """
+    if not url or "@" not in url:
+        return url
+    esquema, _, resto = url.partition("://")
+    if not resto:
+        return url
+    credencial, arroba, endereco = resto.partition("@")
+    if not arroba or "/" in credencial:
+        return url
+    return f"{esquema}://{CREDENCIAL_OCULTA}@{endereco}"
+
+
 class CameraOut(ORMModel):
     id: uuid.UUID
     codigo: str
@@ -364,6 +391,11 @@ class CameraOut(ORMModel):
     latencia_ms: int
     ultimo_heartbeat: Optional[datetime]
     zonas: List[ZonaOut] = []
+
+    @field_validator("rtsp_url", mode="after")
+    @classmethod
+    def _sem_credencial(cls, v: str) -> str:
+        return mascarar_credencial(v)
 
 
 class PTZComando(BaseModel):

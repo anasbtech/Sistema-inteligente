@@ -15,7 +15,7 @@ from app.config import settings
 from app.database import get_db
 from app.deps import exige
 from app.models import Camera, StatusCamera, Usuario, Zona
-from app.schemas import CameraCreate, CameraOut, CameraUpdate, PTZComando, ZonaIn
+from app.schemas import CREDENCIAL_OCULTA, CameraCreate, CameraOut, CameraUpdate, PTZComando, ZonaIn
 from app.services.vision import FICHA_ACAO, janela_horario
 
 router = APIRouter(prefix="/cameras", tags=["Câmeras"])
@@ -197,6 +197,14 @@ async def atualizar(codigo: str, dados: CameraUpdate, request: Request,
     cam = await _obter(db, codigo)
     campos = dados.model_dump(exclude_unset=True)
     zonas = campos.pop("zonas", None)
+
+    # A leitura devolve o endereço com a credencial mascarada. Quem buscar a
+    # câmera, mudar um campo e devolver o objeto inteiro gravaria a máscara
+    # por cima do endereço real e deixaria a câmera sem conseguir conectar —
+    # sem erro, porque é uma string válida. Descartar é mais seguro que
+    # recusar: o resto da edição passa, e o endereço fica como estava.
+    if campos.get("rtsp_url") and CREDENCIAL_OCULTA in campos["rtsp_url"]:
+        campos.pop("rtsp_url")
 
     # Trocar o IP reaponta o stream: a URL derivada acompanha, a menos que
     # uma URL própria tenha sido informada na mesma edição.
