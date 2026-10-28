@@ -107,6 +107,13 @@ class Inferencia:
         # câmera foi atendida pela última vez.
         self._rajadas_na_volta = 0
         self._ultima_rajada: Dict[str, float] = {}
+        # A última sobreposição publicada de cada câmera. O WebSocket só
+        # entrega o que acontece a partir de agora, então quem abre a tela
+        # fica sem caixa nenhuma até o worker voltar àquela câmera — com a
+        # volta em ~100s, é um minuto e meio de vídeo sem marcação em cena
+        # cheia de gente. Guardar o último quadro permite semear a tela na
+        # abertura, em vez de esperar.
+        self._ultimas_caixas: Dict[str, dict] = {}
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
@@ -206,6 +213,49 @@ class Inferencia:
                 self.falhas += 1
                 self.ultima_falha = f"{cam.codigo}: {exc}"
                 log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
+
+    async def _publicar_caixas(self, codigo: str, caixas: list) -> None:
+        """Publica a sobreposição e guarda o que foi publicado.
+
+        A validade vai junto porque só o worker sabe quanto demora uma volta
+        pelo parque, e isso muda a cada câmera cadastrada: com validade fixa,
+        a caixa apagava entre um quadro e o seguinte assim que o parque
+        crescia.
+
+        Guardar a mesma carga é o que permite a tela abrir já marcada. O
+        WebSocket entrega o que vier daqui para a frente; quem chega no meio
+        precisa de algo que diga o que está em cena *agora*.
+        """
+        carga = {
+            "camera_codigo": codigo,
+            "caixas": caixas,
+            "validade_s": round(self.ciclo_real * 2.0, 1),
+            "em": time.monotonic(),
+        }
+        self._ultimas_caixas[codigo] = carga
+        await publicar("quadro_ao_vivo", carga)
+
+    def caixas_correntes(self) -> list:
+        """O que cada câmera tem em cena, para semear uma tela que abre.
+
+        Só o que ainda vale: uma carga mais velha que a própria validade
+        descreve uma cena que já passou, e semear com ela poria na tela
+        exatamente a caixa fantasma que se quer evitar.
+        """
+        agora = time.monotonic()
+        vivas = []
+        for carga in self._ultimas_caixas.values():
+            idade = agora - carga["em"]
+            if idade > carga["validade_s"]:
+                continue
+            vivas.append({
+                "camera_codigo": carga["camera_codigo"],
+                "caixas": carga["caixas"],
+                # O que resta de validade, não a original: a tela que abre
+                # agora herda o relógio já correndo.
+                "validade_s": round(carga["validade_s"] - idade, 1),
+            })
+        return vivas
 
     def _ordem_da_volta(self, cameras) -> list:
         """A volta, com quem está sendo olhado reaparecendo no meio dela.
@@ -794,11 +844,7 @@ class Inferencia:
             # câmera que oscila isso faz a caixa piscar por uma volta; a
             # alternativa é afirmar presença sem imagem que a sustente, que
             # num sistema de vigilância é o erro pior.
-            await publicar("quadro_ao_vivo", {
-                "camera_codigo": cam.codigo,
-                "caixas": [],
-                "validade_s": round(self.ciclo_real * 2.0, 1),
-            })
+            await self._publicar_caixas(cam.codigo, [])
             return
         altura, largura = quadro.shape[:2]
         agora = datetime.now(timezone.utc)
@@ -1065,15 +1111,7 @@ class Inferencia:
         # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
         # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem
         # isso a última caixa ficaria pairando sobre o vídeo até expirar.
-        await publicar("quadro_ao_vivo", {
-            "camera_codigo": cam.codigo,
-            "caixas": caixas_do_quadro,
-            # Até quando esta lista ainda vale. Vai daqui porque só o worker
-            # sabe quanto demora uma volta pelo parque, e isso muda a cada
-            # câmera cadastrada: com validade fixa, a caixa apagava entre um
-            # quadro e o seguinte assim que o parque crescia.
-            "validade_s": round(self.ciclo_real * 2.0, 1),
-        })
+        await self._publicar_caixas(cam.codigo, caixas_do_quadro)
 
 
 inferencia = Inferencia(settings.INFERENCIA_INTERVALO, settings.INFERENCIA_JANELA_S)

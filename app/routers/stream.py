@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.deps import exige, usuario_de_query
+from app.services.inferencia import inferencia
 from app.models import Camera, StatusCamera, Usuario
 from app.security import decodificar_token
 from app.services import video
@@ -76,6 +77,22 @@ def _assinar_url(caminho: str, expira_em: int = 300) -> str:
         settings.SECRET_KEY.encode(), f"{caminho}:{exp}".encode(), hashlib.sha256
     ).hexdigest()[:32]
     return f"?exp={exp}&sig={assinatura}"
+
+
+@router.get("/stream/caixas", summary="Sobreposição corrente de todas as câmeras")
+async def caixas_correntes(usuario: Usuario = Depends(exige("live"))):
+    """O que está em cena agora, para a tela abrir já marcada.
+
+    O WebSocket entrega o que acontecer daqui para a frente. Quem abre o
+    mosaico chega no meio: sem isto, fica sem caixa nenhuma até o worker
+    voltar a cada câmera — com a volta em ~100 segundos, é um minuto e meio
+    de vídeo sem marcação numa sala cheia de gente.
+
+    Devolve só o que ainda vale. Carga vencida descreve cena que já passou,
+    e semear a tela com ela criaria justamente a caixa fantasma que a
+    validade existe para apagar.
+    """
+    return {"itens": inferencia.caixas_correntes()}
 
 
 @router.get("/stream/{codigo}", summary="Endereços de reprodução da câmera")

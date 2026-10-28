@@ -395,6 +395,17 @@ async function renderAoVivo(alvo){
   // sem passar por aqui, e sair pelo Esc tem de desfazer a parede igual.
   document.onfullscreenchange = () => definirParede(!!document.fullscreenElement);
 
+  /* Semeia a sobreposição antes de montar os tiles. O WebSocket só entrega
+     o que acontecer daqui para a frente, e o worker leva ~100s para voltar a
+     cada câmera: sem isto, abrir o mosaico dá um minuto e meio de vídeo sem
+     caixa nenhuma, com gente em cena. Falhar aqui não impede nada — as
+     caixas entram pelo WebSocket na volta seguinte, como antes. */
+  try{
+    const atual = await API.get('/stream/caixas');
+    (atual.itens || []).forEach(
+      c => FEED.definirCaixas(c.camera_codigo, c.caixas, c.validade_s));
+  }catch(e){ /* sem semente: a tela enche sozinha na volta seguinte */ }
+
   montarMosaico();
   await carregarStreamDeEventos();
 }
