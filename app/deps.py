@@ -43,7 +43,7 @@ async def usuario_atual(
 
     usuario = await db.get(Usuario, usuario_id)
     if usuario is None or not usuario.ativo:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada. Procure a chefia imediata.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada. Procure o administrador do sistema.")
 
     if usuario.forcar_troca_senha:
         raise HTTPException(

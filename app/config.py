@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 
+    # Endereço por onde o sistema é alcançado **de fora**.
+    #
+    # `HOST`/`PORT` dizem onde o servidor escuta; isto diz onde as pessoas
+    # chegam. Os dois quase nunca coincidem: o servidor escuta em 127.0.0.1 e
+    # o operador abre pela rede, por um nome ou por um proxy.
+    #
+    # Importa porque sai daqui para fora. O e-mail de redefinição de senha
+    # levava `http://localhost:8000/#redefinir=...` para a caixa de entrada
+    # de quem está em outra máquina — e ali `localhost` é a máquina *dela*,
+    # onde não há sistema nenhum. O link chegava e não abria.
+    #
+    # Vazio cai em `url_local`, que é o certo em desenvolvimento: numa
+    # máquina só, `localhost` é o endereço correto. Em rede, preencha:
+    #   APP_URL=http://10.0.0.5:8000
+    #   APP_URL=https://seguranca.pp.gov.br
+    APP_URL: str = ""
+
     # --- Banco -----------------------------------------------------------
     # SQLite por padrão. Para produção:
     #   postgresql+asyncpg://seguranca:seguranca@localhost:5432/seguranca
@@ -485,13 +502,19 @@ class Settings(BaseSettings):
     OBJECT_VARREDURA_CLASSES: tuple = ("pessoa",)
 
     # Quantas revisitas extras por volta para as câmeras que alguém está
-    # olhando. A volta leva perto de dois minutos, e a caixa de quem já
-    # saiu fica de pé até o worker voltar àquela cena — com seis
-    # revisitas a câmera na tela é reolhada a cada ~17s em vez de ~115s.
-    # Cada uma custa o tempo de uma passada e sai do tempo das outras
-    # câmeras: é a troca deliberada de quem não está sendo visto por
-    # quem está. Zero desliga.
-    INFERENCIA_REVISITAS: int = 6
+    # olhando. Cada uma custa uma passada completa *com* varredura — 4,5s
+    # medidos — e sai do tempo das outras câmeras.
+    #
+    # Eram seis, de quando o rodízio era o único jeito de reolhar a câmera na
+    # tela. Hoje não é: o laço curto abaixo republica a cena dela a cada ~1,2s,
+    # e a revisita só acrescenta o que ele não faz — a varredura em ladrilhos
+    # e a leitura de rosto. Duas por volta bastam para isso, e as quatro
+    # devolvidas valem 18s de volta para o parque inteiro.
+    #
+    # A revisita também não é repartida: o orçamento é dividido entre todas as
+    # câmeras em tela, então no mosaico 4×4 a maioria ganha zero. Quem garante
+    # a renovação de todas é o laço curto, em rodízio.
+    INFERENCIA_REVISITAS: int = 2
 
     # Laço curto que renova só a marcação das câmeras que estão na tela.
     #
@@ -505,10 +528,44 @@ class Settings(BaseSettings):
     # então com uma tela aberta a marcação se renova em ~1,3s e com nove em
     # ~12s. Zero desliga o laço.
     INFERENCIA_SOBREPOSICAO_S: float = 1.0
-    # Teto de câmeras por rodada. No 4x4 são dezesseis telas, e renovar todas
-    # custaria vinte segundos — mais que o rodízio já entrega. O teto mantém
-    # o laço curto; as demais seguem pela volta.
-    INFERENCIA_SOBREPOSICAO_MAX: int = 9
+    # Teto de câmeras por rodada.
+    #
+    # Dezesseis porque é o maior arranjo que a tela oferece (4×4), e com a
+    # varredura fora do laço a rodada inteira custa ~19s — o mesmo trabalho
+    # que o teto de nove fazia em duas rodadas, só que distribuído por igual.
+    # Medido com dezesseis tiles abertos e teto de nove, a renovação de cada
+    # câmera variava de 17s a 43s conforme ela caísse no começo ou no fim de
+    # uma rodada; a caixa de uma câmera acompanhava a cena e a da vizinha
+    # ficava para trás, sem nada na cena que explicasse a diferença.
+    #
+    # A fila continua girando, e isso não é redundante: protege o caso de
+    # mais câmeras em tela que o teto, em que fatiar sempre do começo da
+    # lista deixaria as últimas fora de toda rodada.
+    INFERENCIA_SOBREPOSICAO_MAX: int = 16
+
+    # Quanto duas caixas precisam se sobrepor, de uma renovação à seguinte,
+    # para serem a mesma pessoa.
+    #
+    # O número sai da mesma tabela rotulada à mão que sustenta
+    # `mesma_pessoa` (ver `vision.mesma_pessoa`): naquelas capturas o IoU
+    # mais alto entre duas pessoas **distintas** foi 0,29, e o mais baixo
+    # entre duas caixas da **mesma** pessoa foi 0,33. A fronteira medida
+    # neste parque está aí, e 0,35 fica logo acima dela.
+    #
+    # O que isso compra, em movimento: a sobreposição cai a zero quando a
+    # caixa anda a própria largura, então 0,35 tolera cerca de meia largura
+    # entre duas renovações. Cobre quem está sentado, parado, ou andando
+    # devagar — que é quase todo mundo neste parque.
+    #
+    # O que **não** compra, e é limite de método, não de ajuste: entre duas
+    # renovações passam uns dois segundos, e quem atravessa a cena andando
+    # percorre várias larguras de caixa nesse tempo. Aí as duas caixas não se
+    # tocam, o IoU é zero e nenhum limiar associa — a pessoa ganha número
+    # novo. Manter a identidade dela exigiria amostrar mais vezes por segundo
+    # ou comparar aparência, e nenhum dos dois cabe no orçamento de CPU com
+    # 24 câmeras em série. Abaixar isto não resolveria: só faria duas pessoas
+    # encostadas trocarem de identidade.
+    INFERENCIA_SOBREPOSICAO_IOU: float = 0.35
 
     # --- Alerta por presença ----------------------------------------------
     # Severidade do alerta que uma câmera com `alerta_presenca` gera.
@@ -541,6 +598,17 @@ class Settings(BaseSettings):
     # aglomeração fazem. Quem atravessou a sala não casa e ganha identidade
     # nova, o que está certo: para o sistema é outra passagem.
     ACAO_RASTREIO_IOU: float = 0.30
+    # Na rajada, com quadros a frações de segundo, a pergunta muda: quem corre
+    # já não se sobrepõe à própria caixa do quadro anterior, e a sobreposição
+    # dava número novo a cada passo — medido no Avenue, o corredor trocava de
+    # número em 9 de 10 quadros, e corrida nunca disparava. Até este intervalo
+    # entre dois quadros, o rastreio também segue pela posição *prevista* a
+    # partir da velocidade que a pessoa vinha tendo.
+    ACAO_RASTREIO_SEGUIR_S: float = 1.0
+    # Até quantas alturas de corpo a caixa pode estar do ponto previsto para
+    # ainda ser a mesma pessoa. Correr a ~3 corpos/s em quadros a 0,22 s dá
+    # ~0,7 corpo por passo sem previsão; com previsão o erro é bem menor.
+    ACAO_RASTREIO_ALCANCE: float = 1.0
 
     # 15 minutos, não 90 segundos. Com 90s qualquer pessoa sentada à mesa
     # viraria ocorrência a cada volta, e a lista do operador seria o escritório
@@ -694,6 +762,26 @@ class Settings(BaseSettings):
     # corredor, que dura um quadro.
     ACAO_BRIGA_DURACAO_S: float = 2.0
 
+    # --- Possível roubo ---------------------------------------------------
+    # Contato entre duas pessoas e, logo depois, uma delas em fuga enquanto a
+    # outra fica. Veja `AnalisadorAcoes._avaliar_roubo`. A fuga usa a régua
+    # da corrida (`ACAO_CORRIDA_RITMO`, `_AGITACAO` e `_DURACAO_S`).
+    #
+    # Interseção sobre a menor das caixas, como na briga: lado a lado dá perto
+    # de zero; o puxão de bolsa, o empurrão e a abordagem colada se sobrepõem.
+    ACAO_ROUBO_PROXIMIDADE: float = 0.22
+    # Até quanto tempo depois do contato a fuga ainda conta como dele. Quem
+    # conversa e só sai correndo um minuto depois não fugiu daquele contato.
+    ACAO_ROUBO_JANELA_S: float = 4.0
+    # Quanto quem fugiu se afastou de quem ficou, em alturas de corpo. Sem
+    # isto, a caixa trocando de dono entre duas pessoas coladas parece fuga.
+    ACAO_ROUBO_AFASTAMENTO: float = 1.0
+    # Quanto mais rápido que a outra pessoa quem foge tem de estar, em alturas
+    # de corpo por segundo. É o que separa de dois que se encontram e saem
+    # correndo juntos — e, como custo assumido, também cala a perseguição em
+    # que a vítima corre tão rápido quanto quem fugiu.
+    ACAO_ROUBO_VANTAGEM: float = 0.9
+
     # --- Rajada para as ações que medem movimento -----------------------
     # Corrida, queda e contrafluxo comparam a posição do corpo entre quadros
     # próximos. No rodízio, duas visitas à mesma câmera distam dezenas de
@@ -813,6 +901,20 @@ class Settings(BaseSettings):
 
     # --- Retenção / privacidade -----------------------------------------
     RETENTION_DAYS_UNMATCHED: int = 90
+
+    # De quantas em quantas horas o expurgo roda sozinho. Zero desliga.
+    #
+    # Desligado por padrão, e a escolha é deliberada. A política de retenção
+    # existia e o endpoint existia; o que não existia era quem o chamasse —
+    # o próprio texto dele diz "agende via cron", e a trilha desta instalação
+    # não tem uma única linha `EXPURGO` em 2.152 registros. Retenção
+    # declarada e nunca executada é promessa por escrito que não se cumpre.
+    #
+    # Mas apagar é irreversível, e num sistema de segurança prisional quem
+    # decide quando a política passa a valer de fato é quem responde por ela.
+    # Em zero o sistema **avisa** no arranque quantas capturas estão vencidas;
+    # acima de zero, executa. 24 é o valor usual.
+    RETENCAO_INTERVALO_HORAS: int = 0
     MASK_PII_FOR_ROLES: str = "OPERADOR,ANALISTA"
 
     # --- Evidências -------------------------------------------------------
@@ -918,6 +1020,38 @@ class Settings(BaseSettings):
         laco = {"127.0.0.1", "0.0.0.0", "::1", "::", "localhost", ""}
         nome = "localhost" if self.HOST in laco else self.HOST
         return f"http://{nome}:{self.PORT}"
+
+    @property
+    def url_publica(self) -> str:
+        """Endereço que vai em link enviado para fora — e-mail, sobretudo.
+
+        Separado de `url_local` de propósito. Aquele descreve onde o servidor
+        escuta e serve para o console de quem está na própria máquina; este
+        descreve onde as pessoas chegam, e é o único que pode viajar.
+
+        A barra final é retirada porque os chamadores concatenam `/#...`, e
+        `APP_URL` copiado da barra de endereço quase sempre vem com ela —
+        daria `//#redefinir`, que alguns navegadores leem como outro host.
+        """
+        return (self.APP_URL or self.url_local).rstrip("/")
+
+    @property
+    def falta_url_publica(self) -> str:
+        """Por que um link enviado por e-mail não vai funcionar.
+
+        Só importa quando há envio de e-mail configurado: sem envio, nenhum
+        link sai da máquina e `localhost` não machuca ninguém.
+        """
+        if self.APP_URL or self.falta_para_email:
+            return ""
+        laco = {"127.0.0.1", "0.0.0.0", "::1", "::", "localhost", ""}
+        if self.HOST not in laco:
+            return ""
+        return (
+            "APP_URL não está definida e o servidor escuta no laço local: "
+            f"o link de redefinição sairá como {self.url_local}, que na "
+            "máquina de quem recebe o e-mail aponta para ela mesma"
+        )
 
     @property
     def cors_list(self) -> List[str]:

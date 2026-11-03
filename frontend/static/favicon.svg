@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 42 48">
-  <path d="M21 1.8 3.5 8.2v14.2C3.5 34 11 42 21 46.2 31 42 38.5 34 38.5 22.4V8.2L21 1.8z" fill="#0F1821" stroke="#35A7DE" stroke-width="2.4"/>
-  <circle cx="21" cy="21" r="7.6" fill="none" stroke="#35A7DE" stroke-width="2.4"/>
-  <circle cx="21" cy="21" r="3.4" fill="#F0A02A"/>
+  <!-- A 16px só sobram as massas: escudo, corpo e lente. -->
+  <path d="M21 1.6 38.8 8.1V26.5L21 44.6 3.2 26.5V8.1L21 1.6z" fill="#0F1821" stroke="#35A7DE" stroke-width="3" stroke-linejoin="round"/>
+  <rect x="10.4" y="19" width="14.4" height="7.4" rx="1.8" fill="#35A7DE"/>
+  <circle cx="26.6" cy="22.7" r="4.2" fill="#35A7DE"/>
+  <circle cx="26.6" cy="22.7" r="2.4" fill="#F0A02A"/>
 </svg>

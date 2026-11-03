@@ -40,7 +40,7 @@ CLASSES_OBJETO = [
     ("mochila", 7), ("volume", 2), ("capacete", 5), ("placa", 8), ("arma", 1),
 ]
 CLASSES_ACAO = [
-    ("corrida", 14), ("queda", 4), ("aglomeracao", 8), ("briga", 3),
+    ("corrida", 14), ("queda", 4), ("aglomeracao", 8), ("briga", 3), ("roubo", 2),
     ("permanencia", 16), ("invasao", 4), ("contrafluxo", 9),
     ("abandono", 6), ("vandalismo", 3), ("fogo", 2),
 ]
@@ -139,7 +139,10 @@ class Simulador:
             pesos = [
                 ("facial", 40 if cam.analitico_facial else 0),
                 ("objeto", 40 if cam.analitico_objeto else 0),
-                ("acao", 20 if cam.analitico_acao else 0),
+                # Análise ligada sem nenhuma ação marcada não gera nada: pesar
+                # a faixa faria o ciclo cair nela e sair vazio, que é o mesmo
+                # desperdício que o comentário acima descreve.
+                ("acao", 20 if cam.analitico_acao and cam.acoes_ativas else 0),
             ]
             disponiveis = [(nome, p) for nome, p in pesos if p]
             if not disponiveis:
@@ -206,7 +209,7 @@ class Simulador:
         ).scalar_one_or_none()
         if pessoa is None:
             return None
-        if pessoa.status in (StatusPessoa.PROCURADO, StatusPessoa.MONITORADO) and rng.random() > 0.35:
+        if pessoa.status == StatusPessoa.RESTRITO and rng.random() > 0.35:
             return None
 
         # 15% das capturas saem ruins o bastante para não baterem no limiar.
@@ -238,10 +241,18 @@ class Simulador:
             track_id=rng.randint(1, 900),
         )
 
-    def _acao(self, cam: Camera, agora: datetime) -> DeteccaoIn:
-        classe = _sortear(CLASSES_ACAO)
+    def _acao(self, cam: Camera, agora: datetime) -> Optional[DeteccaoIn]:
+        # A cena sintética respeita a seleção da câmera. Sortear fora dela
+        # produziria registro de uma ação que aquela câmera declara não
+        # vigiar — e quem revisa não teria como saber que foi invenção.
+        permitidas = set(cam.acoes_ativas or ())
+        pares = [p for p in CLASSES_ACAO if p[0] in permitidas]
+        if not pares:
+            return None
+        classe = _sortear(pares)
         envolvidos = (rng.randint(6, 34) if classe == "aglomeracao"
                       else rng.randint(2, 5) if classe == "briga"
+                      else 2 if classe == "roubo"
                       else rng.randint(1, 3))
         return DeteccaoIn(
             tipo=TipoDeteccao.ACAO,
@@ -258,48 +269,3 @@ class Simulador:
 
 
 simulador = Simulador(settings.SIMULADOR_INTERVALO)
-
-
-async def popular_historico(horas: int = 26, quantidade: int = 700) -> int:
-    """Gera detecções retroativas para o painel abrir com gráficos preenchidos.
-
-    Chamado uma vez pelo seed. Distribui os eventos com viés para o presente,
-    como um dia de operação de verdade.
-    """
-    from app.routers.deteccoes import processar_deteccao
-
-    criados = 0
-    async with db_context() as db:
-        cameras = (
-            await db.execute(select(Camera).where(Camera.status == StatusCamera.ONLINE))
-        ).scalars().unique().all()
-        if not cameras:
-            return 0
-
-        agora = datetime.now(timezone.utc)
-        sim = Simulador()
-
-        for _ in range(quantidade):
-            cam = rng.choice(cameras)
-            # Viés para eventos recentes: `u**1.7` concentra perto de zero.
-            atraso = (rng.random() ** 1.7) * horas * 3600
-            quando = agora.fromtimestamp(agora.timestamp() - atraso, tz=timezone.utc)
-
-            sorte = rng.random()
-            if sorte < 0.42 and cam.analitico_facial:
-                dados = await sim._facial(db, cam, quando)
-            elif sorte < 0.80 and cam.analitico_objeto:
-                dados = sim._objeto(cam, quando)
-            elif cam.analitico_acao:
-                dados = sim._acao(cam, quando)
-            else:
-                dados = sim._objeto(cam, quando) if cam.analitico_objeto else None
-
-            if dados is None:
-                continue
-            await processar_deteccao(db, dados, origem="seed", publicar_evento=False)
-            criados += 1
-
-        await db.commit()
-    return criados
-

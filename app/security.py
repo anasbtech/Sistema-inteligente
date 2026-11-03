@@ -116,6 +116,19 @@ def gerar_codigo_otp() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
+def gerar_token_link() -> str:
+    """Segredo do link de redefinição — longo porque viaja numa URL.
+
+    Seis dígitos bastam para um código digitado, onde o número de tentativas é
+    contado e a janela é de minutos. Num link não há digitação nem tentativa
+    para contar: quem tem a URL entra. Por isso aqui são 32 bytes de entropia,
+    não seis dígitos.
+
+    Guardado com o mesmo HMAC do código: o banco nunca vê o segredo em claro.
+    """
+    return secrets.token_urlsafe(32)
+
+
 def hash_otp(codigo: str) -> str:
     return hmac.new(settings.SECRET_KEY.encode(), codigo.encode(), hashlib.sha256).hexdigest()
 
@@ -130,6 +143,41 @@ def conferir_otp(codigo: str, hash_armazenado: str) -> bool:
 def hash_evidencia(conteudo: bytes) -> str:
     """SHA-256 do quadro bruto, para cadeia de custódia da imagem."""
     return hashlib.sha256(conteudo).hexdigest()
+
+
+CREDENCIAL_OCULTA = "•••"
+
+
+def mascarar_credencial(url: str) -> str:
+    """Tira usuário e senha de uma URL de fluxo antes de ela sair daqui.
+
+    As 26 câmeras deste parque têm a senha de administrador embutida no
+    endereço RTSP. Duas saídas já vazaram por isso, e as duas foram medidas:
+
+    * `CameraOut` entregava o endereço inteiro a quem tivesse a permissão
+      `live` — ADMIN, SUPER, OPERADOR e ANALISTA, seis dos sete usuários
+      cadastrados. Fechado pelo validador de `CameraOut`.
+    * o worker escrevia a URL no log a cada reconexão. Encontradas 4 linhas
+      em `logs/.worker.err.log` com usuário e senha em claro.
+
+    O que sobra ainda serve para conferir host, porta e caminho, que é para
+    o que alguém olharia o endereço num diagnóstico. A URL real continua no
+    banco, onde o worker a lê para abrir o fluxo.
+
+    Mora aqui, junto de `mascarar_cpf` e `mascarar_rg`, porque é o mesmo
+    trabalho: tirar segredo de algo que vai ser mostrado ou gravado. Estava
+    em `schemas`, o que obrigava o worker a importar o módulo de contratos
+    da API só para poder escrever uma linha de log.
+    """
+    if not url or "@" not in url:
+        return url
+    esquema, _, resto = url.partition("://")
+    if not resto:
+        return url
+    credencial, arroba, endereco = resto.partition("@")
+    if not arroba or "/" in credencial:
+        return url
+    return f"{esquema}://{CREDENCIAL_OCULTA}@{endereco}"
 
 
 def mascarar_cpf(cpf: Optional[str]) -> str:

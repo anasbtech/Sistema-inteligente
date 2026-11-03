@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -59,6 +59,12 @@ class ResultadoBusca:
     id_biometrico: Optional[str]
     similaridade: float
     limiar: float
+    # Quem ficou em primeiro, tendo passado do limiar ou não. Separado de
+    # `pessoa_id` porque abaixo do limiar isto é palpite, não identificação:
+    # quem audita e quem desenha a caixa continuam lendo `pessoa_id`, e só a
+    # fila de conferência olha para cá.
+    candidato_id: Optional[str] = None
+    candidato_bio: Optional[str] = None
 
     @property
     def match(self) -> bool:
@@ -234,47 +240,94 @@ def similaridade_cosseno(a: Sequence[float], b: Sequence[float]) -> float:
 # ----------------------------------------------------------------------
 # Busca 1:N
 # ----------------------------------------------------------------------
+def _melhor_por_pessoa(candidatos: list[tuple], k: int) -> list[tuple]:
+    """De várias amostras da mesma pessoa, fica a que mais se parece com a busca.
+
+    A pessoa aparece uma vez só no resultado, com a sua melhor amostra — é o
+    que permite cadastrar um ângulo por câmera sem que um atrapalhe o outro.
+    """
+    melhor: dict = {}
+    for pid, id_bio, nome, status, sim in candidatos:
+        atual = melhor.get(pid)
+        if atual is None or sim > atual[4]:
+            melhor[pid] = (pid, id_bio, nome, status, sim)
+    return sorted(melhor.values(), key=lambda t: -t[4])[:k]
+
+
+async def _sem_amostra(db: AsyncSession):
+    """Quem ainda não tem amostra guardada responde pelo próprio template."""
+    return (
+        await db.execute(
+            select(Pessoa.id, Pessoa.id_biometrico, Pessoa.nome,
+                   Pessoa.status, Pessoa.embedding)
+            .where(Pessoa.embedding.isnot(None), Pessoa.ativo.is_(True),
+                   ~Pessoa.id.in_(select(AmostraFacial.pessoa_id)))
+        )
+    ).all()
+
+
 async def _topk_postgres(db: AsyncSession, vetor: list, k: int) -> list[tuple]:
     from pgvector.sqlalchemy import Vector  # noqa: F401
 
+    # Mais linhas que `k` de propósito: várias podem ser da mesma pessoa, e a
+    # dedupe acontece depois, em `_melhor_por_pessoa`.
     linhas = (
         await db.execute(
             select(Pessoa.id, Pessoa.id_biometrico, Pessoa.nome, Pessoa.status,
-                   (1 - Pessoa.embedding.cosine_distance(vetor)).label("sim"))
-            .where(Pessoa.embedding.isnot(None), Pessoa.ativo.is_(True))
-            .order_by(Pessoa.embedding.cosine_distance(vetor))
-            .limit(k)
+                   (1 - AmostraFacial.embedding.cosine_distance(vetor)).label("sim"))
+            .join(AmostraFacial, AmostraFacial.pessoa_id == Pessoa.id)
+            .where(Pessoa.ativo.is_(True))
+            .order_by(AmostraFacial.embedding.cosine_distance(vetor))
+            .limit(max(k * 8, 40))
         )
     ).all()
-    return [(r.id, r.id_biometrico, r.nome, r.status, float(r.sim)) for r in linhas]
+    candidatos = [(r.id, r.id_biometrico, r.nome, r.status, float(r.sim)) for r in linhas]
+
+    restantes = await _sem_amostra(db)
+    if restantes:
+        alvo = np.asarray(vetor, dtype=np.float32)
+        candidatos += _similaridades(restantes, alvo)
+    return _melhor_por_pessoa(candidatos, k)
+
+
+def _similaridades(linhas: list, vetor: np.ndarray) -> list[tuple]:
+    matriz = np.array([r[4] for r in linhas], dtype=np.float32)
+    normas = np.linalg.norm(matriz, axis=1, keepdims=True)
+    normas[normas == 0] = 1.0
+    sims = (matriz / normas) @ vetor
+    return [(r[0], r[1], r[2], r[3], float(sims[i])) for i, r in enumerate(linhas)]
 
 
 async def _topk_memoria(db: AsyncSession, vetor: np.ndarray, k: int) -> list[tuple]:
-    """Força bruta: carrega os templates e multiplica a matriz de uma vez.
+    """Força bruta contra TODAS as amostras, ficando a melhor de cada pessoa.
+
+    Comparar contra a média das amostras era o que prendia cada pessoa a uma
+    câmera só. Medido nesta base: as amostras de uma mesma pessoa se parecem
+    entre si de 0,24 a 0,47 — são ângulos bem diferentes —, e a média delas
+    fica a 0,68–0,90 de cada uma. Esse meio-termo representa pior cada ângulo
+    do que a própria amostra representaria, então só o ângulo dominante ficava
+    acima do limiar e os demais caíam fora.
+
+    Com o máximo por amostra, cada ângulo cadastrado responde pelo seu, e
+    acrescentar uma amostra nova nunca piora as que já existem.
 
     Com vetores normalizados, o produto escalar já é a similaridade cosseno.
     """
     linhas = (
         await db.execute(
             select(Pessoa.id, Pessoa.id_biometrico, Pessoa.nome,
-                   Pessoa.status, Pessoa.embedding)
-            .where(Pessoa.embedding.isnot(None), Pessoa.ativo.is_(True))
+                   Pessoa.status, AmostraFacial.embedding)
+            .join(AmostraFacial, AmostraFacial.pessoa_id == Pessoa.id)
+            .where(Pessoa.ativo.is_(True))
         )
     ).all()
+    linhas = list(linhas) + list(await _sem_amostra(db))
     if not linhas:
         return []
 
-    matriz = np.array([r.embedding for r in linhas], dtype=np.float32)
-    normas = np.linalg.norm(matriz, axis=1, keepdims=True)
-    normas[normas == 0] = 1.0
-    sims = (matriz / normas) @ vetor
+    return _melhor_por_pessoa(_similaridades(linhas, vetor), k)
 
-    melhores = np.argsort(-sims)[:k]
-    return [
-        (linhas[i].id, linhas[i].id_biometrico, linhas[i].nome,
-         linhas[i].status, float(sims[i]))
-        for i in melhores
-    ]
+
 
 
 async def buscar_pessoa(db: AsyncSession, embedding: Sequence[float],
@@ -297,8 +350,10 @@ async def buscar_pessoa(db: AsyncSession, embedding: Sequence[float],
 
     pessoa_id, id_bio, _nome, _status, sim = topo[0]
     if sim < lim:
-        return ResultadoBusca(None, None, round(sim, 4), lim)
-    return ResultadoBusca(str(pessoa_id), id_bio, round(sim, 4), lim)
+        return ResultadoBusca(None, None, round(sim, 4), lim,
+                              str(pessoa_id), id_bio)
+    return ResultadoBusca(str(pessoa_id), id_bio, round(sim, 4), lim,
+                          str(pessoa_id), id_bio)
 
 
 async def buscar_candidatos(db: AsyncSession, embedding: Sequence[float],
@@ -332,4 +387,70 @@ async def recalcular_template(db: AsyncSession, pessoa: Pessoa) -> None:
     pessoa.embedding = media_embeddings([a.embedding for a in amostras]).tolist()
     pessoa.qualidade = round(float(np.mean([a.qualidade for a in amostras])), 4)
     pessoa.amostras = len(amostras)
+
+
+async def amostras_por_camera(db: AsyncSession, pessoa_id) -> dict:
+    """Quantas amostras o template tem de cada câmera. Nulo = foto de cadastro."""
+    linhas = (
+        await db.execute(
+            select(AmostraFacial.camera_id, func.count())
+            .where(AmostraFacial.pessoa_id == pessoa_id)
+            .group_by(AmostraFacial.camera_id)
+        )
+    ).all()
+    return {cid: n for cid, n in linhas}
+
+
+async def acolher_amostra(db: AsyncSession, pessoa: Pessoa, embedding: Sequence[float],
+                          qualidade: float, camera_id) -> bool:
+    """Guarda a captura como amostra, se ela acrescentar um ângulo novo.
+
+    É o que faz o template crescer sozinho depois do primeiro acerto numa
+    câmera: a busca compara contra cada amostra e fica com a melhor, então
+    uma amostra do ângulo daquela câmera é o que a torna capaz de reconhecer
+    ali — e nunca piora as câmeras já cobertas.
+
+    Recusa em três casos, e cada um tem a sua razão:
+
+    * **sem câmera** — não há ângulo a registrar, e sem saber de onde veio a
+      cota não teria como ser contada;
+    * **cota cheia** — a busca é força bruta contra todas as amostras, então
+      cada uma custa em toda identificação do parque; e sem teto a câmera
+      movimentada enche o cadastro sozinha enquanto as outras seguem
+      descobertas;
+    * **parecida demais com uma que já existe** — não acrescenta ângulo
+      nenhum e gastaria a cota que a próxima posição precisa.
+
+    Devolve se a amostra entrou, para quem chamou poder registrar o fato.
+    """
+    if camera_id is None:
+        return False
+
+    existentes = (
+        await db.execute(
+            select(AmostraFacial.embedding).where(
+                AmostraFacial.pessoa_id == pessoa.id,
+                AmostraFacial.camera_id == camera_id,
+            )
+        )
+    ).scalars().all()
+    if len(existentes) >= settings.FACE_SAMPLES_PER_CAMERA:
+        return False
+
+    vetor = normalizar(embedding)
+    for outro in existentes:
+        if similaridade_cosseno(outro, vetor) >= settings.FACE_SAMPLE_DISTINTA:
+            return False
+
+    db.add(AmostraFacial(
+        pessoa_id=pessoa.id, embedding=vetor.tolist(),
+        qualidade=round(float(qualidade or 0.0), 4),
+        origem="captura", camera_id=camera_id,
+    ))
+    await db.flush()
+    # O template médio deixou de ser o que a busca consulta, mas segue valendo
+    # para quem não tem amostra nenhuma — e `amostras`/`qualidade` são o que a
+    # ficha mostra. Mantê-lo em dia custa pouco e evita ficha desatualizada.
+    await recalcular_template(db, pessoa)
+    return True
 

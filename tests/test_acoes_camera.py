@@ -921,8 +921,8 @@ def test_uma_posicao_por_visita_nunca_vira_corrida():
 # Corrida súbita: acelerar, e não apenas estar rápido
 #
 # As caixas abaixo são de uma pessoa no fundo da sala — corpo de 120 px num
-# quadro de 720, que é 0,167 de altura. Andar são 22 px por quadro (0,69
-# corpo/s) e correr são 80 px (2,50 corpo/s).
+# quadro de 720, que é 0,167 de altura. A 0,15 s por quadro, andar são 22 px
+# (1,2 corpo/s, passo largo) e correr são 80 px (4,4 corpos/s).
 # ----------------------------------------------------------------------
 TOPO, BASE = 300, 420                      # corpo de 120 px, ao fundo
 ANDANDO, CORRENDO = 22, 80                 # px por quadro
@@ -963,14 +963,38 @@ def test_andar_depressa_a_cena_inteira_nao_e_corrida_subita():
     assert _classes(_trajeto(17, 100, ANDANDO)) == []
 
 
-def test_quem_ja_entrou_correndo_nao_dispara_sem_a_transicao():
-    """A contrapartida assumida da regra, escrita para não surpreender.
+def test_quem_ja_entrou_correndo_dispara():
+    """Entrar em cena correndo também é corrida súbita.
 
-    Ritmo de corrida do primeiro ao último quadro, sem transição observada:
-    fica mudo. Quem quiser pegar também esse caso baixa `ACAO_CORRIDA_SALTO`
-    — e passa a pagar em alerta de quem apenas anda depressa.
+    Era mudo, como contrapartida assumida. O teste com o Avenue mostrou o
+    preço: nenhuma das corridas do dataset disparava, porque todo corredor
+    entra no quadro já correndo — e quem foge na vida real também.
     """
-    assert _classes(_trajeto(17, 100, CORRENDO)) == []
+    assert "corrida" in _classes(_trajeto(17, 100, CORRENDO))
+
+
+def test_quem_ja_foi_visto_andando_ainda_precisa_acelerar():
+    """A exceção vale para quem nunca foi visto devagar.
+
+    Quem anda e segue andando no mesmo ritmo não vira corrida, por mais que
+    o passo seja largo — a aceleração continua sendo exigida dela.
+    """
+    from app.services.vision import Trilha
+
+    tr = Trilha(7, "pessoa")
+    tr.viu_devagar = True
+    an = AnalisadorAcoes()
+    an.acoes_ativas = {"corrida"}
+    an.trilhas[7] = tr
+    from app.config import settings
+    passo = settings.ACAO_CONTINUA_INTERVALO_S
+    # 2,0 corpos/s constantes, sem salto sobre o ritmo anterior.
+    eventos = []
+    for i in range(17):
+        x = 100 + i * int(2.0 * 120 * passo)
+        eventos += an.atualizar([ObjetoDetectado("pessoa", 0.9, (x, TOPO, x + 90, BASE), 7)],
+                                1280, 720, agora=9000.0 + i * passo)
+    assert "corrida" not in [e.classe for e in eventos]
 
 
 def test_andar_rente_a_lente_nao_vale_como_corrida():
@@ -1037,8 +1061,9 @@ def test_so_a_camera_que_vigia_movimento_paga_a_rajada():
     from app.services.vision import ACOES_CONTINUAS
 
     # Briga entrou aqui em 15/10: a heurística lê velocidade e agitação da
-    # trajetória, e sem a rajada as duas valem zero.
-    assert ACOES_CONTINUAS == {"corrida", "queda", "contrafluxo", "briga"}
+    # trajetória, e sem a rajada as duas valem zero. Roubo entrou em 03/11,
+    # pelo mesmo motivo: a fuga é medida na régua da corrida.
+    assert ACOES_CONTINUAS == {"corrida", "queda", "contrafluxo", "briga", "roubo"}
 
     class Cam:
         acoes_ativas = ["aglomeracao", "permanencia"]
@@ -1256,3 +1281,125 @@ def test_o_alerta_de_briga_pede_confirmacao_humana():
 
     assert "possível" in ROTULO_ACAO["briga"].lower()
     assert "confirmação" in detalhe_acao("briga")
+
+
+# ----------------------------------------------------------------------
+# Possível roubo — acrescentado em 2026-11-03
+# ----------------------------------------------------------------------
+# Corpos de 120 px de altura num quadro de 720: um passo de 90 px a cada
+# 0,22s é ~2,2 alturas de corpo por segundo, acima do piso da corrida.
+def _corpo(x, y=300):
+    return (x, y, x + 50, y + 120)
+
+
+def _abordagem(quadros_de_contato=6):
+    """Duas pessoas coladas, paradas — a abordagem."""
+    return [[(1, _corpo(200)), (2, _corpo(215))]
+            for _ in range(quadros_de_contato)]
+
+
+def _roubo_classico():
+    """Contato, e então a pessoa 1 dispara para a direita; a 2 fica."""
+    quadros = _abordagem()
+    for i in range(1, 10):
+        quadros.append([(1, _corpo(200 + i * 90)), (2, _corpo(215))])
+    return quadros
+
+
+def test_contato_seguido_de_fuga_e_indicio_de_roubo():
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo"}
+    eventos = _alimentar(analisador, _roubo_classico())
+    roubos = [e for e in eventos if e.classe == "roubo"]
+    assert len(roubos) == 1, [e.classe for e in eventos]
+    assert roubos[0].track_id == 1, "o alerta aponta quem fugiu"
+    assert roubos[0].envolvidos == 2
+
+
+def test_o_rotulo_de_roubo_nao_afirma_o_crime():
+    """O vídeo mostra contato e fuga, não o objeto mudando de mão."""
+    from app.services.vision import ROTULO_ACAO
+
+    assert ROTULO_ACAO["roubo"].lower().startswith("possível")
+
+
+def test_roubo_usa_a_rajada_de_quadros():
+    """Sem trajetória densa não há fuga para medir."""
+    from app.services.vision import ACOES_CONTINUAS
+
+    assert "roubo" in ACOES_CONTINUAS
+
+
+def test_correr_sem_contato_antes_nao_e_roubo():
+    """Quem só corre é corrida — e só se a câmera vigia corrida."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo"}
+    quadros = [[(1, _corpo(200)), (2, _corpo(900))] for _ in range(6)]
+    for i in range(1, 10):
+        quadros.append([(1, _corpo(200 + i * 70)), (2, _corpo(1100))])
+    assert "roubo" not in [e.classe for e in _alimentar(analisador, quadros)]
+
+
+def test_dois_que_se_encontram_e_saem_correndo_juntos_nao_e_roubo():
+    """Os dois disparam: ninguém ficou para trás."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo"}
+    quadros = _abordagem()
+    for i in range(1, 10):
+        quadros.append([(1, _corpo(200 + i * 90)), (2, _corpo(215 + i * 90, 380))])
+    assert "roubo" not in [e.classe for e in _alimentar(analisador, quadros)]
+
+
+def test_despedir_se_e_sair_andando_nao_e_roubo():
+    """Conversa colada e cada um segue o seu caminho, a passo."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo"}
+    quadros = _abordagem()
+    for i in range(1, 16):
+        quadros.append([(1, _corpo(200 + i * 25)), (2, _corpo(215))])
+    assert "roubo" not in [e.classe for e in _alimentar(analisador, quadros)]
+
+
+def test_pressa_muito_depois_do_contato_nao_e_roubo():
+    """Quem conversou, se afastou e só correu bem depois não fugiu daquele
+    contato — ele já tinha vencido."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo"}
+    quadros = _abordagem()
+    # Sai andando para o lado (~0,8 corpo/s, 21 px a cada 0,22 s) e espera
+    # parado mais que ACAO_ROUBO_JANELA_S. O passo era um salto de 165 px num
+    # quadro só — 6 corpos/s, que só não contava como fuga porque a régua
+    # encolhia o movimento horizontal (veja `Trilha.aspecto`).
+    for i in range(1, 9):
+        quadros.append([(1, _corpo(215 + i * 21)), (2, _corpo(215))])
+    for _ in range(30):
+        quadros.append([(1, _corpo(380)), (2, _corpo(215))])
+    for i in range(1, 9):
+        quadros.append([(1, _corpo(380 + i * 90)), (2, _corpo(215))])
+    assert "roubo" not in [e.classe for e in _alimentar(analisador, quadros)]
+
+
+def test_fuga_do_roubo_nao_vira_tambem_corrida():
+    """Uma cena, uma ocorrência: quem fugiu correu, mas o fato é o roubo."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo", "corrida"}
+    classes = [e.classe for e in _alimentar(analisador, _roubo_classico())]
+    assert classes.count("roubo") == 1
+    assert "corrida" not in classes, classes
+
+
+def test_correr_sem_contato_segue_sendo_corrida_com_roubo_ligado():
+    """Ligar roubo não pode calar a corrida de quem não encostou em ninguém."""
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"roubo", "corrida"}
+    quadros = [[(1, _corpo(200, 300))] for _ in range(6)]
+    for i in range(1, 10):
+        quadros.append([(1, _corpo(200 + i * 90, 300))])
+    classes = [e.classe for e in _alimentar(analisador, quadros)]
+    assert "corrida" in classes and "roubo" not in classes
+
+
+def test_roubo_desligado_nao_emite():
+    analisador = AnalisadorAcoes()
+    analisador.acoes_ativas = {"briga"}
+    assert "roubo" not in [e.classe for e in _alimentar(analisador, _roubo_classico())]

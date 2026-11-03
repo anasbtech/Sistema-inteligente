@@ -12,3 +12,7 @@ aiosqlite==0.20.0
 passlib[argon2]==1.7.4
 argon2-cffi==23.1.0
 numpy==1.26.4
+# Trilha de auditoria em PDF. Fica no mínimo porque o router de auditoria o
+# importa no topo: sem ele a aplicação inteira não sobe, não só a exportação.
+# Python puro, sem biblioteca de sistema para compilar no Windows.
+reportlab==4.2.5

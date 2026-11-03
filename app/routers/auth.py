@@ -5,8 +5,21 @@ Etapa 2  POST /auth/verificar-codigo   -> confere o código, não troca a senha
 Etapa 3  POST /auth/redefinir-senha    -> exige o código de novo e grava
 
 Decisões de segurança que valem nota:
-* Resposta **neutra** na etapa 1: a API responde igual exista ou não a conta,
-  para não permitir enumeração de usuários.
+* Etapa 1 responde **igual** exista ou não a conta — no texto, nas chaves e
+  no tempo. Houve uma versão que dizia "não há conta" na tela; ela entregava
+  a quem estivesse na rede a lista de quais e-mails têm cadastro, testando um
+  por um. Para o tempo também não contar, o e-mail sai em segundo plano,
+  depois da resposta. Pedido para endereço sem conta vai para a trilha, com a
+  severidade subindo na repetição vinda do mesmo lugar.
+* O link **nunca** volta na resposta, nem em desenvolvimento. Voltava, como
+  atalho, e com o servidor aberto na rede isso deixava qualquer um trocar a
+  senha de qualquer conta só sabendo o e-mail. Sem SMTP, o link sai no log
+  do servidor (em desenvolvimento) ou o administrador o emite pela tela de
+  usuários.
+* Endereço sem conta **não dispara e-mail nenhum**. Despachar mensagem para
+  endereço arbitrário, informado por quem não está autenticado, faria do
+  sistema um relé de spam assinado por ele mesmo — e alcançaria quem nunca
+  pediu nada.
 * O código vai para o banco como HMAC-SHA256, nunca em claro.
 * Tentativas de login e de OTP têm limite por IP (Redis) e por conta (coluna).
 * Redefinir a senha revoga as sessões abertas daquela conta.
@@ -18,24 +31,26 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
 from app.config import settings
-from app.database import get_db, get_redis
+from app.database import db_context, get_db, get_redis
 from app.deps import ip_de, limitar_taxa, usuario_atual
 from app.models import SenhaHistorico, TokenRecuperacao, Usuario
 from app.schemas import (
     LoginIn, RecuperarIn, RedefinirSenhaIn, RefreshIn, TokenOut,
-    TrocarSenhaIn, UsuarioOut, VerificarCodigoIn,
+    TrocarSenhaIn, UsuarioOut, VerificarLinkIn,
 )
 from app.security import (
-    conferir_otp, criar_access_token, criar_refresh_token, decodificar_token,
-    gerar_codigo_otp, hash_otp, hash_senha, precisa_rehash, verificar_senha,
+    criar_access_token, criar_refresh_token, decodificar_token,
+    gerar_token_link, hash_otp, hash_senha, precisa_rehash, verificar_senha,
 )
-from app.services.notificacoes import FalhaNoEnvio, enviar_codigo_recuperacao
+from app.services.notificacoes import (
+    EmailNaoConfigurado, FalhaNoEnvio, enviar_link_recuperacao,
+)
 from app.tipos import como_utc
 
 log = logging.getLogger("seguranca.auth")
@@ -108,7 +123,7 @@ async def login(dados: LoginIn, request: Request, db: AsyncSession = Depends(get
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detalhe)
 
     if not usuario.ativo:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada. Procure a chefia imediata.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Conta desativada. Procure o administrador do sistema.")
 
     # Sucesso
     usuario.tentativas_falhas = 0
@@ -172,8 +187,95 @@ async def eu(usuario: Usuario = Depends(usuario_atual)):
 # ======================================================================
 # Recuperação de senha — etapa 1
 # ======================================================================
-@router.post("/recuperar", summary="Etapa 1 — solicitar código")
-async def recuperar(dados: RecuperarIn, request: Request, db: AsyncSession = Depends(get_db)):
+def _resposta_neutra() -> dict:
+    """A mesma resposta para quem tem conta e para quem não tem.
+
+    Nada aqui pode depender da conta existir — nem uma chave a mais. É o que
+    impede alguém na rede de descobrir, e-mail por e-mail, quem está
+    cadastrado. Inclusive o desfecho do envio fica de fora: "o e-mail falhou"
+    só pode ser dito de uma conta que existe.
+    """
+    return {
+        "mensagem": ("Se houver uma conta ativa com este e-mail, enviamos um "
+                     "link de redefinição. Confira a caixa de entrada e o spam."),
+        "expira_em_segundos": settings.RESET_LINK_TTL_SECONDS,
+    }
+
+
+async def _enviar_em_segundo_plano(email: str, nome: str, link: str) -> None:
+    """Entrega o link depois que a resposta já saiu.
+
+    Esperar o SMTP dentro da requisição fazia o pedido com conta levar
+    segundos e o sem conta voltar na hora — a diferença de tempo contava o
+    que a resposta neutra esconde.
+
+    O desfecho vai para o log e para a trilha, que é onde quem opera olha.
+    """
+    envio, falha = "enviado", ""
+    try:
+        await enviar_link_recuperacao(email, nome, link,
+                                      settings.RESET_LINK_TTL_SECONDS // 60)
+    except EmailNaoConfigurado as exc:
+        envio, falha = "nao_configurado", str(exc)
+        log.warning("Link gerado para %s — envio de e-mail não configurado (%s). "
+                    "Peça a um administrador que emita o link pela tela de usuários.",
+                    email, falha)
+    except FalhaNoEnvio as exc:
+        envio, falha = "falhou", str(exc)
+        log.error("Link gerado mas não entregue a %s: %s", email, falha)
+    except Exception as exc:                                 # noqa: BLE001
+        envio, falha = "falhou", str(exc)
+        log.exception("Erro inesperado ao enviar o link para %s", email)
+
+    if envio == "enviado":
+        return
+    try:
+        async with db_context() as db:
+            await audit.registrar(
+                db, acao="SENHA_RESET_FALHA_ENVIO", severidade="warn", alvo=email,
+                descricao={
+                    "nao_configurado": "Link de redefinição gerado — envio de e-mail não configurado",
+                    "falhou": "Link de redefinição gerado, mas o e-mail falhou",
+                }[envio],
+                metadados={"envio": envio, "motivo": falha},
+            )
+    except Exception:                                        # noqa: BLE001
+        log.exception("Não foi possível registrar a falha de envio na trilha")
+
+
+async def _registrar_sem_conta(db: AsyncSession, email: str, ip: str,
+                               request: Request) -> None:
+    """Deixa na trilha cada pedido para endereço sem conta.
+
+    A tela não conta nada — responde igual para os dois casos. Mas quem tenta
+    endereço por endereço continua tentando, e sem este registro a sondagem
+    seria silenciosa. Uma tentativa isolada é rotina — gente
+    erra a digitação do próprio e-mail. O que denuncia varredura é a
+    repetição vinda do mesmo lugar, e é isso que a severidade marca, para
+    quem audita não precisar ler linha por linha.
+
+    O teto de 5 por IP a cada 15 minutos continua valendo por cima: quem
+    insiste colhe 429, que também fica registrado.
+    """
+    try:
+        tentativas = int(await get_redis().get(f"rl:recuperar:{ip}") or 1)
+    except Exception:                                        # noqa: BLE001
+        # O contador é conveniência para a severidade, não a razão do
+        # registro: sem ele a linha ainda tem de nascer.
+        tentativas = 1
+
+    await audit.registrar(
+        db, acao="SENHA_RESET_SEM_CONTA",
+        descricao="Pedido de redefinição para e-mail sem conta ativa",
+        severidade="warn" if tentativas >= 3 else "info",
+        alvo=email, request=request,
+        metadados={"tentativas_na_janela": tentativas},
+    )
+
+
+@router.post("/recuperar", summary="Etapa 1 — enviar link de redefinição")
+async def recuperar(dados: RecuperarIn, request: Request, tarefas: BackgroundTasks,
+                    db: AsyncSession = Depends(get_db)):
     ip = ip_de(request)
     await limitar_taxa(f"rl:recuperar:{ip}", limite=5, janela_s=900)
 
@@ -182,15 +284,17 @@ async def recuperar(dados: RecuperarIn, request: Request, db: AsyncSession = Dep
         await db.execute(select(Usuario).where(Usuario.email == email))
     ).scalar_one_or_none()
 
-    # Resposta idêntica exista ou não a conta — impede enumeração de usuários.
-    resposta = {
-        "mensagem": "Se houver conta vinculada a este e-mail, o código foi enviado.",
-        "expira_em_segundos": settings.OTP_TTL_SECONDS,
-    }
-
     if usuario is None or not usuario.ativo:
+        # Resposta neutra, e **nenhum e-mail**.
+        #
+        # Mandar aviso de "não há conta" para o endereço digitado faria do
+        # sistema um relé de spam e escreveria para quem nunca pediu nada.
+        # Dizer na tela entregaria a lista de quem tem cadastro. Sobra a trilha,
+        # somada ao teto de 5 por IP a cada 15 minutos aplicado acima.
         log.info("Recuperação solicitada para e-mail sem conta ativa: %s", email)
-        return resposta
+        await _registrar_sem_conta(db, email, ip, request)
+        await db.commit()       # o mesmo passo do outro caminho, para o tempo não contar
+        return _resposta_neutra()
 
     # Invalida códigos anteriores ainda abertos
     anteriores = (
@@ -204,94 +308,94 @@ async def recuperar(dados: RecuperarIn, request: Request, db: AsyncSession = Dep
     for t in anteriores:
         t.usado = True
 
-    codigo = gerar_codigo_otp()
+    # Segredo do link, não código de seis dígitos: numa URL não há digitação
+    # para limitar por tentativa, então a defesa é a entropia.
+    segredo = gerar_token_link()
     db.add(TokenRecuperacao(
         usuario_id=usuario.id,
-        codigo_hash=hash_otp(codigo),
-        expira_em=datetime.now(timezone.utc) + timedelta(seconds=settings.OTP_TTL_SECONDS),
+        codigo_hash=hash_otp(segredo),
+        expira_em=datetime.now(timezone.utc) + timedelta(seconds=settings.RESET_LINK_TTL_SECONDS),
         ip_solicitante=ip,
     ))
-
-    entregue, falha = True, ""
-    try:
-        await enviar_codigo_recuperacao(usuario.email, usuario.nome, codigo,
-                                        settings.OTP_TTL_SECONDS // 60)
-    except FalhaNoEnvio as exc:
-        # Não vira erro HTTP: o endpoint responde igual exista ou não a conta,
-        # e um 500 só aqui diria ao curioso que este e-mail está cadastrado.
-        # Quem precisa saber da falha é quem opera, pelo log e pela trilha.
-        entregue, falha = False, str(exc)
-        log.error("Código gerado mas não entregue a %s: %s", usuario.email, falha)
+    # `url_publica`, não `url_local`: este link vai por e-mail para outra
+    # máquina, e ali `localhost` é a máquina de quem recebeu.
+    link = f"{settings.url_publica}/#redefinir={segredo}"
 
     await audit.registrar(
         db, acao="SENHA_RESET", severidade="warn", usuario=usuario,
         alvo=usuario.email, request=request,
-        descricao="Código de redefinição solicitado" if entregue
-                  else "Código de redefinição solicitado, mas o e-mail falhou",
-        metadados={"entregue": entregue, "erro": falha} if not entregue else None,
+        descricao="Link de redefinição gerado",
     )
 
-    if settings.ENV == "development":
-        # Conveniência de desenvolvimento — nunca ativa fora dele.
-        resposta["codigo_debug"] = codigo
-        if not entregue:
-            resposta["erro_envio"] = falha
-    return resposta
+    # Grava já: a tarefa pode rodar antes de `get_db` fechar a transação, e
+    # aí o e-mail sairia com um link que ainda não vale — e, no SQLite, o
+    # registro de falha da tarefa esbarraria no banco travado.
+    await db.commit()
+
+    # Depois da resposta: o tempo do SMTP não pode separar os dois caminhos.
+    tarefas.add_task(_enviar_em_segundo_plano, usuario.email, usuario.nome, link)
+    return _resposta_neutra()
 
 
 # ======================================================================
 # Recuperação de senha — etapa 2
 # ======================================================================
-async def _token_valido(db: AsyncSession, email: str, codigo: str) -> tuple[Usuario, TokenRecuperacao]:
-    usuario = (
-        await db.execute(select(Usuario).where(Usuario.email == email.strip().lower()))
-    ).scalar_one_or_none()
-    if usuario is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido ou expirado.")
+async def _token_do_link(db: AsyncSession, segredo: str) -> tuple[Usuario, TokenRecuperacao]:
+    """Acha o token pelo segredo do link, e com ele o usuário.
 
+    Antes a busca era por e-mail e o código conferido depois, com contagem de
+    tentativas — seis dígitos exigem isso. Aqui o segredo tem 32 bytes de
+    entropia e é procurado direto pelo HMAC, então não há o que adivinhar nem
+    tentativa para contar: ou o link está certo, ou não existe.
+
+    Mensagem única para todos os casos — inexistente, expirado, já usado. Dizer
+    "este link já foi usado" contaria a um estranho que o endereço tem conta.
+    """
+    alvo = hash_otp(segredo)
     token = (
         await db.execute(
             select(TokenRecuperacao)
-            .where(TokenRecuperacao.usuario_id == usuario.id, TokenRecuperacao.usado.is_(False))
+            .where(TokenRecuperacao.codigo_hash == alvo,
+                   TokenRecuperacao.usado.is_(False))
             .order_by(TokenRecuperacao.criado_em.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
 
+    recusa = HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "Link inválido ou expirado. Peça um novo na tela de recuperação.",
+    )
     if token is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nenhum código pendente. Solicite um novo.")
-
+        raise recusa
     if como_utc(token.expira_em) < datetime.now(timezone.utc):
         token.usado = True
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código expirado. Solicite um novo envio.")
+        raise recusa
 
-    if token.tentativas >= settings.OTP_MAX_ATTEMPTS:
-        token.usado = True
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            f"{settings.OTP_MAX_ATTEMPTS} tentativas incorretas. Solicite um novo código.",
-        )
-
-    if not conferir_otp(codigo, token.codigo_hash):
-        token.tentativas += 1
-        restantes = settings.OTP_MAX_ATTEMPTS - token.tentativas
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Código incorreto. {max(restantes, 0)} tentativa(s) restante(s).",
-        )
-
+    usuario = (
+        await db.execute(select(Usuario).where(Usuario.id == token.usuario_id))
+    ).scalar_one_or_none()
+    if usuario is None or not usuario.ativo:
+        raise recusa
     return usuario, token
 
 
-@router.post("/verificar-codigo", summary="Etapa 2 — conferir código")
-async def verificar_codigo(dados: VerificarCodigoIn, request: Request,
-                           db: AsyncSession = Depends(get_db)):
-    await limitar_taxa(f"rl:otp:{ip_de(request)}", limite=15, janela_s=900)
-    usuario, token = await _token_valido(db, dados.email, dados.codigo)
+@router.post("/verificar-link", summary="Etapa 2 — conferir o link recebido")
+async def verificar_link(dados: VerificarLinkIn, request: Request,
+                         db: AsyncSession = Depends(get_db)):
+    """Confere o link antes de mostrar o formulário.
+
+    Sem isto, quem abre um link vencido só descobre depois de escolher e
+    digitar a senha nova duas vezes.
+    """
+    await limitar_taxa(f"rl:link:{ip_de(request)}", limite=15, janela_s=900)
+    usuario, token = await _token_do_link(db, dados.token)
     restante = int((como_utc(token.expira_em) - datetime.now(timezone.utc)).total_seconds())
     return {
         "valido": True,
-        "mensagem": "Código validado. Defina a nova senha.",
+        "email": usuario.email,
+        "nome": usuario.nome,
+        "mensagem": "Link validado. Defina a nova senha.",
         "expira_em_segundos": max(restante, 0),
     }
 
@@ -299,11 +403,11 @@ async def verificar_codigo(dados: VerificarCodigoIn, request: Request,
 # ======================================================================
 # Recuperação de senha — etapa 3
 # ======================================================================
-@router.post("/redefinir-senha", summary="Etapa 3 — gravar nova senha")
+@router.post("/redefinir-senha", summary="Etapa 2 — gravar nova senha")
 async def redefinir_senha(dados: RedefinirSenhaIn, request: Request,
                           db: AsyncSession = Depends(get_db)):
     await limitar_taxa(f"rl:redefinir:{ip_de(request)}", limite=10, janela_s=900)
-    usuario, token = await _token_valido(db, dados.email, dados.codigo)
+    usuario, token = await _token_do_link(db, dados.token)
 
     # Não pode repetir as últimas N senhas
     historico = (

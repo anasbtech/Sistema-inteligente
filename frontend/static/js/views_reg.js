@@ -78,7 +78,7 @@ async function renderFacial(alvo){
         <button class="btn btn-ghost btn-sm" id="fcLimpar" ${f.de||f.ate?'':'hidden'}>Limpar</button>
       </div>
     </div></div>
-  <div class="note" style="margin-bottom:13px">${ico('info',15)}<div>Cada correspondência positiva vincula a captura a um <b>identificador biométrico permanente</b> (BIO-M / BIO-F / BIO-N). O identificador nunca muda entre capturas, e o sexo vem do cadastro da pessoa — não de inferência sobre a imagem.</div></div>
+  <div class="note" style="margin-bottom:13px">${ico('info',15)}<div>Cada correspondência positiva vincula a captura a um <b>identificador biométrico permanente</b> (BIO-M / BIO-F / BIO-N). O identificador não muda entre capturas, e o sexo vem do cadastro da pessoa — não de inferência sobre a imagem. Captura sem correspondência ainda não tem identificador: ela espera a <b>triagem</b>, na Base biométrica, onde vira um BIO-N — que passa a BIO-M ou BIO-F quando a pessoa for cadastrada.</div></div>
   <div class="panel"><div class="panel-bd tight"><div id="fcCorpo">${carregando()}</div></div></div>`;
 
   const carregar = async () => {
@@ -107,7 +107,13 @@ async function renderFacial(alvo){
                 <div class="face-meta"><b>${esc(p.nome)}</b><span>${esc({M:'Masculino',F:'Feminino',N:'Não informado'}[p.sexo])}</span></div></div>`
               : `<span style="color:var(--txt-3)">Não identificada</span><br>
                  <span class="td-ts">abaixo do limiar de ${Math.round((d.limiar_aplicado||0)*100)}%</span>`}</td>
-            <td class="td-id">${p ? esc(p.id_biometrico) : '—'}</td>
+            <td class="td-id">${p ? esc(p.id_biometrico)
+              // Sem cadastro o identificador ainda não existe, e escrever um
+              // aqui afirmaria o que não foi emitido. O que se mostra é para
+              // onde esta captura vai: o prefixo esmaecido diz a faixa, e a
+              // linha abaixo diz que falta alguém triar.
+              : `<span style="color:var(--txt-4)">BIO-N</span><br>
+                 <span class="td-ts">a emitir na triagem</span>`}</td>
             <td>${st ? `<span class="chip ${st.cls}">${esc(st.lbl)}</span>` : '<span class="chip c-gray">Desconhecida</span>'}</td>
             <td>${barraConfianca(d.similaridade, p ? 'var(--green)' : 'var(--amber)')}</td>
             <td><b>${esc(d.camera?d.camera.codigo:'')}</b><br><span class="td-ts">${esc((d.camera?d.camera.nome:'').slice(0,26))}</span></td>
@@ -139,12 +145,22 @@ async function renderObjetos(alvo){
   // motocicleta já cobrem o caso. Continua em ROTULO_OBJ porque a tabela ainda
   // precisa saber traduzi-lo onde ele já foi gravado.
   const classes = Object.entries(ROTULO_OBJ).filter(([k]) => k !== 'veiculo');
+  /* Capacete e arma de fogo não existem no modelo do parque: dependem de um
+     detector próprio, que pode não estar instalado. A opção continua na lista
+     — tirá-la mandaria quem a procura vasculhar a tela — mas diz ali mesmo
+     que não há detector, em vez de devolver lista vazia para sempre e deixar
+     o operador achar que não houve ocorrência. */
+  const semDetector = Object.entries(((APP.cfg || {}).detectores_extras) || {})
+    .filter(([, pronto]) => !pronto).map(([k]) => k);
+  const rotuloClasse = (k, v) => semDetector.includes(k) ? `${v} — sem detector` : v;
+
   const o = FILTRO.objetos, hoje = diaISO(new Date());
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Detecção de objetos</h2><span class="sp"></span>
     <div class="toolbar">
       <select class="inp" id="obClasse"><option value="">Todas as classes</option>
-        ${classes.map(([k,v]) => `<option value="${k}" ${o.classe===k?'selected':''}>${esc(v)}</option>`).join('')}</select>
+        ${classes.map(([k,v]) => `<option value="${k}" ${o.classe===k?'selected':''}
+          ${semDetector.includes(k) ? 'disabled' : ''}>${esc(rotuloClasse(k, v))}</option>`).join('')}</select>
       <select class="inp" id="obCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, o.cam)}</select>
       <div class="periodo">
         <label for="obDe">Período</label>
@@ -434,9 +450,10 @@ async function abrirDeteccao(codigo){
       <div class="split" style="gap:16px">
         <div>
           <div class="eyebrow" style="margin-bottom:7px">Quadro da detecção</div>
-          <div style="border:1px solid var(--line);border-radius:var(--r-m);overflow:hidden;position:relative;background:#000">
-            <canvas id="detBig" style="width:100%;display:block"></canvas>
-            <div class="watermark">SEGURANÇA · ${esc(d.camera?d.camera.codigo:'')} · ${fmtDT(d.ocorrido_em)}</div>
+          <div id="detMold" style="text-align:center">
+            <div style="border:1px solid var(--line);border-radius:var(--r-m);overflow:hidden;background:#000;display:inline-block;line-height:0;max-width:100%">
+              <canvas id="detBig" style="display:block"></canvas>
+            </div>
           </div>
           <p class="hint" style="margin-top:8px">Chave da evidência: <span class="mono">${esc(d.snapshot_key || '—')}</span></p>
         </div>
@@ -483,8 +500,7 @@ async function abrirDeteccao(codigo){
         ? `<button class="btn btn-soft" id="detVincular">${ico('face',14)} Vincular a cadastro</button>
            <button class="btn btn-soft" id="detCadastrar">${ico('db',14)} Cadastrar na base</button>` : ''}
       ${d.camera ? `<button class="btn btn-soft" id="detCam">${ico('live',14)} Ver câmera</button>` : ''}
-      ${podeRevisar ? `<button class="btn btn-danger" id="detFalso">Falso positivo</button>
-                       <button class="btn btn-primary" id="detConf">${ico('check',14)} Confirmar</button>` : ''}
+      ${podeRevisar ? `<button class="btn btn-primary" id="detConf">${ico('check',14)} Confirmar</button>` : ''}
     </div>`;
 
   $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
@@ -492,11 +508,11 @@ async function abrirDeteccao(codigo){
   requestAnimationFrame(() => {
     const big = $('#detBig');
     if(big){
-      const w = Math.round(big.getBoundingClientRect().width);
-      big.style.height = Math.round(w * .6) + 'px';
-      drawSnapshot(big, {codigo:d.codigo, tipo:d.tipo, classe:d.classe, bbox:d.bbox,
-                         cena:(d.camera&&d.camera.cena)||'rua'}, w);
-      carregarRecorte(big, d.codigo);
+      // Medido na moldura, não no canvas: o canvas agora encolhe até o
+      // recorte, e medir nele daria a largura da imagem anterior.
+      const w = Math.round($('#detMold').getBoundingClientRect().width);
+      molduraVazia(big, w, Math.round(w * .6));
+      carregarRecorte(big, d.codigo, w);
     }
   });
 
@@ -509,8 +525,77 @@ async function abrirDeteccao(codigo){
   const bvinc = $('#detVincular');
   if(bvinc) bvinc.onclick = () => vincularCapturaAPessoa(d);
 
+  /* A saída que vale para qualquer registro travado — com alerta ou com
+     pessoa. Preserva o registro, tira da conta de acertos e alimenta a
+     reavaliação do limiar, que é o que de fato corrige o detector. */
+  const marcarFalsoPositivo = async () => {
+    try{
+      await API.revisar(d.codigo, 'Falso positivo');
+      fecharModal();
+      toast('Marcado como falso positivo',
+            `${d.codigo} — registrado na trilha de auditoria.`, 'warn');
+      irPara(APP.view);
+    }catch(e){ erroToast(e); }
+  };
+
   const bdel = $('#detDel');
   if(bdel) bdel.onclick = async () => {
+    /* O que impede a exclusão é dito *antes*, não depois.
+
+       Antes, quem tentasse apagar um registro preso a alerta escrevia o
+       motivo, confirmava, e só então recebia a recusa — com duas saídas
+       sugeridas no texto e nenhuma delas ao alcance, numa outra tela. A regra
+       continua: apagar por baixo de um alerta o deixaria apontando para o
+       vazio. O que muda é que o impedimento aparece quando ainda dá para
+       escolher outro caminho. */
+    const alertas = d.alertas || [];
+    const presoPessoa = !!d.pessoa;
+
+    /* Identificou alguém: não há caminho para apagar, e isso é a regra — o
+       registro pode integrar inquérito. O que se oferece é a revisão. */
+    if(presoPessoa){
+      const ok = await confirmar('Este registro não pode ser apagado',
+        `Ele <b>identificou ${esc(d.pessoa.nome)}</b> e pode integrar inquérito.
+         <br><br>Se a identificação está errada, marque como <b>falso
+         positivo</b>: o registro permanece, deixa de contar como acerto e
+         alimenta a reavaliação do limiar — que é o que corrige o detector.`,
+        {rotulo: podeRevisar ? 'Marcar falso positivo' : 'Entendi'});
+      if(ok && podeRevisar) await marcarFalsoPositivo();
+      return;
+    }
+
+    /* Preso a alerta: aqui existe caminho, e ele precisa ser o verdadeiro.
+       A mensagem antiga mandava "encerrar o alerta antes" — medido, encerrar
+       põe o alerta em RESOLVIDO e **mantém** o vínculo, então a exclusão
+       continuava recusada. O operador fazia o que o sistema pedia e batia na
+       mesma parede. O que libera é apagar o alerta. */
+    if(alertas.length){
+      const lista = alertas.map(c => `<b>${esc(c)}</b>`).join(', ');
+      const escolha = await confirmar('Este registro não pode ser apagado',
+        `Ele gerou ${alertas.length === 1 ? 'o alerta' : 'os alertas'} ${lista},
+         que ${alertas.length === 1 ? 'ficaria' : 'ficariam'} apontando para o vazio.
+         <br><br><b>Apagar tudo</b> remove ${alertas.length === 1 ? 'o alerta' : 'os alertas'}
+         e o registro de uma vez — é o que limpa lixo do detector.
+         <br><br><b>Falso positivo</b> preserva o registro, tira da conta de acertos
+         e alimenta a reavaliação do limiar. Prefira esta quando a detecção
+         existiu mas estava errada.`,
+        {rotulo: 'Apagar tudo', perigo: true,
+         exigeTexto: 'Motivo (vai para a trilha de auditoria)',
+         secundario: podeRevisar ? 'Marcar falso positivo' : null});
+
+      if(escolha === '__secundario__'){ await marcarFalsoPositivo(); return; }
+      if(!escolha) return;
+      try{
+        for(const cod of alertas) await API.excluirAlerta(cod, escolha);
+        await API.removerDeteccao(d.codigo, escolha);
+        fecharModal();
+        toast('Registro e alerta removidos',
+              `${d.codigo} e ${alertas.length} alerta(s) — na trilha de auditoria.`, 'warn');
+        irPara(APP.view);
+      }catch(e){ erroToast(e); }
+      return;
+    }
+
     const motivo = await confirmar('Descartar registro',
       `O registro <b>${esc(d.codigo)}</b> e o seu recorte serão apagados em definitivo. ` +
       `Isto não se desfaz.<br><br>Se a detecção está certa mas você discorda dela, ` +
@@ -537,7 +622,6 @@ async function abrirDeteccao(codigo){
       }catch(e){ erroToast(e); }
     };
     $('#detConf').onclick  = () => revisar('Confirmado');
-    $('#detFalso').onclick = () => revisar('Falso positivo');
   }
 }
 
@@ -554,7 +638,7 @@ async function renderBiometria(alvo){
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Base biométrica</h2><span class="sp"></span>
     <div class="toolbar">
-      <div class="search">${ico('search',14)}<input class="inp" id="bioQ" value="${esc(b.q)}" placeholder="Nome, ID, CPF ou mandado…"></div>
+      <div class="search">${ico('search',14)}<input class="inp" id="bioQ" value="${esc(b.q)}" placeholder="Nome, ID, CPF ou restrição…"></div>
       <select class="inp" id="bioSexo"><option value="">Todos os sexos</option>
         ${['M','F','N'].map(s => `<option value="${s}" ${b.sexo===s?'selected':''}>${ROTULO_SEXO[s]}</option>`).join('')}</select>
       <select class="inp" id="bioStatus"><option value="">Todas as situações</option>
@@ -622,19 +706,119 @@ async function renderBiometria(alvo){
   $('#bioQ').oninput = debounce(() => { PAG.bio = 1; carregar(); }, 350);
   ['bioSexo','bioStatus'].forEach(id => $('#'+id).onchange = () => { PAG.bio = 1; carregar(); });
   const novo = $('#bioNovo'); if(novo) novo.onclick = () => editarPessoa(null);
+
   await carregar();
 }
 
+/* A trilha da pessoa pelo parque.
+
+   Mostra passagens, e não capturas: quem fica diante da câmera gera uma
+   captura por volta do worker — no histórico desta base, mil numa câmera só.
+   O que responde "por onde ela andou" é "esteve na Recepção das 09:12 às
+   09:47", e é isso que o servidor já entrega agrupado. */
+function trilhaHTML(t){
+  if(!t) return '<p class="hint">A trajetória não carregou. O restante da ficha está completo; reabra para tentar de novo.</p>';
+  if(!t.passagens.length) return '<p class="hint">Nenhuma passagem registrada para este identificador.</p>';
+
+  const r = t.resumo;
+  // Uma pessoa vista numa câmera só não tem trajetória — tem um ponto. Dizer
+  // isso é mais útil que desenhar uma linha de um item e deixar quem lê
+  // concluir que o sistema não procurou nas outras.
+  const aviso = r.cameras < 2
+    ? `<div class="note" style="margin-bottom:11px">${ico('info',15)}<div>
+         Esta pessoa só foi reconhecida em <b>uma câmera</b>. Enquanto o
+         template não tiver uma amostra do ângulo das demais, ela continua
+         passando por elas sem ser identificada — a fila de conferência é
+         onde isso se resolve.</div></div>`
+    : '';
+
+  // Onde esteve, antes de quando. A lista de passagens é longa e vem da mais
+  // recente: uma câmera visitada uma única vez fica enterrada nela, e era o
+  // que fazia a ficha dizer "2 câmeras" com a lista aparentando mostrar uma.
+  const porCamera = (t.por_camera || []);
+  return aviso + `
+    <div class="trilha-resumo">
+      <span><b>${fmtNum(r.passagens)}</b> passagens</span>
+      <span><b>${fmtNum(r.cameras)}</b> câmeras</span>
+      <span title="Quadros em que o rosto foi lido e identificado"><b>${fmtNum(r.rostos || 0)}</b> por rosto</span>
+    </div>
+    ${porCamera.length ? `<div class="trilha-locais">
+      ${porCamera.map(c => `<div class="trilha-local">
+        <div class="trilha-local-bd">
+          <b>${esc(c.camera)}</b>
+          <span class="sub">${esc(c.setor || '')} · ${esc(c.camera_codigo)}</span>
+        </div>
+        <div class="trilha-local-num">
+          <span class="mono">${fmtNum(c.passagens)}</span>
+          <span class="sub">passagem${c.passagens === 1 ? '' : 's'}</span>
+        </div>
+        <div class="trilha-local-num">
+          <span class="mono" style="font-size:12px">${fmtNum(c.rostos || 0)}</span>
+          <span class="sub">rostos</span>
+        </div>
+        <div class="trilha-local-quando">
+          <span class="sub mono">${fmtDate(c.primeira)}</span>
+          <span class="sub mono">${fmtDate(c.ultima)}</span>
+        </div>
+      </div>`).join('')}
+    </div>` : ''}
+    <div class="eyebrow" style="margin:14px 0 7px">Passagens, da mais recente</div>
+    <div class="trilha rank-rolavel">
+      ${t.passagens.map(p => `
+        <div class="trilha-item clickable" data-det="${esc(p.codigo)}" style="cursor:pointer">
+          <canvas data-snap="${snapAttr(p)}" width="42" height="53"></canvas>
+          <div class="trilha-bd">
+            <b>${esc(p.camera)}</b>
+            <span class="sub">${esc(p.setor || '')} · ${esc(p.camera_codigo)}</span>
+            <span class="sub mono">${fmtDT(p.inicio)} — ${fmtTime(p.fim)}</span>
+          </div>
+          <div class="trilha-num">
+            <span class="mono">${duracaoCurta(p.duracao_s)}</span>
+            <span class="sub mono">${fmtNum(p.rostos || 0)} rosto${(p.rostos || 0) === 1 ? '' : 's'}</span>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+/* Os quadros em que a pessoa apareceu de corpo, um por linha.
+
+   Complementa a trajetória em vez de repeti-la: lá o agrupamento responde
+   "por onde ela andou", aqui cada linha é um quadro, que é o que responde
+   "mostre-me". Fica em sanfona própria porque a lista é longa e só interessa
+   a quem foi atrás dela. */
+function duracaoCurta(s){
+  if(s < 60) return s + 's';
+  if(s < 3600) return Math.round(s / 60) + 'min';
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+}
+
+
 async function abrirPessoa(idBio){
   const box = abrirModal(`<div class="modal-bd">${carregando()}</div>`, true);
-  let p, capturas;
-  try{
-    [p, capturas] = await Promise.all([API.pessoa(idBio), API.capturasDaPessoa(idBio, 8)]);
-  }catch(e){ box.innerHTML = `<div class="modal-bd">${erroBloco(e)}</div>`; return; }
+  // A ficha é a pessoa; o histórico é complemento. Num `Promise.all`, uma
+  // falha no histórico derrubava a ficha inteira — e, sem prazo, uma chamada
+  // pendurada deixava o modal no "carregando" para sempre, que foi o que o
+  // operador viu como "biométrico que não abre".
+  let p, trajeto;
+  const [rp, rt] = await Promise.allSettled([
+    API.pessoa(idBio), API.trajetoriaDaPessoa(idBio),
+  ]);
+  if(rp.status !== 'fulfilled'){
+    box.innerHTML = `<div class="modal-bd">${erroBloco(rp.reason)}</div>`;
+    return;
+  }
+  p = rp.value;
+  trajeto = rt.status === 'fulfilled' ? rt.value : null;   // null = não deu para carregar
 
   const st = STATUS_PESSOA[p.status] || {};
   const cor = {M:'#35A7DE', F:'#E05F9E', N:'#5F7589'}[p.sexo];
   const sexoMudou = p.sexo !== p.sexo_emissao;
+  // A ficha abre com a trajetória fechada. O cadastro é o que se vem ver; a
+  // trajetória é consulta, e aberta por padrão empurrava os dados da pessoa e
+  // os botões para fora da tela. Fechada é também o estado em que a ficha
+  // cabe inteira sem rolar.
+  const trajetoriaAberta = false;
 
   box.className = 'modal wide';
   box.innerHTML = `
@@ -659,8 +843,8 @@ async function abrirPessoa(idBio){
           <dt>Nascimento</dt><dd class="mono">${p.nascimento ? fmtDate(p.nascimento) : '—'}</dd>
           <dt>CPF</dt><dd class="mono">${esc(p.cpf || '—')}</dd>
           <dt>RG</dt><dd class="mono">${esc(p.rg || '—')}</dd>
-          <dt>Unidade</dt><dd>${esc(p.unidade || '—')}</dd>
-          ${p.mandado ? `<dt>Mandado</dt><dd class="mono" style="color:var(--red)">${esc(p.mandado)}</dd>
+          <dt>Setor</dt><dd>${esc(p.unidade || '—')}</dd>
+          ${p.restricao ? `<dt>Restrição</dt><dd class="mono" style="color:var(--red)">${esc(p.restricao)}</dd>
           <dt>Tipificação</dt><dd>${esc(p.tipificacao)}</dd>
           <dt>Órgão</dt><dd>${esc(p.orgao_expedidor)}</dd>` : ''}
         </dl>
@@ -673,12 +857,17 @@ async function abrirPessoa(idBio){
           <dt>Base legal</dt><dd>${esc(p.base_legal)}</dd>
         </dl>
       </div>
-      <div class="eyebrow" style="margin:17px 0 8px">Histórico de capturas</div>
-      ${capturas.length ? `<div class="rank" style="border:1px solid var(--line-soft);border-radius:var(--r-m)">
-        ${capturas.map(c => `<div class="rank-row clickable" data-det="${esc(c.codigo)}" style="cursor:pointer">
-          <div class="rank-bd"><b>${esc(c.camera)}</b><span class="sub">${fmtDT(c.ocorrido_em)} · ${esc(c.camera_codigo)}</span></div>
-          <span class="mono" style="font-size:12px;color:var(--green)">${pct100(c.similaridade)}</span>
-        </div>`).join('')}</div>` : '<p class="hint">Nenhuma captura registrada para este identificador.</p>'}
+      <div class="sanfona ${trajetoriaAberta ? 'aberta' : ''}" id="pSanfonaTraj">
+        <button type="button" class="sanfona-hd" id="pDobraTraj"
+                aria-expanded="${trajetoriaAberta ? 'true' : 'false'}" aria-controls="pTraj"
+                title="Por onde esta pessoa passou, agrupado em passagens.">
+          <span class="chev">${ico('chev', 14)}</span>
+          <b>Trajetória</b>
+          <span class="chip c-gray mono">${trajeto
+            ? `${trajeto.resumo.cameras} câmera(s)` : '—'}</span>
+        </button>
+        <div class="sanfona-bd" id="pTraj">${trilhaHTML(trajeto)}</div>
+      </div>
     </div>
     <div class="modal-ft">
       <button class="btn btn-ghost" data-close>Fechar</button>
@@ -687,8 +876,19 @@ async function abrirPessoa(idBio){
     </div>`;
 
   $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
-  pintarFaces(box);
+  // Os dois, e não só os rostos: as passagens da trajetória trazem o recorte
+  // da captura, e canvas por pintar fica no padrão do elemento — 300 por 150,
+  // que arrebenta a linha da lista.
+  pintarFaces(box); pintarSnaps(box);
   $$('[data-det]', box).forEach(r => r.onclick = () => { fecharModal(); abrirDeteccao(r.dataset.det); });
+
+  // Quem abre e fecha é a sanfona inteira; o cabeçalho só anuncia o estado.
+  const sanfona = $('#pSanfonaTraj', box), cabecalho = $('#pDobraTraj', box);
+  if(sanfona && cabecalho) cabecalho.onclick = () => {
+    const abrir = cabecalho.getAttribute('aria-expanded') !== 'true';
+    cabecalho.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+    sanfona.classList.toggle('aberta', abrir);
+  };
 
   const be = $('#pEdit'); if(be) be.onclick = () => { fecharModal(); editarPessoa(p.id_biometrico); };
   const ba = $('#pAmostra'); if(ba) ba.onclick = () => enviarFoto(p.id_biometrico);
@@ -738,6 +938,11 @@ async function editarPessoa(idBio, opcoes){
     catch(e){ return erroToast(e); }
   }
   const sexoAtual = p ? p.sexo : 'M';
+  // Mesmo prédio das câmeras. O setor já gravado entra na lista junto, para
+  // não ser trocado em silêncio no primeiro salvamento.
+  let setores = [];
+  try{ setores = (await API.setores(true)).setores || []; }catch(e){}
+  const listaSetores = [...new Set([...setores, ...(p && p.unidade ? [p.unidade] : [])])].sort();
 
   abrirModal(`
     <div class="modal-hd"><h3>${novo ? 'Novo registro biométrico' : 'Editar cadastro'}</h3>
@@ -768,20 +973,20 @@ async function editarPessoa(idBio, opcoes){
           <input class="inp mono" id="pRg" value="${p?esc(p.rg||''):''}" placeholder="00.000.000-0"></div>
         <div class="field"><label for="pAlc">Alcunha (opcional)</label>
           <input class="inp" id="pAlc" value="${p?esc(p.alcunha||''):''}"></div>
-        <div class="field"><label for="pUni">Unidade responsável</label>
-          <select class="inp" id="pUni">${['1º BPM','2º BPM','3º BPM','DHPP','Delegacia Central']
-            .map(u => `<option ${p&&p.unidade===u?'selected':''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="pUni">Setor responsável</label>
+          <select class="inp" id="pUni">${listaSetores
+            .map(s => `<option ${p&&p.unidade===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
         <div class="field full"><label for="pStatus">Situação cadastral</label>
           <select class="inp" id="pStatus">${Object.entries(STATUS_PESSOA)
             .map(([k,v]) => `<option value="${k}" ${p&&p.status===k?'selected':''}>${esc(v.lbl)} — ${esc(v.desc)}</option>`).join('')}</select></div>
-        <div class="field full" id="mandadoBox" hidden>
-          <label for="pMand">Mandado judicial</label>
-          <input class="inp mono" id="pMand" value="${p?esc(p.mandado||''):''}" placeholder="MP-2026/0000">
-          <span class="hint">Obrigatório para a situação “Procurado”. Vincula o alerta ao processo de origem.</span></div>
+        <div class="field full" id="restricaoBox" hidden>
+          <label for="pRestricao">Motivo da restrição</label>
+          <input class="inp" id="pRestricao" value="${p?esc(p.restricao||''):''}" placeholder="Ex.: desligamento com pendência de devolução de crachá">
+          <span class="hint">Obrigatório para “Acesso restrito”. Aparece no alerta, para quem atender saber por quê.</span></div>
         <div class="field full"><label for="pObs">Observações</label>
           <textarea class="inp" id="pObs" placeholder="Informações complementares relevantes à identificação">${p?esc(p.observacoes||''):''}</textarea></div>
       </div>
-      <div class="note" style="margin-top:15px">${ico('shield',15)}<div>O cadastro armazena um <b>template vetorial irreversível</b> (512 dimensões), não a fotografia original. O tratamento é registrado na trilha de auditoria com finalidade, base legal e responsável.</div></div>
+      <div class="note" style="margin-top:15px">${ico('shield',15)}<div>O cadastro armazena um <b>template vetorial irreversível</b> (512 dimensões), não a fotografia original. O tratamento é registrado na trilha de auditoria com finalidade, base legal e responsável, como a LGPD exige.</div></div>
     </div>
     <div class="modal-ft">
       ${!novo ? `<button class="btn btn-danger" id="pDel">${ico('trash',14)} Excluir registro</button>` : ''}
@@ -805,12 +1010,12 @@ async function editarPessoa(idBio, opcoes){
           : `Emitido em ${fmtDate(p.criado_em)} · ${fmtNum(p.total_deteccoes)} captura(s) vinculada(s).`);
     drawBioFace($('#pvFace'), hash32(idPrev), novo ? sx : p.sexo_emissao, 64);
   };
-  const atualizarMandado = () => { $('#mandadoBox').hidden = $('#pStatus').value !== 'PROCURADO'; };
+  const atualizarRestricao = () => { $('#restricaoBox').hidden = $('#pStatus').value !== 'RESTRITO'; };
 
   $('#pSexo').onchange = atualizarPreview;
-  $('#pStatus').onchange = atualizarMandado;
+  $('#pStatus').onchange = atualizarRestricao;
   await atualizarPreview();
-  atualizarMandado();
+  atualizarRestricao();
 
   const bd = $('#pDel');
   if(bd) bd.onclick = async () => {
@@ -844,7 +1049,7 @@ async function editarPessoa(idBio, opcoes){
       nascimento: $('#pNasc').value || null,
       cpf: $('#pCpf').value.trim() || null,
       rg: $('#pRg').value.trim() || null,
-      mandado: $('#pMand').value.trim(),
+      restricao: $('#pRestricao').value.trim(),
       unidade: $('#pUni').value,
       observacoes: $('#pObs').value.trim()
     };

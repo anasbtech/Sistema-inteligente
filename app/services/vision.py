@@ -172,6 +172,10 @@ CATALOGO_ACOES: Tuple[FichaAcao, ...] = (
     # vídeo — que é exatamente o que este sistema não faz. O que ele tem são
     # três sinais de trajetória que coincidiram.
     FichaAcao("briga", "Possível agressão física", 4, exige_continua=True),
+    # Acrescentada em 2026-11-03. Também por trajetória, e pelo mesmo motivo
+    # da briga diz "possível": o que o vídeo mostra é contato seguido de fuga,
+    # não a subtração do objeto. Veja `AnalisadorAcoes._avaliar_roubo`.
+    FichaAcao("roubo", "Possível roubo", 4, exige_continua=True),
     FichaAcao("permanencia", "Permanência prolongada", 2),
     FichaAcao("invasao", "Invasão de perímetro", 4, exige_zona="LINHA"),
     FichaAcao("contrafluxo", "Deslocamento em contrafluxo", 2,
@@ -312,9 +316,14 @@ def detalhe_acao(codigo: str) -> str:
     if codigo == "briga":
         return ("Dispara com duas pessoas sobrepostas, ambas rápidas e "
                 "erráticas por alguns segundos — indício, exige confirmação")
+    if codigo == "roubo":
+        return ("Dispara quando duas pessoas se encostam e, em até "
+                f"{_duracao(settings.ACAO_ROUBO_JANELA_S)}, uma sai em disparada "
+                "enquanto a outra fica — indício, exige confirmação")
     if codigo == "corrida":
-        return ("Dispara quando a pessoa acelera de andar para correr e "
-                "sustenta o ritmo — não basta estar rápido")
+        return ("Dispara quando a pessoa acelera de andar para correr, ou já "
+                "entra em cena correndo, e sustenta o ritmo — quem foi visto "
+                "andando precisa acelerar")
     if codigo == "queda":
         return ("Dispara quando o corpo despenca, fica na horizontal e "
                 "permanece assim — abaixar-se não conta")
@@ -333,6 +342,14 @@ class ObjetoDetectado:
     confianca: float
     bbox: Tuple[int, int, int, int]
     track_id: Optional[int] = None
+    # Só a varredura em ladrilhos viu este corpo — a passada inteira não.
+    #
+    # Importa porque as duas têm custo e cadência diferentes: a passada leva
+    # 1,2s e pode rodar a cada segundo na câmera que está na tela; a varredura
+    # leva mais 3,3s e só cabe uma vez por volta. Sem distinguir a origem, o
+    # laço rápido publicaria a cena sem quem só a varredura acha, e a pessoa
+    # distante piscaria a cada renovação.
+    de_varredura: bool = False
 
     def centro(self) -> Tuple[float, float]:
         x1, y1, x2, y2 = self.bbox
@@ -539,12 +556,19 @@ def fundir_sobrepostas(objetos: Sequence[ObjetoDetectado]) -> List[ObjetoDetecta
                 break
         if engolida is None:
             ficam.append(obj)
-        elif engolida.track_id is None and obj.track_id is not None:
+            continue
+        if engolida.track_id is None and obj.track_id is not None:
             # A trilha vale mais que a caixa que a trouxe. A varredura não
             # rastreia; sem herdar daqui, uma caixa dela cobrindo a do
             # rastreador tiraria do objeto a identidade entre quadros — e com
             # ela a análise de ação, que ignora objeto sem trilha.
             engolida.track_id = obj.track_id
+        # "Só a varredura viu" é afirmação sobre a *pessoa*, não sobre a caixa
+        # que sobreviveu. Quando as duas passadas acharam o mesmo corpo, a
+        # vencedora é a mais confiante — e às vezes é a da varredura. Marcar
+        # essa pessoa como distante faria o laço rápido tratá-la como alguém
+        # que ele não consegue reencontrar, quando consegue a cada segundo.
+        engolida.de_varredura = engolida.de_varredura and obj.de_varredura
     return ficam
 
 
@@ -687,10 +711,11 @@ def _varrer_ladrilhos(modelo, quadro: np.ndarray,
                             imgsz=settings.OBJECT_VARREDURA_IMGSZ,
                             iou=settings.OBJECT_NMS_IOU,
                             classes=indices, verbose=False)
-        achados.extend(
-            obj for obj in _colher(resultados, classes_fora, (x0, y0))
-            if not _na_emenda(obj.bbox, ladrilho, largura, altura)
-        )
+        for obj in _colher(resultados, classes_fora, (x0, y0)):
+            if _na_emenda(obj.bbox, ladrilho, largura, altura):
+                continue
+            obj.de_varredura = True
+            achados.append(obj)
     return achados
 
 
@@ -807,15 +832,39 @@ class Trilha:
     # pouco não vira alerta: um salto de posição isolado é quase sempre o
     # rastreador reatribuindo a trilha, não alguém disparando a correr.
     correndo_desde: Optional[float] = None
+    # Já foi medida abaixo do piso da corrida (andando). Decide se corrida
+    # exige a aceleração ou se a pessoa entrou em cena já correndo.
+    viu_devagar: bool = False
     # Desde quando o corpo está na horizontal, tendo despencado para chegar
     # lá. Quem se abaixa levanta em seguida e zera isto; quem caiu, não.
     caido_desde: Optional[float] = None
+    # Desde quando esta pessoa se afasta em disparada de alguém com quem
+    # acabou de ter contato. Ver `AnalisadorAcoes._avaliar_roubo`.
+    fuga_desde: Optional[float] = None
     # Desde quando esta pessoa anda contra o sentido da zona. Virar-se por um
     # instante, ou recuar para dar passagem, não é contrafluxo.
     contrafluxo_desde: Optional[float] = None
     alertou: Dict[str, float] = field(default_factory=dict)
+    # Largura sobre altura do quadro. Os pontos são guardados em fração da
+    # largura (x) e da altura (y), e a régua do corpo é fração da altura: sem
+    # converter x para a mesma unidade, todo deslocamento horizontal saía
+    # encolhido pela proporção da imagem — 44% menor numa câmera 16:9. Medido
+    # no Avenue: corredor a 2,2 corpos/s aparecia com 1,2, abaixo do piso da
+    # corrida, e nenhuma corrida atravessando a cena disparava.
+    aspecto: float = 1.0
 
-    def registrar(self, x: float, y: float, t: float, altura: float = 0.0) -> None:
+    def registrar(self, x: float, y: float, t: float, altura: float = 0.0,
+                  aspecto: Optional[float] = None) -> None:
+        if aspecto:
+            self.aspecto = float(aspecto)
+        if self.pontos and t - self.pontos[-1][2] > 1.0:
+            # Buraco na trajetória: quem aparece agora com este número pode
+            # ser outra pessoa que entrou onde a anterior estava. Não herda o
+            # "já foi visto devagar" dela — no Avenue (vídeo 04, 15 s) o
+            # corredor herdou o histórico de alguém parado, a corrida passou a
+            # exigir aceleração e ele, que entrou correndo, ficou mudo.
+            self.viu_devagar = False
+            self.correndo_desde = None
         self.pontos.append((x, y, t))
         self.alturas.append(float(altura))
         self.visto_em = t
@@ -827,14 +876,14 @@ class Trilha:
         x0, y0, t0 = self.pontos[-5]
         x1, y1, t1 = self.pontos[-1]
         dt = max(t1 - t0, 1e-3)
-        return float(np.hypot(x1 - x0, y1 - y0) / dt)
+        return float(np.hypot((x1 - x0) * self.aspecto, y1 - y0) / dt)
 
     def direcao(self) -> Optional[Tuple[float, float]]:
         if len(self.pontos) < 6:
             return None
         x0, y0, _ = self.pontos[-6]
         x1, y1, _ = self.pontos[-1]
-        v = np.array([x1 - x0, y1 - y0])
+        v = np.array([(x1 - x0) * self.aspecto, y1 - y0])
         n = float(np.linalg.norm(v))
         return tuple(v / n) if n > 1e-4 else None
 
@@ -854,7 +903,7 @@ class Trilha:
             return 0.0
         x0, y0, _ = self.pontos[-6]
         x1, y1, _ = self.pontos[-1]
-        return float(np.hypot(x1 - x0, y1 - y0) / escala)
+        return float(np.hypot((x1 - x0) * self.aspecto, y1 - y0) / escala)
 
     def caminho(self) -> float:
         """Distância *percorrida* por segundo, somando passo a passo.
@@ -872,7 +921,7 @@ class Trilha:
         soma = 0.0
         pts = list(self.pontos)[-9:]
         for (x0, y0, _), (x1, y1, _) in zip(pts, pts[1:]):
-            soma += float(np.hypot(x1 - x0, y1 - y0))
+            soma += float(np.hypot((x1 - x0) * self.aspecto, y1 - y0))
         dt = max(pts[-1][2] - pts[0][2], 1e-3)
         return soma / dt
 
@@ -889,7 +938,7 @@ class Trilha:
         escala = self.escala()
         if escala <= 1e-3:
             return 0.0
-        return float(np.hypot(x - self.ancora[0], y - self.ancora[1]) / escala)
+        return float(np.hypot((x - self.ancora[0]) * self.aspecto, y - self.ancora[1]) / escala)
 
     def caminho_corporal(self) -> float:
         """`caminho` na régua do próprio corpo — alturas por segundo.
@@ -913,11 +962,22 @@ class Trilha:
         que a corrida é dirigida. Devolve de 0 (reto) a 1 (invertendo a cada
         passo).
         """
-        if len(self.pontos) < 6:
+        # Só o trecho recente e contínuo. Pela trajetória inteira, o número
+        # que passou de uma pessoa parada (tremor da caixa, direções ao acaso)
+        # para um corredor carregava a agitação dela: no Avenue (vídeo 04,
+        # 16 s) o corredor saía com 0,46 e a corrida, que exige até 0,35,
+        # ficava muda.
+        pts = list(self.pontos)
+        for i in range(len(pts) - 1, 0, -1):
+            if pts[i][2] - pts[i - 1][2] > 1.0:
+                pts = pts[i:]
+                break
+        pts = pts[-10:]
+        if len(pts) < 6:
             return 0.0
         passos = []
-        for (x0, y0, _), (x1, y1, _) in zip(self.pontos, list(self.pontos)[1:]):
-            v = np.array([x1 - x0, y1 - y0])
+        for (x0, y0, _), (x1, y1, _) in zip(pts, pts[1:]):
+            v = np.array([(x1 - x0) * self.aspecto, y1 - y0])
             n = float(np.linalg.norm(v))
             if n > 1e-4:
                 passos.append(v / n)
@@ -967,10 +1027,18 @@ class Trilha:
                 continue
             if dt <= 1e-3:
                 continue
-            passos.append(float(np.hypot(x1 - x0, y1 - y0) / dt / escala))
-        if len(passos) < 5:
+            passos.append(float(np.hypot((x1 - x0) * self.aspecto, y1 - y0) / dt / escala))
+        # Quatro passos (~0,9 s na rajada). Com cinco, o adulto que atravessa
+        # a cena em 2 s saía do quadro antes de a corrida se confirmar.
+        if len(passos) < 4:
             return 0.0, 0.0
-        return float(np.mean(passos[-3:])), float(np.mean(passos[-7:-3]))
+        # Mediana, não média: um passo isolado enorme é quase sempre o
+        # rastreio trocando o número entre duas pessoas próximas, não alguém
+        # disparando. Medido no Avenue (vídeo 04, 7,7 s): dois pedestres a
+        # 0,8 corpo/s ao fundo trocaram de número, e o salto de um passo só
+        # levou a média a 2,35 e disparou corrida. Quem corre de verdade tem
+        # todos os passos rápidos, e a mediana não muda nada para ele.
+        return float(np.median(passos[-3:])), float(np.median(passos[-7:-3]))
 
     def despencou(self, salto_max_s: float = 1.0) -> float:
         """Quanto o corpo desceu, em alturas de corpo por segundo.
@@ -1082,9 +1150,42 @@ class RastreioPorPosicao:
         self.iou_minimo = (settings.ACAO_RASTREIO_IOU
                            if iou_minimo is None else iou_minimo)
         self.ttl_s = ttl_s
+        self.seguir_s = settings.ACAO_RASTREIO_SEGUIR_S
+        self.alcance = settings.ACAO_RASTREIO_ALCANCE
         # track_id -> (classe, caixa, visto_em)
         self._conhecidos: Dict[int, Tuple[str, Tuple[int, int, int, int], float]] = {}
+        # track_id -> velocidade do centro em px/s, só enquanto os quadros
+        # vêm próximos (rajada). Ver `_custo_por_movimento`.
+        self._velocidade: Dict[int, Tuple[float, float]] = {}
         self._proximo = 1
+
+    def _custo_por_movimento(self, obj: ObjetoDetectado, tid: int,
+                             caixa: Tuple[int, int, int, int], dt: float) -> Optional[float]:
+        """Distância, em alturas de corpo, entre a caixa e onde a pessoa deveria estar.
+
+        Só vale com quadros próximos (`seguir_s`): entre visitas do rodízio,
+        separadas por dezenas de segundos, prever posição seria inventar — ali
+        a pergunta continua sendo a sobreposição.
+
+        A altura parecida é exigida porque a régua é o corpo: uma caixa do
+        dobro do tamanho, perto do ponto previsto, é outra pessoa mais perto da
+        lente, não a mesma.
+        """
+        if dt <= 0 or dt > self.seguir_s:
+            return None
+        h_antes = max(caixa[3] - caixa[1], 1)
+        h_agora = max(obj.bbox[3] - obj.bbox[1], 1)
+        # 25% de folga: o corredor do Avenue varia menos de 10% entre
+        # quadros; com 50%, pedestres de 128 e 88 px trocavam de número e a
+        # troca virava velocidade de corrida.
+        if not 0.75 <= h_agora / h_antes <= 1.33:
+            return None
+        vx, vy = self._velocidade.get(tid, (0.0, 0.0))
+        px = (caixa[0] + caixa[2]) / 2 + vx * dt
+        py = (caixa[1] + caixa[3]) / 2 + vy * dt
+        cx, cy = obj.centro()
+        dist = float(np.hypot(cx - px, cy - py)) / max(h_antes, h_agora)
+        return dist if dist <= self.alcance else None
 
     def _expirar(self, agora: float) -> None:
         mortos = [tid for tid, (_, _, visto) in self._conhecidos.items()
@@ -1102,15 +1203,26 @@ class RastreioPorPosicao:
         # com uma dezena de objetos por quadro, a diferença para um pareamento
         # ótimo não paga a complexidade — e o empate que importaria é entre
         # duas pessoas encostadas, que a fusão de caixas já resolveu antes.
+        #
+        # Um custo só para os dois critérios, de 0 (certeza) para cima:
+        # `1 - IoU` para a sobreposição, distância ao ponto previsto para o
+        # movimento. Vale o menor dos dois — quem anda devagar casa pela
+        # sobreposição como sempre, quem corre casa pela previsão.
         candidatos = []
         for i, obj in enumerate(objetos):
-            for tid, (classe, caixa, _) in self._conhecidos.items():
+            for tid, (classe, caixa, visto) in self._conhecidos.items():
                 if classe != obj.classe:
                     continue
+                custos = []
                 s = iou(obj.bbox, caixa)
                 if s >= self.iou_minimo:
-                    candidatos.append((s, i, tid))
-        candidatos.sort(key=lambda c: -c[0])
+                    custos.append(1.0 - s)
+                m = self._custo_por_movimento(obj, tid, caixa, t - visto)
+                if m is not None:
+                    custos.append(m)
+                if custos:
+                    candidatos.append((min(custos), i, tid))
+        candidatos.sort(key=lambda c: c[0])
 
         casados_obj: set = set()
         casados_tid: set = set()
@@ -1127,7 +1239,22 @@ class RastreioPorPosicao:
                 self._proximo += 1
 
         for obj in objetos:
+            anterior = self._conhecidos.get(obj.track_id)
+            if anterior is not None and 0 < t - anterior[2] <= self.seguir_s:
+                (x0, y0), (x1, y1) = (
+                    ((anterior[1][0] + anterior[1][2]) / 2, (anterior[1][1] + anterior[1][3]) / 2),
+                    obj.centro())
+                dt = t - anterior[2]
+                nova = ((x1 - x0) / dt, (y1 - y0) / dt)
+                vx, vy = self._velocidade.get(obj.track_id, nova)
+                # Média com a anterior: uma caixa mal cortada num quadro não
+                # pode jogar a previsão seguinte para longe.
+                self._velocidade[obj.track_id] = ((vx + nova[0]) / 2, (vy + nova[1]) / 2)
+            else:
+                self._velocidade.pop(obj.track_id, None)
             self._conhecidos[obj.track_id] = (obj.classe, obj.bbox, t)
+        for tid in [k for k in self._velocidade if k not in self._conhecidos]:
+            self._velocidade.pop(tid, None)
         return list(objetos)
 
 
@@ -1166,6 +1293,14 @@ class AnalisadorAcoes:
         self.duracao_briga = settings.ACAO_BRIGA_DURACAO_S
         # Desde quando cada par está colado e agitado.
         self._briga_desde: Dict[Tuple[int, int], float] = {}
+        # Roubo: contato, fuga logo depois e quem ficou para trás.
+        self.proximidade_roubo = settings.ACAO_ROUBO_PROXIMIDADE
+        self.janela_roubo = settings.ACAO_ROUBO_JANELA_S
+        self.afastamento_roubo = settings.ACAO_ROUBO_AFASTAMENTO
+        self.vantagem_roubo = settings.ACAO_ROUBO_VANTAGEM
+        # Último contato de cada pessoa: track_id -> (com quem, início, fim).
+        self._contato: Dict[int, Tuple[int, float, float]] = {}
+        self._aspecto = 1.0
         self.seg_permanencia = (settings.ACAO_PERMANENCIA_S
                                 if seg_permanencia is None else seg_permanencia)
         self.raio_permanencia = settings.ACAO_PERMANENCIA_RAIO
@@ -1333,7 +1468,7 @@ class AnalisadorAcoes:
                 continue                       # venceu: deixa de represar
             vivos.append(registro)
             if cls == classe and escala > 1e-3 \
-                    and float(np.hypot(x - ax, y - ay)) / escala <= self.raio_permanencia:
+                    and float(np.hypot((x - ax) * self._aspecto, y - ay)) / escala <= self.raio_permanencia:
                 repetido = True
         self._permanencia_em = vivos
         return repetido
@@ -1393,9 +1528,17 @@ class AnalisadorAcoes:
         ao mesmo tempo e todas pareceriam correr de uma vez.
         """
         ritmo, antes = trilha.arranque()
+        # Quem foi visto andando precisa da aceleração; quem nunca foi visto
+        # devagar e já aparece acima do piso entrou em cena correndo — é o
+        # caso do Avenue (e da vida real: quem foge não para na porta para
+        # acelerar diante da câmera). Antes esse caso ficava mudo, e nenhuma
+        # das corridas do dataset disparava.
+        if 0 < ritmo < self.ritmo_corrida:
+            trilha.viu_devagar = True
+        subita = (ritmo - antes >= self.salto_corrida) or not trilha.viu_devagar
         correndo = (not camera_moveu
                     and ritmo >= self.ritmo_corrida
-                    and ritmo - antes >= self.salto_corrida
+                    and subita
                     and trilha.agitacao() <= self.agitacao_corrida)
         if not correndo:
             trilha.correndo_desde = None
@@ -1403,6 +1546,12 @@ class AnalisadorAcoes:
 
         trilha.correndo_desde = trilha.correndo_desde or t
         if t - trilha.correndo_desde < self.duracao_corrida:
+            return
+        # Quem corre logo depois de encostar em alguém pode ser o roubo, que
+        # se confirma um ou dois quadros depois. Alertar corrida agora faria
+        # a mesma cena virar duas ocorrências. Se não for roubo — os dois
+        # saíram correndo juntos —, a corrida sai quando o contato vencer.
+        if self.ativa("roubo") and obj.track_id in self._contato:
             return
         # Por último, porque marca a trilha: conferir o cooldown antes de a
         # corrida estar confirmada gastaria o alerta num indício que ainda
@@ -1496,6 +1645,9 @@ class AnalisadorAcoes:
         zonas = zonas or []
         # Uma leitura do relógio por volta: dentro do laço, duas pessoas no
         # mesmo quadro podiam cair em lados diferentes da virada do minuto.
+        # Proporção da imagem, para as distâncias saírem na régua do corpo
+        # também na horizontal — ver `Trilha.aspecto`.
+        self._aspecto = largura / max(altura, 1)
         self._fora_de_horario = self.ativa("fora_de_horario") and fora_do_horario(
             inicio=self.horario_inicio, fim=self.horario_fim)
 
@@ -1518,7 +1670,8 @@ class AnalisadorAcoes:
                 self.trilhas[obj.track_id] = trilha
             anterior = (trilha.pontos[-1][0], trilha.pontos[-1][1]) if trilha.pontos else None
             _, topo, _, base = obj.bbox
-            trilha.registrar(nx, ny, t, abs(base - topo) / max(altura, 1))
+            trilha.registrar(nx, ny, t, abs(base - topo) / max(altura, 1),
+                             largura / max(altura, 1))
 
             if obj.classe == "pessoa":
                 pessoas_xy.append((nx, ny))
@@ -1663,7 +1816,131 @@ class AnalisadorAcoes:
             eventos += self._avaliar_briga(objetos, largura, altura, t,
                                            camera_moveu)
 
+        if self.ativa("roubo"):
+            roubos = self._avaliar_roubo(objetos, t, camera_moveu)
+            if roubos:
+                # Quem fugiu também correu, e a corrida já teria saído no
+                # mesmo quadro. Dois alertas para o mesmo fato fazem o
+                # operador abrir duas fichas para olhar uma cena só.
+                fugitivos = {e.track_id for e in roubos}
+                eventos = [e for e in eventos
+                           if not (e.classe == "corrida" and e.track_id in fugitivos)]
+                eventos += roubos
+
         self._limpar(t)
+        return eventos
+
+    def _avaliar_roubo(self, objetos, t: float,
+                       camera_moveu: bool = False) -> List[EventoAcao]:
+        """Contato entre duas pessoas e, logo depois, uma delas em fuga.
+
+        Nenhum modelo deste sistema reconhece "roubo", e o vídeo não mostra o
+        objeto mudando de mão com nitidez que sustente afirmar isso. O que ele
+        mostra é a **assinatura** do roubo de rua — a abordagem colada, o
+        puxão, a fuga —, e é ela que esta heurística procura:
+
+        * **contato**: as caixas das duas pessoas se sobrepõem. Conversar lado
+          a lado não basta.
+        * **fuga logo depois**, dentro de `janela_roubo`: uma delas dispara,
+          na régua da corrida — rápida *e* dirigida. Oscilar no lugar é briga,
+          não fuga.
+        * **afastamento**: quem fugiu já está longe de quem ficou. Sem isto, a
+          caixa trocando de dono entre dois corpos colados parece fuga.
+        * **quem ficou está bem mais devagar**. É o que separa de dois que se
+          encontram e saem correndo juntos.
+
+        Por alguns décimos de segundo, como a corrida: um salto de posição
+        isolado é quase sempre o rastreador, não alguém fugindo.
+
+        Erra para os dois lados, e por isso o rótulo diz "possível": o
+        esbarrão seguido de pressa entra; a perseguição em que a vítima corre
+        tão rápido quanto quem fugiu, não. Depende da rajada de quadros.
+        """
+        pessoas = [o for o in objetos
+                   if o.classe == "pessoa" and o.track_id is not None]
+        if camera_moveu:
+            # Com a imagem andando, todos parecem disparar de uma vez — e o
+            # contato que houver é o de antes do tranco, que segue valendo.
+            for o in pessoas:
+                trilha = self.trilhas.get(o.track_id)
+                if trilha is not None:
+                    trilha.fuga_desde = None
+            return []
+
+        # 1. Contatos deste quadro. O início é preservado enquanto o mesmo par
+        #    seguir encostado, para o alerta poder dizer quanto durou.
+        encostados = set()
+        for i, a in enumerate(pessoas):
+            for b in pessoas[i + 1:]:
+                if ios(a.bbox, b.bbox) < self.proximidade_roubo:
+                    continue
+                for eu, outro in ((a, b), (b, a)):
+                    anterior = self._contato.get(eu.track_id)
+                    inicio = (anterior[1] if anterior and anterior[0] == outro.track_id
+                              else t)
+                    self._contato[eu.track_id] = (outro.track_id, inicio, t)
+                    encostados.add(eu.track_id)
+
+        # Contato velho não explica a pressa de agora.
+        for tid in [k for k, (_, _, fim) in self._contato.items()
+                    if t - fim > self.janela_roubo]:
+            self._contato.pop(tid, None)
+
+        # 2. Quem saiu de um contato recente em disparada.
+        eventos: List[EventoAcao] = []
+        for obj in pessoas:
+            trilha = self.trilhas.get(obj.track_id)
+            if trilha is None:
+                continue
+            contato = self._contato.get(obj.track_id)
+            if contato is None or obj.track_id in encostados:
+                trilha.fuga_desde = None
+                continue
+            parceiro_id, inicio, fim = contato
+            parceiro = self.trilhas.get(parceiro_id)
+            if parceiro is None or not parceiro.pontos:
+                trilha.fuga_desde = None
+                continue
+
+            ritmo, _ = trilha.arranque()
+            ritmo_parceiro, _ = parceiro.arranque()
+            escala = trilha.escala()
+            x, y, _ = trilha.pontos[-1]
+            px, py, _ = parceiro.pontos[-1]
+            afastou = (escala > 1e-3
+                       and float(np.hypot((x - px) * trilha.aspecto, y - py)) / escala
+                       >= self.afastamento_roubo)
+            fugindo = (ritmo >= self.ritmo_corrida
+                       and trilha.agitacao() <= self.agitacao_corrida
+                       and ritmo - ritmo_parceiro >= self.vantagem_roubo
+                       and afastou)
+            if not fugindo:
+                trilha.fuga_desde = None
+                continue
+
+            trilha.fuga_desde = trilha.fuga_desde or t
+            if t - trilha.fuga_desde < self.duracao_corrida:
+                continue
+            if not self._pode_alertar(trilha, "roubo", t):
+                continue
+            # A outra pessoa é a mesma ocorrência: sem isto, um segundo
+            # alerta sairia se ela, depois, corresse atrás.
+            parceiro.alertou["roubo"] = t
+            # E a corrida de quem fugiu é este mesmo fato.
+            trilha.alertou["corrida"] = t
+            self._contato.pop(obj.track_id, None)
+            self._contato.pop(parceiro_id, None)
+
+            eventos.append(EventoAcao(
+                "roubo", ROTULO_ACAO["roubo"],
+                confianca=float(np.clip(0.5 + (ritmo - self.ritmo_corrida) / 5.0,
+                                        0.5, 0.8)),
+                severidade=SEVERIDADE_ACAO["roubo"],
+                # Do primeiro contato até a fuga confirmada: é o tempo da
+                # abordagem inteira, que é o que quem revisa vai procurar.
+                duracao_s=max(1, int(t - inicio)), envolvidos=2,
+                bbox=obj.bbox, track_id=obj.track_id,
+            ))
         return eventos
 
     def _briga_candidata(self, trilha: Optional[Trilha]) -> bool:

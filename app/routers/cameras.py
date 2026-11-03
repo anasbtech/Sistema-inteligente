@@ -15,7 +15,8 @@ from app.config import settings
 from app.database import get_db
 from app.deps import exige
 from app.models import Camera, StatusCamera, Usuario, Zona
-from app.schemas import CREDENCIAL_OCULTA, CameraCreate, CameraOut, CameraUpdate, PTZComando, ZonaIn
+from app.schemas import CameraCreate, CameraOut, CameraUpdate, PTZComando, ZonaIn
+from app.security import CREDENCIAL_OCULTA
 from app.services.vision import FICHA_ACAO, janela_horario
 
 router = APIRouter(prefix="/cameras", tags=["Câmeras"])

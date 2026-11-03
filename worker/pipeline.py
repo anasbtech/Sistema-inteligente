@@ -23,7 +23,7 @@ import httpx
 import numpy as np
 
 from app.config import settings
-from app.security import hash_evidencia
+from app.security import hash_evidencia, mascarar_credencial
 from app.services import face_engine
 from app.services.vision import (
     AnalisadorAcoes, detectar_objetos, familia_de, ponto_em_poligono,
@@ -45,6 +45,9 @@ class ConfigCamera:
     analitico_facial: bool = True
     analitico_objeto: bool = True
     analitico_acao: bool = False
+    # Quais ações esta câmera vigia. `None` é "todas" — vale para o worker
+    # avulso, apontado a uma câmera sem cadastro.
+    acoes_ativas: list = None
     zonas: list = None
 
     @classmethod
@@ -57,6 +60,7 @@ class ConfigCamera:
             analitico_facial=dados.get("analitico_facial", True),
             analitico_objeto=dados.get("analitico_objeto", True),
             analitico_acao=dados.get("analitico_acao", False),
+            acoes_ativas=dados.get("acoes_ativas"),
             zonas=dados.get("zonas", []),
         )
 
@@ -69,6 +73,13 @@ class LeitorRTSP:
 
     def __init__(self, url: str, reconectar_s: float = 5.0) -> None:
         self.url = url
+        # O que pode ir para o log. A URL das 26 câmeras deste parque carrega
+        # a senha de administrador embutida, e as duas linhas abaixo a
+        # escreviam inteira a cada reconexão: encontradas 4 ocorrências com
+        # usuário e senha em claro em `logs/.worker.err.log`, de setembro.
+        # Mascarado ainda diz host, porta e caminho — que é o que serve para
+        # diagnosticar qual câmera caiu.
+        self.url_log = mascarar_credencial(url)
         self.reconectar_s = reconectar_s
         self.cap: Optional[cv2.VideoCapture] = None
         self._abrir()
@@ -79,7 +90,7 @@ class LeitorRTSP:
         self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.cap.isOpened():
-            log.warning("Não abriu o stream %s", self.url)
+            log.warning("Não abriu o stream %s", self.url_log)
 
     def ler(self) -> Optional[np.ndarray]:
         if self.cap is None or not self.cap.isOpened():
@@ -88,7 +99,7 @@ class LeitorRTSP:
             return None
         ok, quadro = self.cap.read()
         if not ok:
-            log.warning("Quadro perdido em %s — reconectando", self.url)
+            log.warning("Quadro perdido em %s — reconectando", self.url_log)
             time.sleep(self.reconectar_s)
             self._abrir()
             return None
@@ -635,6 +646,10 @@ class PipelineCamera:
             await self._publicar_caixas(objetos, faces, largura, altura)
 
             if self.cfg.analitico_acao and objetos:
+                # Relido a cada quadro: a configuração da câmera muda pela
+                # tela e o worker relê a dele no ciclo seguinte.
+                self.acoes.acoes_ativas = (set(self.cfg.acoes_ativas)
+                                           if self.cfg.acoes_ativas is not None else None)
                 eventos = self.acoes.atualizar(objetos, largura, altura, self.cfg.zonas)
                 for ev in eventos:
                     await self._enviar({

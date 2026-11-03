@@ -82,7 +82,8 @@ const ROTULO_OBJ = {
    do rótulo — filtro de registros, linha do alerta, ficha da detecção. */
 const ROTULO_ACAO_UI = {
   corrida:'Corrida súbita', queda:'Queda de pessoa', aglomeracao:'Aglomeração',
-  briga:'Possível agressão física', permanencia:'Permanência prolongada',
+  briga:'Possível agressão física', roubo:'Possível roubo',
+  permanencia:'Permanência prolongada',
   invasao:'Invasão de perímetro', contrafluxo:'Deslocamento em contrafluxo',
   abandono:'Abandono de objeto', vandalismo:'Dano ao patrimônio', fogo:'Fogo',
   area_restrita:'Pessoa em área restrita',

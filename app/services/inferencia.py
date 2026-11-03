@@ -130,6 +130,31 @@ class Inferencia:
         # própria volta.
         self._cameras_cache: list = []
         self._task_sobreposicao: Optional[asyncio.Task] = None
+        # De quanto em quanto tempo cada câmera é *de fato* republicada —
+        # medido, não deduzido. É o número de que a validade da caixa depende,
+        # e deduzi-lo do rodízio errava para os dois lados ao mesmo tempo: ver
+        # `_validade_de`.
+        self._intervalo_cam: Dict[str, float] = {}
+        # Quem só a varredura em ladrilhos achou na última volta, por câmera.
+        # A varredura custa 3,3s contra 1,2s da passada inteira, então o laço
+        # curto não a roda — e sem lembrar o que ela achou, a pessoa distante
+        # piscaria uma vez por volta.
+        self._distantes: Dict[str, Tuple[float, list]] = {}
+        # Rastreio de curto intervalo, só para a sobreposição de quem está na
+        # tela. Separado do `_rastreios` da análise de ação de propósito: lá o
+        # salto entre duas amostras é de uma volta inteira, aqui é de pouco
+        # mais de um segundo, e são escalas em que a associação por posição
+        # quer dizer coisas diferentes.
+        self._rastreio_tela: Dict[str, vision.RastreioPorPosicao] = {}
+        # Onde está o nome de cada pessoa reconhecida e sob qual corpo ele
+        # ancora. A tarja fica na caixa do rosto, e rosto só é lido na volta
+        # completa: sem âncora, o nome sumiria na primeira renovação do laço
+        # curto e voltaria na volta seguinte — piscando.
+        self._ancoras: Dict[str, list] = {}
+        # Por onde a rodada seguinte do laço curto recomeça. Com mais câmeras
+        # na tela que o teto, fatiar sempre do começo da lista deixava as
+        # últimas fora do laço para sempre.
+        self._vez_sobreposicao = 0
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
@@ -239,26 +264,51 @@ class Inferencia:
                 self.ultima_falha = f"{cam.codigo}: {exc}"
                 log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
 
+    def _medir_intervalo(self, codigo: str, gasto: float) -> None:
+        """Quanto tempo passou entre as duas últimas publicações desta câmera.
+
+        Sobe na hora e desce pela metade a cada publicação, pela mesma razão
+        do ciclo: alongar tarde deixa a caixa piscar enquanto a máquina
+        enche, e encurtar cedo devolve o fantasma assim que ela alivia.
+        """
+        anterior = self._intervalo_cam.get(codigo)
+        self._intervalo_cam[codigo] = (
+            gasto if anterior is None else max(gasto, (anterior + gasto) / 2)
+        )
+
     def _validade_de(self, codigo: str) -> float:
         """Até quando a sobreposição desta câmera ainda descreve a cena.
 
-        Não é o ciclo: é o intervalo entre duas visitas *a esta câmera*. A
-        câmera com espectador volta `INFERENCIA_REVISITAS` vezes por volta,
-        então sua cena se renova muito antes das outras — e publicar a
-        validade da volta inteira fazia a caixa de quem já saiu ficar de pé
-        por minutos numa câmera reolhada a cada quinze segundos.
+        É o intervalo observado entre duas publicações *desta* câmera, e não
+        uma dedução a partir do rodízio. A dedução antiga — ciclo dividido
+        por `1 + INFERENCIA_REVISITAS` sempre que havia espectador — errava
+        para os dois lados ao mesmo tempo, porque o orçamento de revisitas é
+        repartido entre todas as câmeras em tela:
+
+        * **Uma tela aberta.** As seis revisitas vão todas para ela, e o laço
+          curto ainda a republica a cada poucos segundos. A validade saía em
+          dezenas de segundos para uma cena que se renova em dois: a caixa de
+          quem saiu ficava de pé muito além do necessário.
+        * **Mosaico 4×4.** Dezesseis câmeras dividem as mesmas seis
+          revisitas, então dez delas ganham zero e são vistas uma vez por
+          volta. A validade seguia calculada como se fossem sete visitas, e
+          saía sete vezes mais curta que o intervalo real — a caixa sumia e
+          voltava, que é a oscilação que aparece na tela.
+
+        Medir dispensa adivinhar: o intervalo observado já embute o rodízio,
+        o laço curto, o teto de câmeras e a câmera que falhou e nem publicou.
 
         O dobro do intervalo, e não o intervalo exato, porque uma volta pode
         demorar mais que a anterior: apertado demais, a caixa pisca entre
         duas visitas. Esta é a folga mínima que não devolve o fantasma.
         """
-        leitor = video._leitores.get(codigo)
-        revisitas = (settings.INFERENCIA_REVISITAS
-                     if leitor is not None and leitor.exibindo else 0)
-        intervalo = self.ciclo_real / (1 + revisitas)
-        return round(max(4.0, intervalo * 2.0), 1)
+        # Primeira publicação: ainda não há intervalo observado, e o da volta
+        # é a única estimativa em mãos. A segunda já corrige.
+        medido = self._intervalo_cam.get(codigo, self.ciclo_real)
+        return round(max(4.0, medido * 2.0), 1)
 
-    async def _publicar_caixas(self, codigo: str, caixas: list) -> None:
+    async def _publicar_caixas(self, codigo: str, caixas: list,
+                               agora: Optional[float] = None) -> None:
         """Publica a sobreposição e guarda o que foi publicado.
 
         A validade vai junto porque só o worker sabe quando volta a esta
@@ -267,12 +317,21 @@ class Inferencia:
         Guardar a mesma carga é o que permite a tela abrir já marcada. O
         WebSocket entrega o que vier daqui para a frente; quem chega no meio
         precisa de algo que diga o que está em cena *agora*.
+
+        `agora` existe para o teste poder percorrer minutos sem esperá-los —
+        a validade é função do tempo entre duas publicações, e sem controlar
+        o relógio não há como verificá-la. Mesmo acordo de
+        `RastreioPorPosicao.atribuir`.
         """
+        agora = time.monotonic() if agora is None else agora
+        anterior = self._ultimas_caixas.get(codigo)
+        if anterior is not None:
+            self._medir_intervalo(codigo, agora - anterior["em"])
         carga = {
             "camera_codigo": codigo,
             "caixas": caixas,
             "validade_s": self._validade_de(codigo),
-            "em": time.monotonic(),
+            "em": agora,
         }
         self._ultimas_caixas[codigo] = carga
         await publicar("quadro_ao_vivo", carga)
@@ -302,9 +361,9 @@ class Inferencia:
     async def _loop_sobreposicao(self) -> None:
         """Laço curto que só renova a marcação do que está na tela.
 
-        A volta completa leva perto de dois minutos porque cada câmera paga a
-        varredura em ladrilhos: medido nesta máquina, 1.295 ms a passada
-        inteira contra 4.989 ms com a varredura — ela é três quartos do custo.
+        A volta completa é longa porque cada câmera paga a varredura em
+        ladrilhos: medido nos 23 quadros deste parque, 1.231 ms a passada
+        inteira contra 4.540 ms com a varredura — ela é 73% do custo.
 
         Para *saber quem está em cena agora* a varredura não é necessária: ela
         existe para achar quem está longe demais para a passada inteira. Este
@@ -312,12 +371,13 @@ class Inferencia:
         publica a sobreposição — não registra nada, não roda facial nem ação.
 
         É o que faz a caixa sumir logo depois de a pessoa sair. Com uma tela
-        aberta a marcação se renova a cada ~1,3s; com nove, a cada ~12s, em
-        vez dos ~50s que a revisita no rodízio alcançava.
+        aberta a marcação se renova a cada ~2s; com nove, a cada ~12s, em vez
+        dos minutos que o rodízio sozinho alcançava.
 
-        O preço, e é declarado: entre duas passadas completas, quem só a
-        varredura acha pode ficar sem caixa. Em tela de mosaico essa pessoa
-        tem poucos pixels, e o rodízio continua cobrindo-a.
+        O que a passada curta não vê vem lembrado da volta, em vez de sumir:
+        quem só a varredura achou (`_distantes_de`) e o nome de quem o facial
+        reconheceu (`_rostos_ancorados`). Sem isso a pessoa distante e a tarja
+        do nome piscariam uma vez por volta.
         """
         await asyncio.sleep(8)
         while True:
@@ -329,32 +389,132 @@ class Inferencia:
                 log.warning("Falha ao renovar sobreposição: %s", exc)
             await asyncio.sleep(settings.INFERENCIA_SOBREPOSICAO_S)
 
+    def _fila_da_renovacao(self, vistas: list) -> list:
+        """Quais câmeras em tela esta rodada atende, em rodízio.
+
+        Fatiar sempre do começo da lista é o que fazia tile nunca ganhar
+        caixa: no mosaico 4×4 são dezesseis câmeras em tela para um teto de
+        nove, e as sete últimas ficavam de fora de *toda* rodada — só seriam
+        reolhadas na volta completa, a cada minutos. Girando o ponto de
+        partida, cada uma entra a cada duas rodadas.
+        """
+        teto = max(1, settings.INFERENCIA_SOBREPOSICAO_MAX)
+        quantas = min(teto, len(vistas))
+        inicio = self._vez_sobreposicao % len(vistas)
+        self._vez_sobreposicao = (inicio + quantas) % len(vistas)
+        return (vistas + vistas)[inicio:inicio + quantas]
+
     async def _renovar_sobreposicoes(self) -> None:
         if not vision.yolo_disponivel():
             return
         vistas = [c for c, l in self._camaras_em_tela()]
         if not vistas:
             return
-        for cam in vistas[:settings.INFERENCIA_SOBREPOSICAO_MAX]:
+        for cam in self._fila_da_renovacao(vistas):
             quadro = await asyncio.to_thread(
                 video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
             if quadro is None:
                 await self._publicar_caixas(cam.codigo, [])
                 continue
             altura, largura = quadro.shape[:2]
+            # Sem varredura em ladrilhos, que é a razão de este laço existir.
+            # Medido nos 23 quadros deste parque: a passada inteira leva
+            # 1.231 ms por câmera e a varredura mais 3.309 ms — 73% do custo.
+            # Pedir "ocupado" aqui, como estava, ligava a varredura
+            # exatamente nas câmeras que importam (as que têm gente em cena),
+            # e o laço "curto" passava de 1,2s para 4,5s por câmera: com nove
+            # tiles abertos, 41s por rodada em vez de 11s. Quem a varredura
+            # acha é reaproveitado da volta, logo abaixo.
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, False,
-                _classes_barradas(cam), "ocupado",
+                _classes_barradas(cam), "nunca",
             )
             objetos = self._fora_das_zonas_ignoradas(objetos, cam, quadro)
+            objetos = self._identidade_em_tela(cam.codigo, objetos)
             caixas = [{
                 "classe": o.classe,
                 "confianca": round(float(o.confianca), 4),
                 "bbox": o.bbox_normalizado(largura, altura),
                 "track_id": o.track_id,
             } for o in objetos]
-            self._herdar_nomes(cam.codigo, caixas)
+            caixas += self._distantes_de(cam.codigo, caixas)
+            caixas += self._rostos_ancorados(cam.codigo, caixas)
             await self._publicar_caixas(cam.codigo, caixas)
+
+    def _identidade_em_tela(self, codigo: str, objetos: list) -> list:
+        """Um número que sobrevive de uma renovação à seguinte.
+
+        Aqui a associação por posição é legítima, e no rodízio não era: entre
+        duas renovações passam uns dois segundos, e quem está sentado, parado
+        ou andando devagar continua dentro da própria caixa. É o que impede o
+        número de trocar entre duas pessoas encostadas — e é o que permite à
+        tela *mover* a caixa até a posição nova, em vez de apagá-la de um
+        lugar e acendê-la noutro.
+
+        O limite, declarado: quem atravessa a cena andando percorre várias
+        larguras de caixa em dois segundos. Aí as duas caixas não se tocam, o
+        IoU é zero, e a pessoa ganha número novo — nenhum limiar resolve isso,
+        só amostrar mais vezes por segundo ou comparar aparência, e nenhum dos
+        dois cabe no orçamento de CPU com 24 câmeras em série. A caixa dela
+        continua certa; o que não persiste é o número.
+        """
+        rastreio = self._rastreio_tela.get(codigo)
+        if rastreio is None:
+            rastreio = vision.RastreioPorPosicao(
+                settings.INFERENCIA_SOBREPOSICAO_IOU)
+            self._rastreio_tela[codigo] = rastreio
+        # Curto de propósito: quem saiu de cena há mais que isso não pode
+        # voltar a herdar o mesmo número, senão a próxima pessoa a parar
+        # naquele lugar recebe a identidade de quem já foi embora.
+        rastreio.ttl_s = max(4.0, settings.INFERENCIA_SOBREPOSICAO_S * 6)
+        return rastreio.atribuir(objetos)
+
+    def _lembrar_distantes(self, codigo: str, objetos: list,
+                           largura: int, altura: int) -> None:
+        """Guarda quem só a varredura em ladrilhos achou nesta volta.
+
+        Essas pessoas existem e não são poucas: medido nos 23 quadros deste
+        parque, a varredura encontrou quatro pessoas que a passada inteira
+        perdeu — inclusive uma sentada à mesa do Administrativo ocupando
+        241×147 px, que de longe não é "pessoa distante" nenhuma, é alguém
+        debruçado sobre papel que o modelo só reconhece com mais pixels.
+
+        Mas ela custa 3,3s por câmera, e o laço curto existe justamente para
+        não pagar isso. Sem lembrar o que a volta achou, cada renovação
+        publicaria a cena sem essa gente e a caixa delas piscaria uma vez por
+        volta. Lembrar é o que deixa as duas cadências conviverem.
+        """
+        caixas = [{
+            "classe": o.classe,
+            "confianca": round(float(o.confianca), 4),
+            "bbox": o.bbox_normalizado(largura, altura),
+            "track_id": None,
+        } for o in objetos if o.de_varredura]
+        if caixas:
+            self._distantes[codigo] = (time.monotonic(), caixas)
+        else:
+            self._distantes.pop(codigo, None)
+
+    def _distantes_de(self, codigo: str, em_cena: list) -> list:
+        """As pessoas distantes da última volta que a passada curta não achou.
+
+        Vencem com a volta: mais velhas que isso, descrevem uma cena que já
+        passou, e mantê-las seria o fantasma que a validade existe para
+        apagar. E só entram onde a passada curta não pôs nada — quem ela
+        achou agora está mais atual, e empilhar as duas poria duas caixas
+        sobre a mesma pessoa.
+        """
+        registro = self._distantes.get(codigo)
+        if registro is None:
+            return []
+        quando, caixas = registro
+        if time.monotonic() - quando > max(self.ciclo_real, 30.0):
+            self._distantes.pop(codigo, None)
+            return []
+        return [c for c in caixas
+                if not any(vision.mesma_pessoa(_pixels(c["bbox"]),
+                                               _pixels(n["bbox"]))
+                           for n in em_cena if n["classe"] == c["classe"])]
 
     def _camaras_em_tela(self) -> list:
         """As câmeras on-line que alguém está assistindo agora."""
@@ -365,25 +525,99 @@ class Inferencia:
                 achadas.append((cam, leitor))
         return achadas
 
-    def _herdar_nomes(self, codigo: str, caixas: list) -> None:
-        """Leva o nome da publicação anterior para a caixa que ocupa o lugar.
+    @staticmethod
+    def _mover_junto(rosto: list, corpo_antes: list, corpo_agora: list) -> list:
+        """A caixa do rosto na mesma posição relativa dentro do novo corpo.
 
-        A passada leve não roda facial — sem isto o nome de quem foi
-        reconhecido piscaria a cada renovação, aparecendo só nas voltas
-        completas. Herda por sobreposição de caixa, que na escala de poucos
-        segundos é a mesma pessoa.
+        Não é translação: quem se aproxima da câmera cresce, e um rosto
+        deslocado sem reescalar ficaria do tamanho de antes sobre uma cabeça
+        maior.
         """
-        anterior = self._ultimas_caixas.get(codigo)
-        if not anterior:
+        rx, ry, rw, rh = rosto
+        cx, cy, cw, ch = corpo_antes
+        nx, ny, nw, nh = corpo_agora
+        fx = nw / cw if cw else 1.0
+        fy = nh / ch if ch else 1.0
+        return [round(nx + (rx - cx) * fx, 6), round(ny + (ry - cy) * fy, 6),
+                round(rw * fx, 6), round(rh * fy, 6)]
+
+    @staticmethod
+    def _ancorar(ancoras: list, caixa_rosto: dict, corpo: Optional[dict]) -> None:
+        """Registra o par rosto/corpo de um reconhecimento desta volta.
+
+        Sem corpo casado não há âncora: um rosto sem corpo em cena é alguém
+        enquadrado só do pescoço para cima, e não há o que o laço curto
+        reencontre para levar a tarja junto. Nesse caso o nome vale a volta e
+        some — que é melhor que ficar pendurado num ponto fixo da tela.
+        """
+        if corpo is None or not caixa_rosto.get("pessoa_nome"):
             return
-        nomeadas = [c for c in anterior["caixas"] if c.get("pessoa_nome")]
-        if not nomeadas:
-            return
-        for nova in caixas:
-            for velha in nomeadas:
-                if vision.iou(_pixels(nova["bbox"]), _pixels(velha["bbox"])) >= 0.5:
-                    nova["pessoa_nome"] = velha["pessoa_nome"]
-                    break
+        ancoras.append({
+            "nome": caixa_rosto["pessoa_nome"],
+            "confianca": caixa_rosto["confianca"],
+            "rosto": list(caixa_rosto["bbox"]),
+            "corpo": list(corpo["caixa"]["bbox"]),
+        })
+
+    def _lembrar_ancoras(self, codigo: str, ancoras: list) -> None:
+        """Onde ficou o nome de cada reconhecido, e sob qual corpo."""
+        if ancoras:
+            self._ancoras[codigo] = ancoras
+        else:
+            self._ancoras.pop(codigo, None)
+
+    def _rostos_ancorados(self, codigo: str, em_cena: list) -> list:
+        """Leva a tarja do nome junto com o corpo que a passada curta achou.
+
+        O nome vive na caixa do **rosto** — é o rosto que identifica —, e o
+        rosto só é lido na volta completa. Entre duas voltas o laço curto
+        republica a cena a cada poucos segundos: sem isto, o nome apareceria
+        num quadro e sumiria nos seguintes.
+
+        Herdar por sobreposição do próprio rosto não funcionava, e o teste
+        que cobria isso não via porque a publicação anterior que ele montava
+        tinha o nome numa caixa de *pessoa*. Na produção o nome está na caixa
+        do rosto, que é uma fração da do corpo — e a passada curta não procura
+        rosto nenhum, então não há com o que sobrepor. Na prática o nome
+        nunca sobrevivia a uma renovação.
+
+        O que a passada curta reencontra é o corpo, e o rosto está sempre na
+        mesma parte dele. Daí a âncora ser o corpo: achado o corpo agora, a
+        caixa do rosto vai para a posição correspondente dentro dele.
+
+        A âncora é reescrita a cada renovação, então o salto de uma para a
+        seguinte é de poucos segundos — a escala em que associar por posição
+        quer dizer algo. Corpo que não é reencontrado perde o nome, e está
+        certo: quem saiu de cena não pode continuar nomeado.
+        """
+        ancoras = self._ancoras.get(codigo)
+        if not ancoras:
+            return []
+        saida, vivas, usados = [], [], set()
+        for ancora in ancoras:
+            alvo, melhor, onde = None, 0.0, -1
+            for i, caixa in enumerate(em_cena):
+                if i in usados or caixa["classe"] != "pessoa":
+                    continue
+                s = vision.iou(_pixels(ancora["corpo"]), _pixels(caixa["bbox"]))
+                if s > melhor:
+                    alvo, melhor, onde = caixa, s, i
+            if alvo is None or melhor < settings.INFERENCIA_SOBREPOSICAO_IOU:
+                continue
+            usados.add(onde)
+            rosto = self._mover_junto(ancora["rosto"], ancora["corpo"],
+                                      alvo["bbox"])
+            # A identidade é a do corpo sob a tarja, e isso tem uso: é por ela
+            # que a tela sabe que esta tarja e a da renovação anterior são a
+            # mesma, e a desliza junto com o corpo. Sem isso o retângulo do
+            # corpo deslizava e o nome saltava, descolados por um instante a
+            # cada renovação.
+            saida.append({"classe": "rosto", "confianca": ancora["confianca"],
+                          "bbox": rosto, "track_id": alvo.get("track_id"),
+                          "pessoa_nome": ancora["nome"]})
+            vivas.append({**ancora, "rosto": rosto, "corpo": alvo["bbox"]})
+        self._ancoras[codigo] = vivas
+        return saida
 
     def _ordem_da_volta(self, cameras) -> list:
         """A volta, com quem está sendo olhado reaparecendo no meio dela.
@@ -500,7 +734,7 @@ class Inferencia:
             nomes_no_quadro.append(nome)
 
     def _marcar_corpo(self, cena: dict, bbox_rosto, corpos: list,
-                      id_biometrico=None) -> None:
+                      id_biometrico=None) -> Optional[dict]:
         """Anota de quem é o corpo que contém este rosto — só em memória.
 
         Não registra nada e não rotula a caixa do corpo no vídeo. O sistema
@@ -517,15 +751,20 @@ class Inferencia:
 
         O corpo sai da lista depois de casado: dois rostos no mesmo corpo
         seriam duas pessoas na mesma caixa.
+
+        Devolve o corpo casado para quem precisa saber *onde* ele está — é o
+        que o laço curto usa de âncora para a tarja do nome acompanhar a
+        pessoa entre duas voltas, sem o nome passar à caixa do corpo.
         """
         alvo = self._corpo_do_rosto(bbox_rosto, corpos)
         if alvo is None:
-            return
+            return None
         marca = alvo["caixa"].get("track_id")
         if id_biometrico and marca is not None:
             self._identidades.setdefault(cena["cam"].codigo, {})[marca] = (
                 id_biometrico, time.monotonic())
         corpos.remove(alvo)
+        return alvo
 
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
@@ -985,6 +1224,12 @@ class Inferencia:
         # Quem o facial reconheceu nesta cena. Alimenta o alerta de sala, que
         # antes só sabia contar cabeças.
         nomes_no_quadro: list[str] = []
+        # Cada reconhecimento, com o corpo sob o qual ele ancora. É o que o
+        # laço curto usa para a tarja acompanhar a pessoa entre duas voltas —
+        # sem o nome passar da caixa do rosto para a do corpo. Declarada aqui
+        # porque a câmera pode não ter análise facial, e mesmo assim a âncora
+        # da volta anterior precisa ser apagada no fim.
+        ancoras: list = []
         # Declarada aqui porque a vigilância da sala passou a ocorrer depois
         # dos rostos, fora do bloco que a preenche: sem câmera com análise de
         # objeto o nome não existiria na hora de consultar.
@@ -1028,6 +1273,10 @@ class Inferencia:
                 )
 
             objetos = self._fora_das_zonas_ignoradas(objetos, cam, quadro)
+            # Antes de qualquer poda de registro: a sobreposição mostra a
+            # cena, e quem só a varredura acha precisa continuar marcado
+            # entre duas voltas, quando o laço curto não a roda.
+            self._lembrar_distantes(cam.codigo, objetos, largura, altura)
 
             tem_pessoa = any(o.classe == "pessoa" for o in objetos)
 
@@ -1190,9 +1439,10 @@ class Inferencia:
                     # mesmo assim é alguém, com corpo para ligar e trajetória
                     # para alimentar.
                     if entrada[3] or entrada[2]:
-                        self._marcar_corpo(cena, face.bbox, corpos_no_quadro,
-                                           entrada[4])
+                        corpo = self._marcar_corpo(cena, face.bbox,
+                                                   corpos_no_quadro, entrada[4])
                         self._rotular(caixa_rosto, entrada[2], nomes_no_quadro)
+                        self._ancorar(ancoras, caixa_rosto, corpo)
                     continue
 
                 jpeg = await asyncio.to_thread(video.recortar_bgr, quadro, face.bbox)
@@ -1218,9 +1468,10 @@ class Inferencia:
                     entrada[3] = pessoa_id
                     entrada[4] = resultado.get("id_biometrico")
                     caixa_rosto["similaridade"] = resultado.get("similaridade")
-                    self._marcar_corpo(cena, face.bbox, corpos_no_quadro,
-                                       entrada[4])
+                    corpo = self._marcar_corpo(cena, face.bbox,
+                                               corpos_no_quadro, entrada[4])
                     self._rotular(caixa_rosto, nome, nomes_no_quadro)
+                    self._ancorar(ancoras, caixa_rosto, corpo)
                     log.info("%s: %s reconhecido (%.0f%%)", cam.codigo,
                              nome or resultado.get("id_biometrico"),
                              (resultado.get("similaridade") or 0) * 100)
@@ -1235,6 +1486,10 @@ class Inferencia:
         if cam.alerta_presenca and cam.analitico_objeto:
             await self._vigiar_sala(db, cam, objetos, codigo_pessoa, quadro,
                                     nomes_no_quadro)
+
+        # Reescrito a cada volta, inclusive vazio: quem não foi reconhecido
+        # agora não pode continuar nomeado pela leitura de minutos atrás.
+        self._lembrar_ancoras(cam.codigo, ancoras)
 
         # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
         # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem

@@ -6,12 +6,12 @@ O identificador é emitido aqui e em nenhum outro lugar. Veja
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi.responses import Response
@@ -20,12 +20,15 @@ from app import audit
 from app.database import get_db
 from app.deps import exige, pode_ver_pii, usuario_atual, usuario_de_query
 from app.models import (
-    AmostraFacial, Deteccao, Pessoa, Sexo, StatusPessoa, TipoDeteccao, Usuario,
+    AmostraFacial, Camera, Deteccao, Pessoa, Sexo, StatusPessoa, TipoDeteccao,
+    Usuario,
 )
 from app.schemas import MatchOut, Pagina, PessoaCreate, PessoaOut, PessoaUpdate
 from app.security import mascarar_cpf, mascarar_rg
+from app.config import settings
 from app.services import evidencias
 from app.services import biometrics, face_engine
+from app.tipos import como_utc
 
 router = APIRouter(prefix="/pessoas", tags=["Base biométrica"])
 
@@ -56,13 +59,29 @@ async def _ler_imagem(arquivo: UploadFile) -> np.ndarray:
 @router.get("/esquema-ids", summary="Contadores e próximo ID de cada prefixo")
 async def esquema_ids(db: AsyncSession = Depends(get_db),
                       usuario: Usuario = Depends(exige("biometrics"))):
+    # Quantos rostos esperam triagem. Vai junto porque sem isso o painel
+    # anuncia "BIO-N: 0 registros" com milhares de desconhecidos na base, e
+    # quem lê conclui que não há ninguém por identificar — quando o que há é
+    # ninguém triado ainda.
+    aguardando = (
+        await db.execute(
+            select(func.count()).select_from(Deteccao)
+            .where(Deteccao.tipo == TipoDeteccao.FACIAL,
+                   Deteccao.pessoa_id.is_(None),
+                   Deteccao.pessoa_sugerida_id.is_(None),
+                   Deteccao.snapshot_key != "")
+        )
+    ).scalar_one()
     return {
         "prefixos": await biometrics.contagem_por_sexo(db),
+        "aguardando_triagem": int(aguardando),
         "regra": (
             "O identificador é emitido uma única vez, no cadastro, a partir do sexo "
             "informado no registro civil. O motor de reconhecimento não classifica "
             "sexo a partir da imagem — ele apenas devolve o ID já existente. "
-            "Corrigir o sexo de um cadastro preserva o identificador original."
+            "Corrigir o sexo de um cadastro preserva o identificador original, "
+            "exceto na saída de BIO-N: quem entrou sem identificação recebe o "
+            "prefixo definitivo ao ser cadastrado."
         ),
     }
 
@@ -82,7 +101,7 @@ async def proximo_id(sexo: Sexo, db: AsyncSession = Depends(get_db),
 # ======================================================================
 @router.get("", response_model=Pagina, summary="Listar registros biométricos")
 async def listar(
-    q: Optional[str] = Query(None, description="Nome, ID biométrico, CPF ou mandado"),
+    q: Optional[str] = Query(None, description="Nome, ID biométrico, CPF ou restrição"),
     sexo: Optional[Sexo] = None,
     status_pessoa: Optional[StatusPessoa] = Query(None, alias="status"),
     pagina: int = Query(1, ge=1),
@@ -90,14 +109,14 @@ async def listar(
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(exige("biometrics")),
 ):
-    filtros = [Pessoa.ativo.is_(True)]
+    filtros = [Pessoa.ativo.is_(True), Pessoa.sexo != Sexo.N]
     if q:
         termo = f"%{q.strip()}%"
         filtros.append(or_(
             Pessoa.nome.ilike(termo),
             Pessoa.id_biometrico.ilike(termo),
             Pessoa.cpf.ilike(termo),
-            Pessoa.mandado.ilike(termo),
+            Pessoa.restricao.ilike(termo),
             Pessoa.alcunha.ilike(termo),
         ))
     if sexo:
@@ -116,6 +135,297 @@ async def listar(
 
     return Pagina(total=total, pagina=pagina, por_pagina=por_pagina,
                   itens=[_saida(p, usuario) for p in linhas])
+
+
+@router.get("/conferencia", summary="Fila de quase-acertos para conferência humana")
+async def conferencia(
+    request: Request,
+    limite: int = Query(60, ge=1, le=300),
+    por_angulo: int = Query(3, ge=1, le=10),
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("biometrics")),
+):
+    """Capturas que pararam perto do limiar, com o candidato que o motor apontou.
+
+    Existe para romper um nó: uma pessoa cadastrada numa câmera não é
+    reconhecida em outra, e sem ser reconhecida ali nunca gera a amostra
+    daquele ângulo que a faria ser reconhecida. Alguém precisa dizer "é ela"
+    uma vez; daí em diante a câmera passa a responder sozinha.
+
+    A ordem não é por similaridade. Medido nesta base, a faixa 0,38–0,50 tem
+    2.601 capturas, e 2.576 delas estão nas três câmeras que já reconhecem —
+    confirmá-las não acrescenta ângulo nenhum. As 25 restantes, espalhadas
+    por oito câmeras, são as que abrem câmera nova. Por isso vem primeiro o
+    que está numa câmera que o template ainda não cobre: ordenar por
+    similaridade poria 2.576 itens inúteis na frente dos 25 que importam.
+
+    E agrupa por par (pessoa, câmera): cinquenta capturas do mesmo ângulo são
+    uma decisão só, não cinquenta. O que se quer da fila é um ângulo novo por
+    vez, com algumas opções para o operador escolher a melhor.
+    """
+    linhas = (
+        await db.execute(
+            select(Deteccao, Pessoa, Camera)
+            .join(Pessoa, Pessoa.id == Deteccao.pessoa_sugerida_id)
+            .join(Camera, Camera.id == Deteccao.camera_id)
+            .where(Deteccao.tipo == TipoDeteccao.FACIAL,
+                   Deteccao.pessoa_id.is_(None),
+                   Deteccao.pessoa_sugerida_id.isnot(None),
+                   # A faixa também aqui, e não só em quem grava: o que está
+                   # longe do limiar não é quase-acerto, e pôr isso diante do
+                   # operador é pedir que ele julgue um rosto que o próprio
+                   # motor não considera parecido.
+                   Deteccao.similaridade >= settings.FACE_REVIEW_MIN,
+                   Deteccao.snapshot_key != "",
+                   Pessoa.ativo.is_(True))
+            .order_by(Deteccao.similaridade.desc())
+            .limit(max(limite * 20, 600))
+        )
+    ).all()
+
+    # Coberto = confirmar ali não ensina nada novo. Dois sinais, somados:
+    #
+    # * a pessoa já tem amostra daquela câmera — exato, mas vazio para as
+    #   amostras anteriores a esta coluna, que não registravam a origem;
+    # * a pessoa já foi identificada ali alguma vez — derivável do histórico
+    #   inteiro, e é o que mantém a fila ordenada com sentido enquanto as
+    #   amostras antigas seguem sem origem conhecida.
+    #
+    # Sozinho, o primeiro faria todas as câmeras parecerem descobertas num
+    # banco já povoado, e a fila nasceria sem priorização nenhuma.
+    cobertos = {
+        (pid, cid)
+        for pid, cid in (
+            await db.execute(
+                select(AmostraFacial.pessoa_id, AmostraFacial.camera_id)
+                .where(AmostraFacial.camera_id.isnot(None))
+            )
+        ).all()
+    }
+    cobertos |= {
+        (pid, cid)
+        for pid, cid in (
+            await db.execute(
+                select(Deteccao.pessoa_id, Deteccao.camera_id)
+                .where(Deteccao.tipo == TipoDeteccao.FACIAL,
+                       Deteccao.pessoa_id.isnot(None))
+                .group_by(Deteccao.pessoa_id, Deteccao.camera_id)
+            )
+        ).all()
+    }
+
+    itens, vistos = [], {}
+    for det, pes, cam in linhas:
+        par = (pes.id, cam.id)
+        if vistos.get(par, 0) >= por_angulo:
+            continue
+        vistos[par] = vistos.get(par, 0) + 1
+        itens.append({
+            "codigo": det.codigo,
+            "ocorrido_em": det.ocorrido_em,
+            "similaridade": det.similaridade,
+            "limiar": det.limiar_aplicado,
+            "qualidade_face": det.qualidade_face,
+            "snapshot_key": det.snapshot_key,
+            "camera_codigo": cam.codigo,
+            "camera": cam.nome,
+            "setor": cam.setor,
+            # O que faz este item valer a atenção: numa câmera já coberta a
+            # confirmação não abre nada, porque aquele ângulo já responde.
+            "camera_coberta": par in cobertos,
+            "sugerido": {
+                "id_biometrico": pes.id_biometrico,
+                "nome": pes.nome,
+                "status": pes.status.value,
+            },
+        })
+
+    itens.sort(key=lambda i: (i["camera_coberta"], -(i["similaridade"] or 0)))
+    itens = itens[:limite]
+
+    await audit.registrar(
+        db, acao="CONSULTA_BIO", descricao="Consulta à fila de conferência biométrica",
+        severidade="info", usuario=usuario, alvo="fila de conferência", request=request)
+
+    return {
+        "itens": itens,
+        "faixa": {"de": settings.FACE_REVIEW_MIN, "ate": settings.FACE_THRESHOLD},
+        "abre_camera_nova": sum(1 for i in itens if not i["camera_coberta"]),
+    }
+
+
+@router.get("/desconhecidos", summary="Rostos sem candidato algum na base")
+async def desconhecidos(
+    request: Request,
+    limite: int = Query(60, ge=1, le=300),
+    horas: int = Query(24, ge=1, le=720),
+    agrupar: bool = Query(True),
+    limiar: float = Query(0.45, ge=0.0, le=1.0),
+    min_amostras: int = Query(3, ge=1, le=10),
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("biometrics")),
+):
+    """Capturas que não se parecem com ninguém — nem o bastante para conferir.
+
+    Com `agrupar=true` (padrão), retorna grupos de capturas que provavelmente
+    são a mesma pessoa, ordenados por tamanho. Sem isto, retorna capturas
+    individuais para triagem manual tradicional.
+
+    O agrupamento usa o mesmo algoritmo do lote: ligação por semelhança.
+    Permite que o operador confirme grupos em vez de marcar capturas uma a uma.
+    """
+    desde = datetime.now(timezone.utc) - timedelta(hours=horas)
+    linhas = (
+        await db.execute(
+            select(Deteccao, Camera)
+            .join(Camera, Camera.id == Deteccao.camera_id)
+            .where(Deteccao.tipo == TipoDeteccao.FACIAL,
+                   Deteccao.pessoa_id.is_(None),
+                   Deteccao.pessoa_sugerida_id.is_(None),
+                   Deteccao.snapshot_key != "",
+                   Deteccao.ocorrido_em >= desde)
+            .order_by(Deteccao.ocorrido_em.desc())
+            .limit(limite)
+        )
+    ).all()
+
+    await audit.registrar(
+        db, acao="CONSULTA_BIO",
+        descricao=f"Fila de rostos sem cadastro consultada (agrupar={agrupar})",
+        severidade="info", usuario=usuario, alvo="-", request=request)
+
+    # Sem agrupamento: retorna capturas individuais.
+    if not agrupar or not linhas:
+        return {
+            "janela_horas": horas,
+            "agrupado": False,
+            "itens": [
+                {
+                    "codigo": d.codigo,
+                    "ocorrido_em": d.ocorrido_em,
+                    "camera": cam.nome,
+                    "camera_codigo": cam.codigo,
+                    "setor": cam.setor,
+                    "qualidade_face": d.qualidade_face,
+                    "snapshot_key": d.snapshot_key,
+                }
+                for d, cam in linhas
+            ],
+        }
+
+    # Com agrupamento: extrai embeddings e forma grupos por ligação.
+    import numpy as np
+
+    vetores, deteccoes_map = [], {}
+    for d, cam in linhas:
+        jpeg = evidencias.ler(d.snapshot_key)
+        if jpeg is None:
+            continue
+        face = face_engine.extrair_de_recorte(jpeg)
+        if face is None:
+            continue
+        deteccoes_map[len(vetores)] = (d, cam)
+        vetores.append(np.asarray(face.embedding, dtype=np.float32))
+
+    if not vetores:
+        return {"janela_horas": horas, "agrupado": True, "grupos": []}
+
+    # Agrupamento por ligação — mesmo algoritmo do script lote.
+    matriz = np.vstack([v / np.linalg.norm(v) for v in vetores])
+    semelhantes = np.argwhere(np.triu(matriz @ matriz.T >= limiar, k=1))
+    pai = list(range(len(matriz)))
+
+    def raiz(i: int) -> int:
+        while pai[i] != i:
+            pai[i] = pai[pai[i]]
+            i = pai[i]
+        return i
+
+    for i, j in semelhantes:
+        a, b = raiz(int(i)), raiz(int(j))
+        if a != b:
+            pai[a] = b
+
+    grupos_dict: dict[int, list[int]] = {}
+    for i in range(len(matriz)):
+        r = raiz(i)
+        if r not in grupos_dict:
+            grupos_dict[r] = []
+        grupos_dict[r].append(i)
+
+    # Ordena por tamanho decrescente e filtra por tamanho mínimo.
+    grupos_ordenados = sorted(
+        (g for g in grupos_dict.values() if len(g) >= min_amostras),
+        key=len, reverse=True)
+
+    return {
+        "janela_horas": horas,
+        "agrupado": True,
+        "limiar": limiar,
+        "min_amostras": min_amostras,
+        "grupos": [
+            {
+                "tamanho": len(indices),
+                "codigos": [deteccoes_map[i][0].codigo for i in indices if i in deteccoes_map],
+                "capturas": [
+                    {
+                        "codigo": deteccoes_map[i][0].codigo,
+                        "ocorrido_em": deteccoes_map[i][0].ocorrido_em,
+                        "camera": deteccoes_map[i][1].nome,
+                        "camera_codigo": deteccoes_map[i][1].codigo,
+                        "setor": deteccoes_map[i][1].setor,
+                        "qualidade_face": deteccoes_map[i][0].qualidade_face,
+                        "snapshot_key": deteccoes_map[i][0].snapshot_key,
+                    }
+                    for i in indices if i in deteccoes_map
+                ],
+            }
+            for indices in grupos_ordenados
+        ],
+    }
+
+
+@router.post("/nao-identificado", status_code=status.HTTP_201_CREATED,
+             summary="Abrir BIO-N a partir de capturas de um rosto sem cadastro")
+async def abrir_nao_identificado(
+    request: Request, codigos: List[str],
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("biometrics", "edit")),
+):
+    """O operador diz "estas capturas são a mesma pessoa, e não sei quem é".
+
+    Nasce um BIO-N com essas capturas como amostras. O prefixo não afirma
+    nada sobre a pessoa — diz que ainda não se sabe quem ela é —, e sai dele
+    quando alguém completar o cadastro e informar o sexo, quando o
+    identificador passa a BIO-M ou BIO-F.
+
+    Pede várias capturas pelo mesmo motivo que o cadastro por captura pede:
+    medido nesta base, duas capturas da mesma pessoa só se reconhecem em 12%
+    dos pares. Uma amostra sozinha não reconheceria a própria pessoa no
+    encontro seguinte, e o registro recém-aberto já nasceria inútil.
+    """
+    if not codigos:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Informe ao menos uma captura.")
+
+    pessoa = await biometrics.abrir_registro_nao_identificado(db, usuario.id)
+    aceitas, recusadas = await _capturas_viram_amostras(db, pessoa, codigos)
+
+    await audit.registrar(
+        db, acao="PESSOA_ADD", severidade="warn", usuario=usuario,
+        alvo=pessoa.id_biometrico,
+        descricao="Registro aberto para rosto sem cadastro, por conferência humana",
+        finalidade="Triagem de desconhecidos", request=request,
+        metadados={"capturas": aceitas, "recusadas": recusadas,
+                   "amostras": pessoa.amostras},
+    )
+    return {
+        "id_biometrico": pessoa.id_biometrico,
+        "aceitas": aceitas,
+        "recusadas": recusadas,
+        "amostras": pessoa.amostras,
+        "qualidade_template": pessoa.qualidade,
+    }
 
 
 @router.get("/{id_biometrico}", response_model=PessoaOut, summary="Abrir ficha biométrica")
@@ -140,9 +450,9 @@ async def obter(id_biometrico: str, request: Request, db: AsyncSession = Depends
              summary="Cadastrar pessoa e emitir identificador")
 async def criar(dados: PessoaCreate, request: Request, db: AsyncSession = Depends(get_db),
                 usuario: Usuario = Depends(exige("biometrics", "edit"))):
-    if dados.status == StatusPessoa.PROCURADO and not dados.mandado.strip():
+    if dados.status == StatusPessoa.RESTRITO and not dados.restricao.strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Situação 'PROCURADO' exige o número do mandado judicial.")
+                            "Situação 'RESTRITO' exige o motivo da restrição.")
 
     # Aviso de homônimo — não bloqueia, mas fica registrado.
     homonimo = (
@@ -161,7 +471,7 @@ async def criar(dados: PessoaCreate, request: Request, db: AsyncSession = Depend
         cpf=dados.cpf,
         rg=dados.rg,
         status=dados.status,
-        mandado=dados.mandado,
+        restricao=dados.restricao,
         tipificacao=dados.tipificacao,
         orgao_expedidor=dados.orgao_expedidor,
         unidade=dados.unidade,
@@ -203,10 +513,10 @@ async def atualizar(id_biometrico: str, dados: PessoaUpdate, request: Request,
         resumo_sexo = await biometrics.corrigir_sexo(db, pessoa, campos.pop("sexo"))
 
     novo_status = campos.get("status", pessoa.status)
-    mandado = campos.get("mandado", pessoa.mandado)
-    if novo_status == StatusPessoa.PROCURADO and not (mandado or "").strip():
+    restricao = campos.get("restricao", pessoa.restricao)
+    if novo_status == StatusPessoa.RESTRITO and not (restricao or "").strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Situação 'PROCURADO' exige o número do mandado judicial.")
+                            "Situação 'RESTRITO' exige o motivo da restrição.")
 
     for campo, valor in campos.items():
         setattr(pessoa, campo, valor)
@@ -316,6 +626,67 @@ async def adicionar_amostra(
     }
 
 
+async def _capturas_viram_amostras(db: AsyncSession, pessoa: Pessoa,
+                                   codigos: List[str]) -> tuple[list, list]:
+    """Converte capturas gravadas em amostras do template de `pessoa`.
+
+    O embedding é extraído do recorte em disco, e não reaproveitado do que o
+    worker calculou: o recorte é o que o operador viu ao decidir, e é dele que
+    a amostra tem de sair para a decisão e o template falarem do mesmo rosto.
+
+    Serve aos dois caminhos da fila — "é ela", que anexa a um cadastro, e "é
+    alguém novo", que anexa a um BIO-N recém-aberto. Levanta 422 se nenhuma
+    captura render rosto legível, porque template vazio não reconhece nada e
+    devolver sucesso aí esconderia a falha de quem conferiu.
+    """
+    deteccoes = (
+        await db.execute(
+            select(Deteccao).where(Deteccao.codigo.in_(codigos),
+                                   Deteccao.tipo == TipoDeteccao.FACIAL)
+        )
+    ).scalars().unique().all()
+    achadas = {d.codigo for d in deteccoes}
+    recusadas = [{"codigo": c, "motivo": "captura não encontrada"}
+                 for c in codigos if c not in achadas]
+
+    aceitas = []
+    for det in deteccoes:
+        jpeg = evidencias.ler(det.snapshot_key)
+        if jpeg is None:
+            recusadas.append({"codigo": det.codigo, "motivo": "recorte não está mais em disco"})
+            continue
+        face = face_engine.extrair_de_recorte(jpeg)
+        if face is None:
+            recusadas.append({"codigo": det.codigo,
+                              "motivo": "nenhum rosto legível no recorte"})
+            continue
+        db.add(AmostraFacial(
+            pessoa_id=pessoa.id, embedding=face.embedding.tolist(),
+            qualidade=round(float(face.qualidade), 4), origem="captura",
+            # De onde veio o ângulo. Sem isto a cobertura não teria como ser
+            # calculada, e era justamente a confirmação humana que abria a
+            # câmera nova — o registro mais importante de todos para a cota.
+            camera_id=det.camera_id,
+        ))
+        # A captura passa a apontar para a pessoa: ela deixa de ser uma
+        # passagem anônima e some do expurgo curto das não identificadas.
+        det.pessoa_id = pessoa.id
+        det.similaridade = 1.0
+        det.expurgo_em = None
+        aceitas.append(det.codigo)
+
+    if not aceitas:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Nenhuma das capturas rendeu um rosto legível: " +
+            "; ".join(f"{r['codigo']}: {r['motivo']}" for r in recusadas),
+        )
+
+    await db.flush()
+    await face_engine.recalcular_template(db, pessoa)
+    return aceitas, recusadas
+
+
 @router.post("/{id_biometrico}/amostras-de-capturas",
              summary="Promover capturas das câmeras a amostras do cadastro")
 async def amostras_de_capturas(
@@ -342,47 +713,7 @@ async def amostras_de_capturas(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Informe ao menos uma captura.")
 
-    deteccoes = (
-        await db.execute(
-            select(Deteccao).where(Deteccao.codigo.in_(codigos),
-                                   Deteccao.tipo == TipoDeteccao.FACIAL)
-        )
-    ).scalars().unique().all()
-    achadas = {d.codigo for d in deteccoes}
-    recusadas = [{"codigo": c, "motivo": "captura não encontrada"}
-                 for c in codigos if c not in achadas]
-
-    aceitas = []
-    for det in deteccoes:
-        jpeg = evidencias.ler(det.snapshot_key)
-        if jpeg is None:
-            recusadas.append({"codigo": det.codigo, "motivo": "recorte não está mais em disco"})
-            continue
-        face = face_engine.extrair_de_recorte(jpeg)
-        if face is None:
-            recusadas.append({"codigo": det.codigo,
-                              "motivo": "nenhum rosto legível no recorte"})
-            continue
-        db.add(AmostraFacial(
-            pessoa_id=pessoa.id, embedding=face.embedding.tolist(),
-            qualidade=round(float(face.qualidade), 4), origem="captura",
-        ))
-        # A captura passa a apontar para a pessoa: ela deixa de ser uma
-        # passagem anônima e some do expurgo curto das não identificadas.
-        det.pessoa_id = pessoa.id
-        det.similaridade = 1.0
-        det.expurgo_em = None
-        aceitas.append(det.codigo)
-
-    if not aceitas:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Nenhuma das capturas rendeu um rosto legível: " +
-            "; ".join(f"{r['codigo']}: {r['motivo']}" for r in recusadas),
-        )
-
-    await db.flush()
-    await face_engine.recalcular_template(db, pessoa)
+    aceitas, recusadas = await _capturas_viram_amostras(db, pessoa, codigos)
 
     await audit.registrar(
         db, acao="BIO_AMOSTRA", severidade="warn", usuario=usuario,
@@ -499,17 +830,43 @@ async def candidatos(
 
 @router.get("/{id_biometrico}/capturas", summary="Histórico de capturas da pessoa")
 async def capturas(id_biometrico: str, request: Request, limite: int = Query(50, ge=1, le=500),
+                   tipo: Optional[str] = Query(
+                       None, pattern="^(rosto|corpo)$",
+                       description="Filtra o histórico: `rosto` traz as identificações "
+                                   "faciais, `corpo` traz os corpos costurados a um rosto "
+                                   "reconhecido. Sem o parâmetro, vêm os dois."),
                    db: AsyncSession = Depends(get_db),
                    usuario: Usuario = Depends(exige("biometrics"))):
+    """Os registros individuais que a trajetória resume.
+
+    A trajetória agrupa em passagens, que é o que responde "por onde ela
+    andou". Aqui é o oposto: um registro por linha, que é o que responde
+    "mostre-me os quadros". São usos diferentes, e por isso `tipo` separa os
+    dois modos de reconhecer alguém — o rosto, que identifica, e o corpo.
+
+    O corpo é **histórico**: o sistema deixou de costurar identidade a
+    caixa de corpo em 26/10/2026, a pedido de quem opera. Quem identifica
+    é o rosto. `tipo=corpo` segue lendo o que foi gravado antes disso, e
+    não recebe nada novo.
+    """
     pessoa = (
         await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))
     ).scalar_one_or_none()
     if pessoa is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
 
+    filtros = [Deteccao.pessoa_id == pessoa.id]
+    if tipo == "rosto":
+        filtros.append(Deteccao.tipo == TipoDeteccao.FACIAL)
+    elif tipo == "corpo":
+        # Só o que foi costurado antes de 26/10/2026. Corpo anônimo nunca
+        # teve identidade para constar na ficha de ninguém.
+        filtros.append(and_(Deteccao.tipo == TipoDeteccao.OBJETO,
+                            Deteccao.classe == "pessoa"))
+
     linhas = (
         await db.execute(
-            select(Deteccao).where(Deteccao.pessoa_id == pessoa.id)
+            select(Deteccao).where(*filtros)
             .order_by(Deteccao.ocorrido_em.desc()).limit(limite)
         )
     ).scalars().all()
@@ -524,13 +881,162 @@ async def capturas(id_biometrico: str, request: Request, limite: int = Query(50,
             "ocorrido_em": d.ocorrido_em,
             "camera": d.camera.nome if d.camera else "",
             "camera_codigo": d.camera.codigo if d.camera else "",
+            "setor": d.camera.setor if d.camera else "",
+            # Qual dos dois reconhecimentos trouxe este registro. Sem isto a
+            # lista misturada não diria por que uma linha tem similaridade e
+            # a vizinha não.
+            "reconhecimento": "rosto" if d.tipo == TipoDeteccao.FACIAL else "corpo",
             "similaridade": d.similaridade,
+            "confianca": d.confianca,
             "snapshot_key": d.snapshot_key,
             "revisado": d.revisado,
             "veredito": d.veredito,
         }
         for d in linhas
     ]
+
+
+@router.get("/{id_biometrico}/trajetoria", summary="Por onde a pessoa passou")
+async def trajetoria(
+    id_biometrico: str, request: Request,
+    desde: Optional[datetime] = Query(None),
+    ate: Optional[datetime] = Query(None),
+    intervalo_min: int = Query(10, ge=1, le=180),
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(exige("biometrics")),
+):
+    """A trilha da pessoa pelo parque, em passagens e não em capturas.
+
+    Quem fica diante da câmera gera uma captura por volta do worker — nesta
+    base, 2.423 numa câmera só. Lidas uma a uma não dizem nada; agrupadas,
+    viram "esteve no Service Desk das 09:12 às 09:47". A pergunta "por onde
+    ela andou" se responde com passagens, não com capturas.
+
+    Uma passagem termina quando a câmera muda, ou quando o intervalo entre
+    duas capturas passa de `intervalo_min`: voltar ao mesmo lugar depois de
+    um tempo é outra passagem, não a continuação da anterior.
+    """
+    pessoa = (
+        await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))
+    ).scalar_one_or_none()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
+
+    # Rosto e corpo, não só rosto. Rosto legível é a exceção: quem está de
+    # costas, longe ou de perfil aparece como corpo e mais nada. Com só os
+    # rostos, a trajetória some justamente nos trechos em que a pessoa estava
+    # andando — que é o que a pergunta "por onde ela passou" quer saber.
+    # Os corpos que entram são os que o worker costurou a um rosto
+    # identificado no mesmo quadro; corpo anônimo não tem identidade para
+    # constar na trajetória de ninguém.
+    filtros = [
+        Deteccao.pessoa_id == pessoa.id,
+        or_(Deteccao.tipo == TipoDeteccao.FACIAL,
+            and_(Deteccao.tipo == TipoDeteccao.OBJETO, Deteccao.classe == "pessoa")),
+    ]
+    if desde is not None:
+        filtros.append(Deteccao.ocorrido_em >= desde)
+    if ate is not None:
+        filtros.append(Deteccao.ocorrido_em <= ate)
+
+    linhas = (
+        await db.execute(
+            select(Deteccao, Camera).join(Camera, Camera.id == Deteccao.camera_id)
+            .where(*filtros).order_by(Deteccao.ocorrido_em.asc())
+        )
+    ).all()
+
+    folga = intervalo_min * 60
+    passagens: List[dict] = []
+    atual: Optional[dict] = None
+    for det, cam in linhas:
+        quando = como_utc(det.ocorrido_em)
+        rosto = det.tipo == TipoDeteccao.FACIAL
+        sim = (det.similaridade or 0.0) if rosto else 0.0
+        if (atual is None
+                or atual["camera_codigo"] != cam.codigo
+                or (quando - atual["_fim"]).total_seconds() > folga):
+            atual = {
+                "camera_codigo": cam.codigo, "camera": cam.nome, "setor": cam.setor,
+                "inicio": det.ocorrido_em, "fim": det.ocorrido_em,
+                "capturas": 1,
+                # Separados porque dizem coisas diferentes sobre a mesma
+                # presença: o rosto é identificação, o corpo é a pessoa vista
+                # sem o rosto dar para ler. Uma passagem só de corpo ainda
+                # vale — alguém esteve ali —, mas quem revisa precisa saber
+                # que a confirmação veio de outro quadro.
+                "rostos": 1 if rosto else 0,
+                "corpos": 0 if rosto else 1,
+                "similaridade_max": sim,
+                # O melhor recorte da passagem, não o primeiro: é ele que
+                # permite conferir a identificação sem abrir captura por
+                # captura. Rosto sempre ganha de corpo, por mostrar a cara.
+                "codigo": det.codigo, "snapshot_key": det.snapshot_key,
+                "_fim": quando, "_melhor": sim, "_tem_rosto": rosto,
+            }
+            passagens.append(atual)
+            continue
+        atual["capturas"] += 1
+        atual["rostos" if rosto else "corpos"] += 1
+        atual["fim"] = det.ocorrido_em
+        atual["_fim"] = quando
+        if rosto and (not atual["_tem_rosto"] or sim > atual["_melhor"]):
+            atual["_melhor"] = sim
+            atual["_tem_rosto"] = True
+            atual["similaridade_max"] = sim
+            atual["codigo"] = det.codigo
+            atual["snapshot_key"] = det.snapshot_key
+
+    for p in passagens:
+        p["duracao_s"] = int((p.pop("_fim") - como_utc(p["inicio"])).total_seconds())
+        p.pop("_melhor"); p.pop("_tem_rosto")
+        p["similaridade_max"] = round(p["similaridade_max"], 4)
+
+    await audit.registrar(
+        db, acao="CONSULTA_BIO", descricao="Consulta à trajetória da pessoa",
+        severidade="info", usuario=usuario, alvo=pessoa.id_biometrico, request=request)
+
+    # Onde esteve, por lugar. Sem isto a lista mente por omissão: medido
+    # nesta base, uma pessoa com 903 capturas tem 902 numa câmera e UMA em
+    # outra, no meio de 95 passagens ordenadas pela mais recente. O resumo
+    # dizia "2 câmeras" e a lista parecia mostrar uma só — a passagem rara,
+    # que é justamente a que interessa a quem pergunta por onde a pessoa
+    # andou, ficava invisível.
+    por_camera: dict = {}
+    for p in passagens:
+        c = por_camera.setdefault(p["camera_codigo"], {
+            "camera_codigo": p["camera_codigo"], "camera": p["camera"],
+            "setor": p["setor"], "passagens": 0, "capturas": 0,
+            "rostos": 0, "corpos": 0,
+            "primeira": p["inicio"], "ultima": p["fim"],
+        })
+        c["passagens"] += 1
+        c["capturas"] += p["capturas"]
+        c["rostos"] += p["rostos"]
+        c["corpos"] += p["corpos"]
+        if p["inicio"] < c["primeira"]:
+            c["primeira"] = p["inicio"]
+        if p["fim"] > c["ultima"]:
+            c["ultima"] = p["fim"]
+
+    return {
+        "id_biometrico": pessoa.id_biometrico,
+        "nome": pessoa.nome,
+        "passagens": list(reversed(passagens)),   # a mais recente primeiro
+        # Da mais visitada para a mais rara. A rara é a notícia: a câmera onde
+        # a pessoa esteve uma vez só diz mais sobre o deslocamento dela que a
+        # mesa onde ela passa o dia.
+        "por_camera": sorted(por_camera.values(), key=lambda c: -c["passagens"]),
+        "resumo": {
+            "passagens": len(passagens),
+            "cameras": len(por_camera),
+            "capturas": sum(p["capturas"] for p in passagens),
+            "rostos": sum(p["rostos"] for p in passagens),
+            "corpos": sum(p["corpos"] for p in passagens),
+            "primeira": passagens[0]["inicio"] if passagens else None,
+            "ultima": passagens[-1]["fim"] if passagens else None,
+        },
+    }
 
 
 @router.get("/{id_biometrico}/face", summary="Rosto da pessoa, da captura mais recente")

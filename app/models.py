@@ -565,6 +565,17 @@ class Alerta(Base):
     atribuido_a: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True
     )
+    # Quem assumiu, para a tela poder dizer o nome em vez do identificador.
+    # `selectin` porque a lista de alertas é paginada: uma consulta a mais
+    # para a página inteira, e não uma por linha.
+    responsavel: Mapped[Optional["Usuario"]] = relationship(
+        "Usuario", lazy="selectin", foreign_keys=[atribuido_a]
+    )
+
+    @property
+    def atribuido_nome(self) -> str:
+        """Nome de quem assumiu — vazio enquanto ninguém assumiu."""
+        return self.responsavel.nome if self.responsavel else ""
     resolucao: Mapped[str] = mapped_column(Text, default="")
     disparado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now(), index=True)
     fechado_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)

@@ -1,18 +1,20 @@
-"""Central de alertas: triagem, atribuição e encerramento com desfecho."""
+﻿"""Central de alertas: triagem, atribuição e encerramento com desfecho."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import audit
 from app.database import get_db
-from app.deps import exige
+from app.deps import exige, usuario_de_query
 from app.models import Alerta, Camera, StatusAlerta, TipoDeteccao, Usuario
 from app.schemas import AlertaFechaIn, AlertaOut, Pagina
+from app.services import evidencias
 from app.services.events import publicar
 from app.tipos import como_utc
 
@@ -98,6 +100,36 @@ async def resumo(db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(
     }
 
 
+@router.get("/{codigo}/snapshot", summary="Imagem do alerta (JPEG)")
+async def snapshot(codigo: str, token: str = Query(..., description="Access token JWT"),
+                   db: AsyncSession = Depends(get_db)):
+    """A imagem do alerta, quando ele carrega a própria.
+
+    Alerta de sala reporta um estado — "ficou vazia" — e não nasce de uma
+    detecção; sem esta rota a coluna CAPTURA ficava em branco e o operador
+    tinha de ir procurar a imagem noutro lugar. Quando o alerta veio de uma
+    detecção, quem serve a imagem continua sendo `/deteccoes/{codigo}/snapshot`.
+
+    Não gera linha de auditoria, pela mesma razão da rota equivalente de
+    detecção: a lista carrega uma miniatura por linha, e auditar cada uma
+    encheria a trilha de ruído paralelo.
+    """
+    await usuario_de_query(token, db, "alerts")
+
+    alerta = (
+        await db.execute(select(Alerta).where(Alerta.codigo == codigo))
+    ).scalars().unique().one_or_none()
+    if alerta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Alerta não encontrado.")
+
+    imagem = evidencias.ler(alerta.snapshot_key)
+    if imagem is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "Sem imagem guardada para este alerta.")
+    return Response(content=imagem, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=300"})
+
+
 @router.get("/{codigo}", response_model=AlertaOut, summary="Detalhe do alerta")
 async def obter(codigo: str, db: AsyncSession = Depends(get_db),
                 usuario: Usuario = Depends(exige("alerts"))):
@@ -145,3 +177,41 @@ async def encerrar(codigo: str, dados: AlertaFechaIn, request: Request,
     )
     await publicar("alerta_atualizado", {"codigo": codigo, "status": a.status.value})
     return AlertaOut.model_validate(a)
+
+
+@router.delete("/{codigo}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Excluir alerta")
+async def excluir(codigo: str, request: Request,
+                  motivo: str = Query(..., min_length=8, max_length=300,
+                                      description="Por que este alerta está sendo excluído"),
+                  db: AsyncSession = Depends(get_db),
+                  usuario: Usuario = Depends(exige("settings"))):
+    """Apaga um alerta. O motivo é exigido pelo contrato, não pela interface.
+
+    `Query(...)` sem valor padrão: chamada sem motivo é recusada com 422 antes
+    de chegar aqui. Deixar a obrigação só na tela significaria que `curl`, um
+    script ou uma tela futura apagariam sem justificar.
+
+    A detecção que deu origem ao alerta NÃO é apagada junto — ela é o registro
+    de que algo foi visto, e continua na lista de detecções. O que sai é a
+    pendência de triagem.
+
+    Admin apenas, porque não se desfaz: encerrar com desfecho é o caminho
+    normal, e preserva o histórico. Excluir é para o alerta que nasceu de uma
+    regra que deixou de existir e só polui a fila.
+    """
+    a = await _obter(db, codigo)
+
+    await audit.registrar(
+        db, acao="ALERTA_EXCLUSAO",
+        descricao=f"Alerta {codigo} excluído ({a.titulo})",
+        severidade="warn", usuario=usuario, alvo=codigo,
+        finalidade=motivo.strip(), request=request,
+        metadados={"titulo": a.titulo, "severidade": a.severidade,
+                   "status": a.status.value, "tipo": a.tipo.value,
+                   "disparado_em": a.disparado_em.isoformat() if a.disparado_em else None,
+                   "deteccao_id": str(a.deteccao_id) if a.deteccao_id else None},
+    )
+    await db.delete(a)
+    await publicar("alerta_excluido", {"codigo": codigo})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

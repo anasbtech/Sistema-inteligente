@@ -18,6 +18,10 @@ opencv-python-headless==4.10.0.84
 insightface==0.7.3
 onnxruntime==1.20.1          # troque por onnxruntime-gpu se houver GPU
 ultralytics==8.3.55
+# Placa veicular: dois modelos ONNX pequenos (~7 MB cada), baixados na
+# primeira leitura. Rodam sobre o onnxruntime acima — não trazem torch.
+open-image-models==0.6.0     # localiza a placa dentro do recorte do veículo
+fast-plate-ocr==1.1.0        # lê os caracteres
 
 # --- Integrações -------------------------------------------------------
 httpx==0.28.1
@@ -27,3 +31,6 @@ aioboto3==13.3.0
 # --- Testes ------------------------------------------------------------
 pytest==8.3.4
 pytest-asyncio==0.25.0
+# Abre o PDF gerado e lê o texto de volta: é como os testes conferem que a
+# capa traz finalidade, operador e selo — e não só que o arquivo existe.
+pypdfium2==5.14.0

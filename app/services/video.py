@@ -20,17 +20,43 @@ from typing import Dict, Optional
 log = logging.getLogger("seguranca.video")
 
 # Sem isto o OpenCV negocia UDP e perde pacote em rede com switch gerenciado.
+#
+# `stimeout;8000000` saiu daqui: o FFmpeg o renomeou para `timeout` e passou a
+# ignorá-lo, e a medição de 29/10/2026 confirma que ele não valia nada — uma
+# abertura contra endereço mudo gastou 30,1s com ele presente, não os 8s que
+# ele dizia. Quem controla isso agora é `_abrir`, por câmera e de fato.
 os.environ.setdefault(
-    "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;8000000"
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp"
 )
 
-# Quanto esperar pela negociação RTSP antes de desistir.
+# Quanto esperar pela negociação RTSP antes de desistir, na primeira vez.
 #
-# Tentei 25s, porque o Elevador leva de 12 a 30 para negociar. Medido, não
-# resolveu — a câmera seguiu alternando entre entregar e emudecer — e custou
-# caro: a volta pelo parque passou de ~130s para 181,8s, porque a câmera que
-# falha passa a bloquear por 25 em vez de 8. Revertido.
+# Tentei 25s para todo mundo, porque o Elevador leva de 12 a 30 para negociar.
+# Medido, custou caro: a volta pelo parque passou de ~130s para 181,8s, porque
+# *qualquer* câmera que falhe passa a bloquear por 25 em vez de 8. Revertido —
+# e o erro ali foi o escopo, não o número: 23 das 24 câmeras abrem de primeira
+# e nunca precisaram de um segundo a mais.
 ABERTURA_MS = 8000
+# Até onde a espera pode crescer na câmera que falha. Medido em 29/10/2026: a
+# CAM-018 Elevador foi a única do parque a falhar, e levou 4 tentativas e 5
+# minutos entre 10:05:57 e 10:11:08 para abrir — cada tentativa desistindo aos
+# 8s de uma negociação que precisava de mais. As outras 23 tiveram zero falhas.
+ABERTURA_MAX_MS = 40000
+# Tempo limite de cada leitura, depois do fluxo aberto. O detector de inanição
+# (`SEM_IMAGEM_S`) é quem decide reconectar; este só evita que uma leitura
+# isolada pendure a thread.
+LEITURA_MS = 8000
+
+# Quanto cada câmera espera de fato, aprendido com o que já aconteceu com ela.
+#
+# O tempo limite é um teto, não uma espera: quem negocia em meio segundo abre
+# em meio segundo, com teto de 8s ou de 40s. Só paga mais quem de fato falha —
+# e é por isso que isto pode subir sem tocar no custo das outras.
+#
+# Não desce de novo. Uma câmera que precisou de 32s uma vez não fica mais
+# lenta por manter o teto alto, e baixá-lo devolveria a primeira falha da
+# próxima vez — que é a falha que custa os cinco minutos de tile preto.
+_abertura_ms: Dict[str, int] = {}
 
 # Mosaico: dezesseis tiles pequenos ao mesmo tempo. Aqui o limite é a CPU do
 # servidor, e 640px já cobre o tamanho em que cada tile é exibido.
@@ -103,6 +129,44 @@ def definir_ocioso(segundos: float) -> None:
     _ocioso_s = max(OCIOSO_S, float(segundos))
 
 
+def _abrir(cv2, url: str, espera_ms: int):
+    """Abre o fluxo RTSP com o tempo limite valendo de verdade.
+
+    O jeito antigo era construir e depois ajustar::
+
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, ABERTURA_MS)
+
+    e isso **não tem efeito nenhum**: o construtor já tenta abrir, então o
+    ajuste chega depois da abertura que ele deveria limitar. Medido em
+    29/10/2026 contra um endereço que não responde, no OpenCV 5.0.0:
+
+        pedido  2,0s -> gastou 30,1s
+        pedido 12,0s -> gastou 30,1s     (pelo construtor + set)
+        pedido  2,0s -> gastou  2,1s
+        pedido 12,0s -> gastou 12,0s     (pelos parâmetros)
+
+    Ou seja, `ABERTURA_MS` nunca valeu, e o que mandava era o padrão de 30s
+    do FFmpeg. Isso explica as duas pontas do problema: a câmera morta
+    pendurava o leitor por 30s em vez dos 8s que o código dizia, e o
+    Elevador — que negocia entre 12 e 30 — ficava no limite, às vezes
+    entrando e às vezes não.
+
+    Pelos parâmetros do construtor o número é respeitado. O `try` cobre
+    build de OpenCV sem essa sobrecarga: ali se volta ao comportamento
+    anterior, que funciona, só não deixa escolher o tempo.
+    """
+    try:
+        return cv2.VideoCapture(url, cv2.CAP_FFMPEG, [
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, int(espera_ms),
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC, int(LEITURA_MS),
+        ])
+    except Exception:                                        # noqa: BLE001
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, LEITURA_MS)
+        return cap
+
+
 class LeitorIndisponivel(RuntimeError):
     """OpenCV ausente — a ponte não pode funcionar."""
 
@@ -170,13 +234,20 @@ class Leitor:
     def _rodar(self) -> None:
         import cv2
 
-        cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, ABERTURA_MS)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+        espera = _abertura_ms.get(self.codigo, ABERTURA_MS)
+        cap = _abrir(cv2, self.url, espera)
 
         if not cap.isOpened():
+            # Da próxima vez, esta câmera — e só ela — ganha o dobro. Falhar
+            # com o teto apertado não encurta nada: o leitor é descartado, o
+            # worker cria outro na visita seguinte e a conta recomeça. Era
+            # assim que o Elevador gastava minutos em tentativas curtas
+            # enquanto o tile ficava preto.
+            _abertura_ms[self.codigo] = min(espera * 2, ABERTURA_MAX_MS)
             self.erro = "não foi possível abrir o fluxo RTSP"
-            log.warning("[%s] %s", self.codigo, self.erro)
+            log.warning("[%s] %s em %.0fs; a próxima tentativa espera %.0fs",
+                        self.codigo, self.erro, espera / 1000,
+                        _abertura_ms[self.codigo] / 1000)
             self.pronto.set()
             cap.release()
             _descartar(self)

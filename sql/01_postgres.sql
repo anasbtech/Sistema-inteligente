@@ -59,13 +59,27 @@ ALTER TABLE pessoas ADD CONSTRAINT ck_formato_id_biometrico
 
 -- ------------------------------------------------------------
 -- O identificador nunca muda depois de emitido — nem por SQL direto.
+--
+-- Uma exceção, de mão única: a saída de BIO-N. Esse prefixo não afirma nada
+-- sobre a pessoa, diz que ainda não se sabe quem ela é, e quem o recebeu
+-- entrou na base pelo reconhecimento, sem cadastro. Ao ser cadastrada e ter o
+-- sexo informado, o identificador é reemitido como BIO-M ou BIO-F.
+--
+-- O contrário continua proibido, e é o que esta direção única protege: um
+-- BIO-M não volta a ser BIO-N, nem vira BIO-F. Num cadastro humano o prefixo
+-- registra o que constava no ato da emissão, e corrigir o sexo depois não
+-- desfaz o que foi declarado então.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION id_biometrico_imutavel()
 RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.id_biometrico IS DISTINCT FROM OLD.id_biometrico THEN
+        IF OLD.id_biometrico LIKE 'BIO-N-%'
+           AND NEW.id_biometrico ~ '^BIO-[MF]-[0-9]{6}$' THEN
+            RETURN NEW;   -- promoção: deixou de ser não identificado
+        END IF;
         RAISE EXCEPTION
-            'O identificador biométrico é permanente (% -> %). Corrigir o sexo do cadastro não o reemite.',
+            'O identificador biométrico é permanente (% -> %). Corrigir o sexo do cadastro não o reemite; só a saída de BIO-N reemite.',
             OLD.id_biometrico, NEW.id_biometrico;
     END IF;
     RETURN NEW;

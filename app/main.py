@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 
@@ -20,10 +21,15 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import web
 from app.config import settings
-from app.database import MemoriaVolatil, close_connections, engine, get_redis
-from app.routers import alertas, auditoria, auth, cameras, deteccoes, pessoas, stream, usuarios
+from app.database import MemoriaVolatil, close_connections, db_context, engine, get_redis
+from app.routers import (
+    alertas, auditoria, auth, cameras, configuracao, deteccoes, pessoas, stream, usuarios,
+)
+from app.services import video
+from app.services.configuracao import carregar as carregar_configuracao
 from app.services.events import gerenciador
 from app.services.inferencia import inferencia
+from app.services.retencao import retencao
 from app.services.simulador import simulador
 
 logging.basicConfig(
@@ -43,6 +49,12 @@ async def ciclo_de_vida(app: FastAPI):
         await conn.execute(text("SELECT 1"))
     await get_redis().ping()
 
+    # Antes de qualquer motor subir: a inferência lê os pisos na primeira
+    # volta, e subir com o valor do .env faria a primeira rodada usar um
+    # número que a tela não mostra mais.
+    async with db_context() as db:
+        await carregar_configuracao(db)
+
     await gerenciador.iniciar_escuta()
     # Um exclui o outro: detecção sorteada misturada à real deixa o registro
     # sem como distinguir o que a câmera viu do que foi inventado.
@@ -53,13 +65,57 @@ async def ciclo_de_vida(app: FastAPI):
     elif settings.SIMULADOR:
         await simulador.iniciar()
 
+    # Depois dos motores: ele consulta o banco e, se estiver ligado, apaga.
+    # Mesmo desligado avisa quanto já passou do prazo — material vencido
+    # acumulando em silêncio é o que se quer deixar de ter.
+    await retencao.iniciar()
+
+    # Chave sorteada morre com o processo: no próximo reinício toda sessão cai
+    # e todo link de redefinição pendente passa a ser recusado. Em
+    # desenvolvimento é só incômodo; em produção, é gente sem conseguir entrar
+    # sem ninguém entender por quê.
+    # Sem envio de e-mail a recuperação de senha depende inteiramente de um
+    # administrador emitir o link à mão. Isso funciona, mas quem opera precisa
+    # saber disso antes de alguém ficar trancado para fora — não ao descobrir
+    # na tela, com a pessoa esperando.
+    if settings.falta_para_email:
+        log.warning(
+            "Envio de e-mail indisponível: %s. A recuperação de senha segue "
+            "funcionando pelo link emitido em Usuários → Emitir link.",
+            settings.falta_para_email,
+        )
+
+    # Com envio de e-mail funcionando e APP_URL em branco, o link de
+    # redefinição sai apontando para o laço local — chega à caixa de entrada
+    # e não abre, porque na máquina de quem recebeu `localhost` é ela mesma.
+    # Falha silenciosa do pior tipo: o envio é bem-sucedido e o sistema não
+    # tem como saber que o link é inútil.
+    if settings.falta_url_publica:
+        log.warning("%s. Defina APP_URL com o endereço pelo qual as pessoas "
+                    "acessam o sistema (ex.: APP_URL=http://10.0.0.5:8000).",
+                    settings.falta_url_publica)
+
+    if settings.chave_efemera:
+        log.warning(
+            "SECRET_KEY não está no .env — uma chave nova é sorteada a cada "
+            "reinício, e com ela caem as sessões abertas e os links de "
+            "redefinição pendentes. Defina SECRET_KEY para operar."
+        )
+
     log.info("Interface em %s", settings.url_local)
     log.info("Documentação da API em %s/docs", settings.url_local)
     yield
 
     log.info("Encerrando…")
+    await retencao.parar()
     await simulador.parar()
     await inferencia.parar()
+    # Depois dos motores e antes do banco: cada leitor RTSP é uma thread com
+    # uma conexão aberta na câmera, e `video.encerrar_todos` existia sem
+    # ninguém chamar. Sem isto, encerrar o servidor deixava as 24 conexões
+    # penduradas até a câmera derrubá-las por conta própria — e um arranque
+    # logo em seguida disputava com os leitores do processo anterior.
+    video.encerrar_todos()
     await gerenciador.parar()
     await close_connections()
 
@@ -134,11 +190,48 @@ class CabecalhosETempo:
 app.add_middleware(CabecalhosETempo)
 
 
+# O Pydantic explica em inglês e em vocabulário próprio. A tela mostra isso a
+# quem opera câmera, não a quem escreve API: "Input should be less than or
+# equal to 120" não diz a ninguém que o campo é quadros por segundo.
+#
+# Só o que aparece de fato. Mensagem sem tradução passa como veio — é melhor
+# um texto em inglês que o campo certo do que uma frase inventada.
+_TRADUCAO_VALIDACAO: list[tuple[str, str]] = [
+    (r"^Field required$", "campo obrigatório"),
+    (r"^Extra inputs are not permitted$", "campo não reconhecido"),
+    (r"^Input should be a valid integer.*$", "informe um número inteiro"),
+    (r"^Input should be a valid number.*$", "informe um número"),
+    (r"^Input should be a valid string$", "informe um texto"),
+    (r"^Input should be a valid list$", "informe uma lista"),
+    (r"^Input should be a valid boolean.*$", "informe sim ou não"),
+    (r"^Input should be less than or equal to (.+)$", r"o máximo é \1"),
+    (r"^Input should be greater than or equal to (.+)$", r"o mínimo é \1"),
+    (r"^Input should be less than (.+)$", r"precisa ser menor que \1"),
+    (r"^Input should be greater than (.+)$", r"precisa ser maior que \1"),
+    (r"^String should have at least (\d+) characters?$", r"precisa de ao menos \1 caracteres"),
+    (r"^String should have at most (\d+) characters?$", r"o limite é \1 caracteres"),
+    (r"^Input should be '?(.+?)'?$", r"valor aceito: \1"),
+    (r"^value is not a valid email address.*$", "e-mail inválido"),
+]
+
+
+def _traduzir_validacao(msg: str) -> str:
+    # "Value error, X" é o envelope que o Pydantic põe à frente das mensagens
+    # que o próprio sistema escreveu — e essas já estão em português.
+    msg = re.sub(r"^Value error,\s*", "", msg).strip()
+    for padrao, troca in _TRADUCAO_VALIDACAO:
+        novo, n = re.subn(padrao, troca, msg, flags=re.IGNORECASE)
+        if n:
+            return novo
+    return msg
+
+
 @app.exception_handler(RequestValidationError)
 async def erro_validacao(request: Request, exc: RequestValidationError):
     """Mensagem em português apontando o campo — erro de API também é interface."""
     problemas = [
-        {"campo": " → ".join(str(p) for p in e["loc"] if p != "body"), "problema": e["msg"]}
+        {"campo": " → ".join(str(p) for p in e["loc"] if p != "body"),
+         "problema": _traduzir_validacao(e["msg"])}
         for e in exc.errors()
     ]
     return JSONResponse(
@@ -155,6 +248,7 @@ app.include_router(deteccoes.router)
 app.include_router(alertas.router)
 app.include_router(usuarios.router)
 app.include_router(auditoria.router)
+app.include_router(configuracao.router)
 app.include_router(stream.router)
 
 # --- Interface ---
@@ -187,6 +281,31 @@ async def saude():
             "websockets_ativos": len(gerenciador.ativos),
             "simulador_gerados": simulador.gerados,
             "inferencia_gerados": inferencia.gerados,
+            # Quanto leva uma volta pelo parque — e, portanto, de quanto em
+            # quanto tempo cada câmera é olhada. É o número que explica por
+            # que alguém que atravessa um corredor em três segundos pode não
+            # aparecer: não é o detector que falha, é que ninguém olhou.
+            # Sem isto medido, qualquer conversa sobre atraso é palpite.
+            "inferencia_ciclo_s": round(inferencia.ciclo_real, 1),
+            "inferencia_cameras": inferencia.ultimo_total,
+            "inferencia_falhas": inferencia.falhas,
+            "inferencia_ultima_falha": inferencia.ultima_falha,
+            # Estado de cada leitor RTSP. Um tile preto pode ser leitor
+            # morto, leitor com erro ou entrega falhando — e da tela os
+            # três são idênticos. Sem isto, diagnosticar "a câmera não
+            # aparece" é adivinhação.
+            "leitores": {
+                cod: {"vivo": l.vivo, "erro": l.erro or "",
+                      "tem_quadro": l.quadro is not None,
+                      # Idade do último quadro de exibição. Um leitor
+                      # vivo com quadro velho é tile preto na tela, e
+                      # "tem_quadro" sozinho não distingue os dois.
+                      "quadro_s": round(
+                          time.monotonic() - video._ultimos[cod][0], 1)
+                      if cod in video._ultimos else None,
+                      "exibindo": l.exibindo}
+                for cod, l in sorted(video._leitores.items())
+            },
         },
     )
 

@@ -307,24 +307,35 @@ def test_a_caixa_do_corpo_nao_leva_tarja():
     fonte = Path("app/services/inferencia.py").read_text(encoding="utf-8")
     escritas = set(re.findall(r'(\w+)\[.?pessoa_nome.?\]\s*=', fonte))
     # `caixa_rosto` é `_rotular`, o único lugar que *cria* a tarja, e ela sai
-    # de um rosto lido. `nova` é `_herdar_nomes`, que não identifica ninguém:
-    # copia para a caixa da passada leve o nome que a publicação anterior já
-    # carregava, para o nome não piscar entre duas voltas completas. Nenhum
-    # dos dois aceita identidade vinda do corpo, que é o que este teste
-    # guarda.
-    assert escritas == {"caixa_rosto", "nova"}, (
+    # de um rosto lido. Nenhum outro nome pode aparecer aqui: escrever
+    # `pessoa_nome` em qualquer outra caixa é pôr a tarja no corpo.
+    assert escritas == {"caixa_rosto"}, (
         f"quem escreve a tarja mudou: {sorted(escritas)}")
 
     import inspect
 
     from app.services.inferencia import Inferencia
 
-    herdar = inspect.getsource(Inferencia._herdar_nomes)
-    assert "_ultimas_caixas" in herdar, (
-        "a herança tem de vir da publicação anterior, não de leitura nova")
-    for proibido in ("corpos", "_corpo_do_rosto", "buscar_pessoa"):
-        assert proibido not in herdar, (
-            f"`_herdar_nomes` passou a identificar por conta própria: {proibido}")
+    # O laço curto não roda facial, e por isso leva adiante a tarja da volta
+    # anterior — ancorada no corpo, para acompanhar quem anda. Ancorar no
+    # corpo é uma coisa; *identificar* pelo corpo é outra, e é a que não pode
+    # acontecer. A âncora só copia um nome que um rosto já produziu.
+    ancorados = inspect.getsource(Inferencia._rostos_ancorados)
+    assert '"classe": "rosto"' in ancorados, (
+        "a tarja herdada tem de sair numa caixa de rosto, nunca de corpo")
+    assert "_ancoras" in ancorados, (
+        "a herança vem da volta anterior, não de leitura nova")
+    for proibido in ("_corpo_do_rosto", "buscar_pessoa", "extrair_faces",
+                     "similaridade"):
+        assert proibido not in ancorados, (
+            f"`_rostos_ancorados` passou a identificar por conta própria: "
+            f"{proibido}")
+
+    # E a âncora nasce de um reconhecimento já feito: sem `pessoa_nome` na
+    # caixa do rosto, não há o que ancorar.
+    ancorar = inspect.getsource(Inferencia._ancorar)
+    assert 'caixa_rosto.get("pessoa_nome")' in ancorar, (
+        "a âncora passou a aceitar corpo sem rosto reconhecido")
 
 
 def test_registro_sem_nome_nao_escreve_nada_no_video():
@@ -843,7 +854,16 @@ def test_camera_na_tela_volta_varias_vezes(monkeypatch):
 
 
 def test_revisitas_se_dividem_entre_as_cameras_vistas(monkeypatch):
-    """No 2x2 são quatro telas: o orçamento se reparte, não se multiplica."""
+    """No 2x2 são quatro telas: o orçamento se reparte, não se multiplica.
+
+    E repartir significa que nem toda câmera em tela ganha revisita — com
+    quatro telas e orçamento de duas, duas ficam sem. Isso é aceitável porque
+    a revisita deixou de ser o que renova a marcação: quem renova é o laço
+    curto, que gira por todas as câmeras em tela. A revisita só acrescenta o
+    que ele não faz — varredura em ladrilhos e leitura de rosto.
+
+    O que não pode acontecer é a revisita roubar a vez de alguém.
+    """
     from app.config import settings
     from app.services.inferencia import Inferencia
 
@@ -852,64 +872,107 @@ def test_revisitas_se_dividem_entre_as_cameras_vistas(monkeypatch):
     ordem = [c.codigo for c in Inferencia()._ordem_da_volta(_cams(24))]
     extras = len(ordem) - 24
     assert extras == settings.INFERENCIA_REVISITAS, "o orçamento é por volta"
-    for cod in vistas:
-        assert ordem.count(cod) >= 2, f"{cod} precisa de ao menos uma revisita"
+    # Toda câmera do parque continua sendo visitada ao menos uma vez.
+    for i in range(1, 25):
+        assert f"CAM-{i:03d}" in ordem, "uma câmera perdeu a vez para a revisita"
+    # E as revisitas vão para quem está na tela, nunca para quem não está.
+    repetidas = {c for c in ordem if ordem.count(c) > 1}
+    assert repetidas and repetidas <= vistas, (
+        f"revisita foi parar em câmera sem espectador: {repetidas - vistas}")
 
 
 # ----------------------------------------------------------------------
 # A caixa não sobrevive muito além da próxima visita
 # ----------------------------------------------------------------------
-def test_validade_segue_o_intervalo_da_camera_nao_o_da_volta(monkeypatch):
-    """A caixa fantasma de quem já saiu.
+async def _nada(tipo, dados):
+    """Publicação no vácuo: aqui o que importa é a validade, não o envio."""
 
-    A câmera com espectador é reolhada várias vezes por volta, mas a
-    validade publicada era a da volta inteira — com o ciclo em 139s, a
-    marcação de alguém que saiu ficava de pé por quase cinco minutos numa
-    câmera reolhada a cada quinze segundos.
+
+def _publicar(motor, codigo, instantes):
+    """Publica a mesma cena nos instantes dados, e devolve as validades."""
+    import asyncio
+
+    async def correr():
+        saida = []
+        for t in instantes:
+            await motor._publicar_caixas(codigo, [], agora=t)
+            saida.append(motor._ultimas_caixas[codigo]["validade_s"])
+        return saida
+
+    return asyncio.run(correr())
+
+
+def test_validade_segue_o_intervalo_medido_da_camera(monkeypatch):
+    """A caixa fantasma de quem já saiu, e a caixa que pisca.
+
+    A validade era deduzida do rodízio: ciclo dividido por `1 +
+    INFERENCIA_REVISITAS` sempre que havia espectador. A dedução errava para
+    os dois lados ao mesmo tempo, porque o orçamento de revisitas é repartido
+    entre todas as câmeras em tela — com uma tela aberta a validade saía
+    longa demais (fantasma), e no mosaico 4×4, onde a maioria das câmeras
+    ganha zero revisita, saía sete vezes curta demais (a caixa pisca).
+
+    Medir dispensa adivinhar: o intervalo observado já embute o rodízio, o
+    laço curto, o teto de câmeras e a câmera que falhou e nem publicou.
     """
-    from types import SimpleNamespace
-
-    from app.config import settings
     from app.services import inferencia as mod
 
     motor = mod.Inferencia()
     motor.ciclo_real = 140.0
-    monkeypatch.setattr(mod.video, "_leitores", {
-        "CAM-VISTA": SimpleNamespace(exibindo=True),
-        "CAM-ESQUECIDA": SimpleNamespace(exibindo=False),
-    })
+    monkeypatch.setattr(mod, "publicar", _nada)
 
-    vista = motor._validade_de("CAM-VISTA")
-    esquecida = motor._validade_de("CAM-ESQUECIDA")
+    # Uma câmera republicada a cada 2s não pode carregar a validade da volta.
+    validades = _publicar(motor, "CAM-RAPIDA", [0.0, 2.0, 4.0, 6.0])
+    assert validades[0] == 280.0, "a primeira publicação só tem o ciclo"
+    assert validades[-1] <= 5.0, (
+        f"a validade não acompanhou o intervalo medido: {validades}")
 
-    # Sem espectador nada muda: a validade segue sendo a da volta.
-    assert esquecida == 280.0
-    # Com espectador, acompanha o intervalo real entre duas visitas.
-    esperado = 140.0 / (1 + settings.INFERENCIA_REVISITAS) * 2
-    assert abs(vista - esperado) < 0.2
-    assert vista < esquecida / 5, "a caixa tem de morrer muito antes"
+    # E uma câmera vista uma vez por volta precisa da validade da volta,
+    # senão a caixa dela some entre duas visitas.
+    lenta = _publicar(motor, "CAM-LENTA", [0.0, 140.0, 280.0])
+    assert lenta[-1] >= 280.0, f"a caixa vai piscar: {lenta}"
+
+
+def test_validade_sobe_na_hora_e_desce_devagar(monkeypatch):
+    """Alongar tarde deixa a caixa piscar; encurtar cedo devolve o fantasma.
+
+    Quando a máquina enche, a volta seguinte pode ser muito mais lenta que a
+    anterior — e a caixa emitida com a validade da volta rápida morre com a
+    pessoa ainda em cena. Por isso o intervalo medido sobe de uma vez e desce
+    pela metade a cada publicação.
+    """
+    from app.services import inferencia as mod
+
+    motor = mod.Inferencia()
+    motor.ciclo_real = 10.0
+    monkeypatch.setattr(mod, "publicar", _nada)
+
+    # Rápida, rápida, e de repente uma pausa longa.
+    v = _publicar(motor, "CAM-X", [0.0, 2.0, 4.0, 44.0])
+    assert v[-1] >= 80.0, f"a validade não acompanhou a pausa: {v}"
+    # E depois de voltar ao ritmo, encolhe — mas não de uma vez.
+    v += _publicar(motor, "CAM-X", [46.0, 48.0])
+    assert v[-1] < v[-3], f"a validade precisa encolher: {v}"
+    assert v[-1] > 4.0 * 2, "encolheu de uma vez e devolve o fantasma"
 
 
 def test_validade_tem_piso_para_nao_piscar(monkeypatch):
     """Apertada demais, a caixa some entre duas visitas — e o vídeo fica
     limpo com gente em cena, que é o erro oposto e pior."""
-    from types import SimpleNamespace
-
     from app.services import inferencia as mod
 
     motor = mod.Inferencia()
-    motor.ciclo_real = 3.0
-    monkeypatch.setattr(mod.video, "_leitores",
-                        {"CAM-RAPIDA": SimpleNamespace(exibindo=True)})
-    assert motor._validade_de("CAM-RAPIDA") >= 4.0
+    motor.ciclo_real = 0.5
+    monkeypatch.setattr(mod, "publicar", _nada)
+    assert min(_publicar(motor, "CAM-RAPIDA", [0.0, 0.3, 0.6])) >= 4.0
 
 
-def test_camera_sem_leitor_nao_quebra_a_publicacao(monkeypatch):
+def test_camera_que_nunca_publicou_usa_o_ciclo():
+    """Sem intervalo observado ainda, o da volta é a única estimativa."""
     from app.services import inferencia as mod
 
     motor = mod.Inferencia()
     motor.ciclo_real = 100.0
-    monkeypatch.setattr(mod.video, "_leitores", {})
     assert motor._validade_de("CAM-QUE-NAO-ABRIU") == 200.0
 
 
@@ -968,15 +1031,20 @@ def test_pessoas_encostadas_nao_viram_uma():
     assert len(fundir_sobrepostas([a, b])) == 2
 
 
-def _andar(rastreio, passos, passo_px):
-    """Duas pessoas em sentidos opostos, um quadro por passo."""
+def _andar(rastreio, passos, passo_px, intervalo_s=0.15):
+    """Duas pessoas em sentidos opostos, um quadro por passo.
+
+    O intervalo vai explícito: o rastreio segue pela posição prevista quando
+    os quadros estão próximos, e sem `agora` as chamadas saíam a milissegundos
+    umas das outras — a "visita distante" do teste virava rajada.
+    """
     vistos = []
     for p in range(passos):
         xe, xd = 300 + p * passo_px, 1500 - p * passo_px
         objs = rastreio.atribuir([
             ObjetoDetectado("pessoa", 0.9, (xe - 45, 290, xe + 45, 510)),
             ObjetoDetectado("pessoa", 0.9, (xd - 45, 290, xd + 45, 510)),
-        ])
+        ], agora=1000.0 + p * intervalo_s)
         vistos.append(tuple(o.track_id for o in objs))
     return vistos
 
@@ -1010,7 +1078,7 @@ def test_entre_visitas_distantes_quem_atravessou_e_outra_passagem():
     """
     from app.services.vision import RastreioPorPosicao
 
-    vistos = _andar(RastreioPorPosicao(), 3, passo_px=60)
+    vistos = _andar(RastreioPorPosicao(), 3, passo_px=60, intervalo_s=30.0)
     assert vistos[0] != vistos[1], (
         "passo de visita distante deveria render identidade nova")
 
@@ -1082,34 +1150,422 @@ def test_camera_sem_espectador_nao_paga_a_passada(monkeypatch):
     assert publicados == []
 
 
+def _norm(x1, y1, x2, y2, largura=1920, altura=1080):
+    return [x1 / largura, y1 / altura, (x2 - x1) / largura, (y2 - y1) / altura]
+
+
+def _ancora(corpo, rosto, nome="ANDRÉ LUIZ CARDOSO"):
+    return {"nome": nome, "confianca": 0.9,
+            "rosto": _norm(*rosto), "corpo": _norm(*corpo)}
+
+
 def test_o_nome_nao_pisca_entre_duas_voltas(monkeypatch):
     """A passada leve não roda facial.
 
-    Sem herdar, o nome de quem foi reconhecido sumiria a cada renovação e
-    voltaria só na volta completa — piscando a cada segundo.
+    Sem levar a tarja adiante, o nome de quem foi reconhecido sumiria a cada
+    renovação e voltaria só na volta completa — piscando a cada segundo.
+
+    A montagem importa, e a antiga escondia o defeito: ela punha o nome numa
+    caixa de *pessoa*, e herdar por sobreposição funcionava. Na produção o
+    nome está na caixa do **rosto**, que é uma fração da do corpo — a
+    sobreposição entre as duas nunca chegava ao limiar, e o nome não
+    sobrevivia a renovação nenhuma.
     """
     pessoa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
     motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa])
-    motor._ultimas_caixas["CAM-700"] = {
-        "camera_codigo": "CAM-700",
-        "caixas": [{"classe": "pessoa", "pessoa_nome": "ANDRÉ LUIZ CARDOSO",
-                    "bbox": [800 / 1920, 300 / 1080, 100 / 1920, 460 / 1080]}],
-        "validade_s": 50.0, "em": 0.0,
-    }
+    motor._ancoras["CAM-700"] = [
+        _ancora(corpo=(800, 300, 900, 760), rosto=(830, 310, 870, 360))]
+
     aio.run(motor._renovar_sobreposicoes())
-    assert publicados[0]["caixas"][0].get("pessoa_nome") == "ANDRÉ LUIZ CARDOSO"
+
+    caixas = publicados[0]["caixas"]
+    nomeadas = [c for c in caixas if c.get("pessoa_nome")]
+    assert len(nomeadas) == 1, "o nome tem de aparecer, e uma vez só"
+    assert nomeadas[0]["pessoa_nome"] == "ANDRÉ LUIZ CARDOSO"
+    assert nomeadas[0]["classe"] == "rosto", "a tarja não pode ir para o corpo"
+    # A tarja leva a identidade do corpo sob ela: é por ela que a tela desliza
+    # as duas juntas em vez de deslizar o retângulo e saltar o nome.
+    corpo = next(c for c in caixas if c["classe"] == "pessoa")
+    assert nomeadas[0]["track_id"] == corpo["track_id"] is not None
+
+
+def test_a_tarja_acompanha_quem_se_move(monkeypatch):
+    """A pessoa se moveu entre duas renovações: o nome vai junto.
+
+    O rosto só é lido na volta completa. Se a tarja ficasse onde o rosto
+    estava, ela se descolaria do corpo e acabaria pairando sobre o lugar
+    vazio de onde a pessoa saiu.
+
+    Trinta pixels numa caixa de cem — menos de meia largura, que é o que a
+    sobreposição entre duas renovações tolera.
+    """
+    moveu = ObjetoDetectado("pessoa", 0.9, (830, 300, 930, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [moveu])
+    motor._ancoras["CAM-700"] = [
+        _ancora(corpo=(800, 300, 900, 760), rosto=(830, 310, 870, 360))]
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    rosto = next(c for c in publicados[0]["caixas"] if c["classe"] == "rosto")
+    # O corpo andou 30px à direita; o rosto tem de ter andado o mesmo tanto.
+    assert abs(rosto["bbox"][0] - 860 / 1920) < 1e-6, (
+        f"a tarja ficou para trás: {rosto['bbox']}")
+    # E continua do tamanho de antes, porque o corpo não mudou de tamanho.
+    assert abs(rosto["bbox"][2] - 40 / 1920) < 1e-6
+
+
+def test_a_tarja_nao_persegue_quem_atravessou_a_cena(monkeypatch):
+    """O limite declarado, e é de método, não de ajuste.
+
+    Entre duas renovações passam uns dois segundos, e quem atravessa a cena
+    andando percorre várias larguras de caixa nesse tempo: as duas caixas não
+    se tocam e nenhum limiar as associa. O certo então é **perder** o nome, e
+    não arrastá-lo pela tela até a caixa mais próxima — essa seria a troca de
+    identidade, que num sistema de vigilância é o erro mais caro.
+    """
+    atravessou = ObjetoDetectado("pessoa", 0.9, (1400, 300, 1500, 760),
+                                 track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [atravessou])
+    motor._ancoras["CAM-700"] = [
+        _ancora(corpo=(800, 300, 900, 760), rosto=(830, 310, 870, 360))]
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    assert not [c for c in publicados[0]["caixas"] if c.get("pessoa_nome")], (
+        "o nome foi arrastado para uma caixa que não é a mesma pessoa")
 
 
 def test_nome_nao_salta_para_quem_esta_noutro_lugar(monkeypatch):
-    """Herdar por sobreposição, não por ordem na lista: uma caixa distante
-    não pode receber o nome de quem estava do outro lado da cena."""
+    """A âncora é o corpo: sem reencontrá-lo, o nome morre.
+
+    Uma caixa do outro lado da cena não pode receber o nome de quem estava
+    aqui — seria pôr a identidade de alguém sobre outra pessoa, que é o erro
+    mais caro que a tela pode cometer.
+    """
     longe = ObjetoDetectado("pessoa", 0.9, (100, 300, 200, 760), track_id=1)
     motor, publicados, aio = _motor_com_tela(monkeypatch, [longe])
-    motor._ultimas_caixas["CAM-700"] = {
-        "camera_codigo": "CAM-700",
-        "caixas": [{"classe": "pessoa", "pessoa_nome": "ANDRÉ LUIZ CARDOSO",
-                    "bbox": [1600 / 1920, 300 / 1080, 100 / 1920, 460 / 1080]}],
-        "validade_s": 50.0, "em": 0.0,
-    }
+    motor._ancoras["CAM-700"] = [
+        _ancora(corpo=(1600, 300, 1700, 760), rosto=(1630, 310, 1670, 360))]
+
     aio.run(motor._renovar_sobreposicoes())
-    assert "pessoa_nome" not in publicados[0]["caixas"][0]
+
+    assert not [c for c in publicados[0]["caixas"] if c.get("pessoa_nome")]
+    assert motor._ancoras["CAM-700"] == [], "âncora sem corpo tem de morrer"
+
+
+# ----------------------------------------------------------------------
+# O custo do laço curto, que é a razão de ele existir
+# ----------------------------------------------------------------------
+def test_o_laco_curto_nao_paga_a_varredura(monkeypatch):
+    """Medido nos 23 quadros deste parque: a passada inteira leva 1.231 ms
+    por câmera e a varredura em ladrilhos mais 3.309 ms — 73% do custo.
+
+    O laço existe para republicar a cena a cada segundo. Pedindo "ocupado",
+    como estava, a varredura ligava exatamente nas câmeras que importam — as
+    que têm gente em cena —, e o laço "curto" passava de 1,2s para 4,5s por
+    câmera. Com nove tiles abertos, 41s por rodada em vez de 11s.
+    """
+    from app.services import inferencia as mod
+
+    pessoa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    motor, _pub, aio = _motor_com_tela(monkeypatch, [pessoa])
+    pedidos = []
+    monkeypatch.setattr(mod.vision, "detectar_objetos",
+                        lambda *a, **k: (pedidos.append(a), [pessoa])[1])
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    # A assinatura é (quadro, limiar, rastrear, classes_fora, varredura).
+    assert pedidos and pedidos[0][4] == "nunca", (
+        f"o laço curto voltou a pagar a varredura: {pedidos[0][4]!r}")
+
+
+def test_quem_so_a_varredura_acha_nao_pisca(monkeypatch):
+    """A pessoa que a passada inteira perde.
+
+    Nos quadros deste parque a varredura achou quatro pessoas que a passada
+    inteira não viu — inclusive uma sentada à mesa do Administrativo
+    ocupando 241x147 px, que de longe não é "pessoa distante": é alguém
+    debruçado sobre papel, que o modelo só reconhece com mais pixels.
+
+    O laço curto não roda varredura. Sem lembrar o que a volta achou, a caixa
+    dessas pessoas apareceria uma vez por volta e sumiria no segundo seguinte.
+    """
+    perto = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [perto])
+
+    # O que a volta completa viu: a mesma pessoa, mais uma que só a varredura
+    # alcançou, do outro lado da sala.
+    distante = ObjetoDetectado("pessoa", 0.3, (1500, 400, 1560, 520))
+    distante.de_varredura = True
+    motor._lembrar_distantes("CAM-700", [perto, distante], 1920, 1080)
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    caixas = publicados[0]["caixas"]
+    assert len(caixas) == 2, f"a pessoa distante sumiu da cena: {caixas}"
+    assert any(abs(c["bbox"][0] - 1500 / 1920) < 1e-6 for c in caixas)
+
+
+def test_a_distante_nao_vira_caixa_em_dobro(monkeypatch):
+    """Quando a passada curta também a acha, vale a leitura de agora.
+
+    Empilhar as duas poria duas caixas sobre a mesma pessoa — a duplicata que
+    a fusão existe para evitar, reintroduzida pela porta dos fundos.
+    """
+    pessoa = ObjetoDetectado("pessoa", 0.9, (1500, 400, 1560, 520), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa])
+
+    lembrada = ObjetoDetectado("pessoa", 0.3, (1498, 398, 1562, 522))
+    lembrada.de_varredura = True
+    motor._lembrar_distantes("CAM-700", [lembrada], 1920, 1080)
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    assert len(publicados[0]["caixas"]) == 1, "duas caixas sobre a mesma pessoa"
+
+
+def test_a_distante_vence_com_a_volta(monkeypatch):
+    """Lembrada para sempre, ela seria o fantasma que a validade apaga."""
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [])
+
+    distante = ObjetoDetectado("pessoa", 0.3, (1500, 400, 1560, 520))
+    distante.de_varredura = True
+    motor._lembrar_distantes("CAM-700", [distante], 1920, 1080)
+    # Envelhece a lembrança para além de uma volta inteira.
+    quando, caixas = motor._distantes["CAM-700"]
+    motor._distantes["CAM-700"] = (quando - motor.ciclo_real - 1, caixas)
+
+    aio.run(motor._renovar_sobreposicoes())
+
+    assert publicados[0]["caixas"] == []
+    assert "CAM-700" not in motor._distantes
+
+
+def test_nenhum_tile_do_mosaico_fica_sem_a_vez():
+    """Mais câmeras em tela que o teto da rodada.
+
+    Fatiando sempre do começo da lista, as que sobram ficavam fora de *toda*
+    rodada e só eram reolhadas na volta completa — era o tile que nunca
+    ganhava caixa. Girando o ponto de partida, cada uma entra na sua vez.
+
+    O 4×4 cabe inteiro no teto desde que a varredura saiu do laço; este teste
+    guarda o caso em que não cabe, que é para o que o rodízio serve.
+    """
+    from app.config import settings
+    from app.services.inferencia import Inferencia
+
+    motor = Inferencia()
+    vistas = [f"CAM-{i:03d}" for i in range(1, 25)]
+    assert len(vistas) > settings.INFERENCIA_SOBREPOSICAO_MAX, (
+        "o teste precisa de mais câmeras que o teto para valer de algo")
+
+    atendidas = set()
+    for _ in range(4):
+        fila = motor._fila_da_renovacao(vistas)
+        # O teto vale sempre: a rodada não pode crescer com o parque.
+        assert len(fila) == settings.INFERENCIA_SOBREPOSICAO_MAX
+        atendidas |= set(fila)
+    assert atendidas == set(vistas), (
+        f"ficaram de fora: {sorted(set(vistas) - atendidas)}")
+
+
+def test_o_quatro_por_quatro_cabe_numa_rodada_so():
+    """Com dezesseis tiles, todos se renovam no mesmo passo.
+
+    Medido com teto de nove: a renovação de cada câmera variava de 17s a 43s
+    conforme ela caísse no começo ou no fim de uma rodada — a caixa de uma
+    acompanhava a cena e a da vizinha ficava para trás, sem nada na cena que
+    explicasse a diferença.
+    """
+    from app.services.inferencia import Inferencia
+
+    motor = Inferencia()
+    vistas = [f"CAM-{i:03d}" for i in range(1, 17)]
+    assert set(motor._fila_da_renovacao(vistas)) == set(vistas)
+
+
+def test_a_identidade_segue_a_pessoa_entre_duas_renovacoes(monkeypatch):
+    """Sem número estável a tela não tem como mover a caixa: ela só pode
+    apagá-la de um lugar e acendê-la noutro, que é o piscar de posição."""
+    motor, publicados, aio = _motor_com_tela(
+        monkeypatch, [ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760))])
+    aio.run(motor._renovar_sobreposicoes())
+    primeira = publicados[0]["caixas"][0]["track_id"]
+    assert primeira is not None, "a caixa saiu sem identidade"
+
+    # Mesma pessoa, trinta pixels adiante.
+    from app.services import inferencia as mod
+    monkeypatch.setattr(
+        mod.vision, "detectar_objetos",
+        lambda *a, **k: [ObjetoDetectado("pessoa", 0.9, (830, 300, 930, 760))])
+    aio.run(motor._renovar_sobreposicoes())
+
+    assert publicados[1]["caixas"][0]["track_id"] == primeira
+
+
+def test_duas_pessoas_que_se_aproximam_nao_trocam_de_numero(monkeypatch):
+    """A troca de identidade é o erro mais caro: ela leva o nome de uma
+    pessoa para cima da outra.
+
+    Duas pessoas que se aproximam até ficarem ombro a ombro — o caso medido
+    neste parque, onde o IoU entre pessoas distintas chegou a 0,29. Cada uma
+    se sobrepõe mais a si mesma do passo anterior (0,43) do que à outra, e é
+    disso que a associação vive.
+
+    O que este teste **não** cobre, porque não é decidível: duas caixas
+    exatamente sobrepostas. Aí não há informação de posição que diga qual é
+    qual, e nenhum rastreador por posição acerta — distinguir as duas pediria
+    comparar aparência.
+    """
+    from app.services import inferencia as mod
+
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [])
+    for passo in range(5):
+        esq, dir_ = 400 + passo * 40, 800 - passo * 40
+        monkeypatch.setattr(mod.vision, "detectar_objetos", lambda *a, **k: [
+            ObjetoDetectado("pessoa", 0.9, (esq, 300, esq + 100, 760)),
+            ObjetoDetectado("pessoa", 0.9, (dir_, 300, dir_ + 100, 760)),
+        ])
+        aio.run(motor._renovar_sobreposicoes())
+
+    # Cada passo devolve duas identidades distintas, e o conjunto não cresce:
+    # ninguém ganhou número novo no caminho nem herdou o do outro.
+    marcas = [tuple(c["track_id"] for c in p["caixas"]) for p in publicados]
+    assert all(len(set(m)) == 2 for m in marcas), f"duas viraram uma: {marcas}"
+    assert marcas[0] == marcas[-1], f"a identidade trocou no cruzamento: {marcas}"
+
+
+# ----------------------------------------------------------------------
+# A abertura do RTSP: o tile preto do Elevador
+# ----------------------------------------------------------------------
+class _CapFalso:
+    """VideoCapture de mentira que anota como foi construído."""
+
+    def __init__(self, abre: bool):
+        self._abre = abre
+        self.ajustes: list = []
+
+    def isOpened(self):
+        return self._abre
+
+    def set(self, prop, valor):
+        self.ajustes.append((prop, valor))
+
+    def release(self):
+        pass
+
+
+class _Cv2Falso:
+    CAP_FFMPEG = 1900
+    CAP_PROP_OPEN_TIMEOUT_MSEC = 53
+    CAP_PROP_READ_TIMEOUT_MSEC = 54
+
+    def __init__(self, abre=True):
+        self.abre = abre
+        self.params = None
+        self.ultimo = None
+
+    def VideoCapture(self, url, api, params=None):
+        self.params = params
+        self.ultimo = _CapFalso(self.abre)
+        return self.ultimo
+
+
+def test_o_tempo_limite_de_abertura_vai_no_construtor():
+    """Ajustar depois de construir não limita nada.
+
+    O construtor do `VideoCapture` já tenta abrir o fluxo, então um
+    `cap.set(CAP_PROP_OPEN_TIMEOUT_MSEC, ...)` feito em seguida chega depois
+    da abertura que deveria limitar. Medido em 29/10/2026 contra um endereço
+    que não responde, no OpenCV 5.0.0: pedindo 2s gastou 30,1s, e pedindo 12s
+    gastou os mesmos 30,1s — o padrão do FFmpeg. Pelos parâmetros, 2,0s virou
+    2,1s e 12,0s virou 12,0s.
+
+    Era por isso que `ABERTURA_MS` nunca valeu: a câmera morta pendurava o
+    leitor por 30s em vez dos 8s que o código afirmava, e o Elevador, que
+    negocia entre 12 e 30, ficava no limite.
+    """
+    from app.services import video
+
+    falso = _Cv2Falso()
+    video._abrir(falso, "rtsp://x/y", 16000)
+
+    assert falso.params is not None, "o tempo limite voltou a ser aplicado tarde"
+    pares = dict(zip(falso.params[::2], falso.params[1::2]))
+    assert pares[_Cv2Falso.CAP_PROP_OPEN_TIMEOUT_MSEC] == 16000
+
+
+def test_so_a_camera_que_falha_ganha_mais_tempo():
+    """A correção anterior subiu o tempo para o parque inteiro e custou caro:
+    a volta passou de ~130s para 181,8s, porque *qualquer* câmera que falhe
+    passa a bloquear mais. O erro ali foi o escopo — 23 das 24 câmeras abrem
+    de primeira e nunca precisaram de um segundo a mais.
+    """
+    from app.services import video
+
+    video._abertura_ms.clear()
+    try:
+        # Quatro tentativas frustradas na mesma câmera.
+        esperas = []
+        for _ in range(4):
+            espera = video._abertura_ms.get("CAM-LENTA", video.ABERTURA_MS)
+            esperas.append(espera)
+            video._abertura_ms["CAM-LENTA"] = min(
+                espera * 2, video.ABERTURA_MAX_MS)
+
+        assert esperas[0] == video.ABERTURA_MS, "a primeira não pode custar mais"
+        assert esperas == sorted(esperas), "a espera tem de crescer"
+        assert max(video._abertura_ms.values()) <= video.ABERTURA_MAX_MS, (
+            "sem teto, a câmera morta penduraria o leitor para sempre")
+        # E a vizinha, que nunca falhou, não paga nada disso.
+        assert video._abertura_ms.get(
+            "CAM-SAUDAVEL", video.ABERTURA_MS) == video.ABERTURA_MS
+    finally:
+        video._abertura_ms.clear()
+
+
+def test_a_opcao_morta_do_ffmpeg_saiu():
+    """`stimeout` foi renomeado para `timeout` no FFmpeg e passou a ser
+    ignorado. Mantê-lo ali dizia que a abertura esperava 8s quando ela
+    esperava 30 — configuração morta que parece viva é pior que nenhuma."""
+    from app.services import video
+
+    assert "stimeout" not in video.os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+    # O transporte TCP continua, e esse vale: sem ele o OpenCV negocia UDP e
+    # perde pacote em rede com switch gerenciado.
+    assert "rtsp_transport;tcp" in video.os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+
+
+def test_na_rajada_quem_corre_mantem_a_identidade():
+    """Quem corre já não se sobrepõe à própria caixa do quadro anterior.
+
+    Medido no Avenue: o corredor ganhava número novo em 9 de 10 quadros, a
+    trajetória nunca se formava e corrida não disparava. Com quadros
+    próximos, o rastreio segue pela posição prevista pela velocidade.
+    """
+    from app.services.vision import RastreioPorPosicao
+
+    vistos = _andar(RastreioPorPosicao(), 8, passo_px=110, intervalo_s=0.22)
+    assert len(set(vistos)) == 1, f"a identidade mudou durante a corrida: {vistos}"
+
+
+def test_correr_na_horizontal_e_na_vertical_mede_igual():
+    """A régua é o corpo nos dois eixos.
+
+    Os pontos ficam em fração da largura e da altura, e numa imagem 16:9 o
+    deslocamento horizontal saía 44% menor que o vertical de mesmo tamanho.
+    """
+    from app.services.vision import Trilha
+
+    def ritmo(dx, dy):
+        tr = Trilha(1, "pessoa")
+        for i in range(8):
+            px, py = 200 + i * dx, 200 + i * dy
+            tr.registrar(px / 1280, py / 720, 1000 + i * 0.22, 120 / 720, 1280 / 720)
+        return tr.arranque()[0]
+
+    horizontal, vertical = ritmo(60, 0), ritmo(0, 60)
+    assert abs(horizontal - vertical) < 0.01, (horizontal, vertical)
+    # 60 px a cada 0,22 s com um corpo de 120 px: 2,27 corpos por segundo.
+    assert abs(horizontal - 60 / 0.22 / 120) < 0.01

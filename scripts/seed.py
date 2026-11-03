@@ -27,11 +27,11 @@ log = logging.getLogger("seed")
 EMAIL_ADMIN = "admin@pa.com.br"
 
 USUARIOS = [
-    ("Ana Caroline",            EMAIL_ADMIN,            "Admin@2026", "PA-000001", Perfil.ADMIN,    "Comando Geral"),
-    ("Ten. Rafael Bittencourt", "supervisor@pm.gov.br", "Super@2026", "PM-118203", Perfil.SUPER,    "1º BPM"),
-    ("Sgt. Priscila Tavares",   "operador@pm.gov.br",   "Oper@2026",  "PM-220741", Perfil.OPERADOR, "COPOM"),
-    ("Dra. Helena Nakamura",    "analista@pm.gov.br",   "Anal@2026",  "CV-009317", Perfil.ANALISTA, "Inteligência"),
-    ("Dr. Enzo Vilela",         "auditoria@mp.gov.br",  "Audi@2026",  "MP-004412", Perfil.AUDITOR,  "Corregedoria"),
+    ("Ana Caroline",            EMAIL_ADMIN,            "Admin@2026", "PA-000001", Perfil.ADMIN,    "Administrativo"),
+    ("Rafael Bittencourt",      "supervisor@pm.gov.br", "Super@2026", "PA-000002", Perfil.SUPER,    "Portaria"),
+    ("Priscila Tavares",        "operador@pm.gov.br",   "Oper@2026",  "PA-000003", Perfil.OPERADOR, "Recepção"),
+    ("Helena Nakamura",         "analista@pm.gov.br",   "Anal@2026",  "PA-000004", Perfil.ANALISTA, "Analistas"),
+    ("Enzo Vilela",             "auditoria@mp.gov.br",  "Audi@2026",  "PA-000005", Perfil.AUDITOR,  "Administrativo"),
 ]
 
 # Registro biométrico inicial. Sem embedding: o template só existe depois que
@@ -40,7 +40,7 @@ PESSOA_INICIAL = {
     "nome": "Ana Caroline",
     "sexo": Sexo.F,
     "status": StatusPessoa.FUNCIONARIO,
-    "unidade": "Comando Geral",
+    "unidade": "Administrativo",
     "base_legal": "Termo assinado",
 }
 

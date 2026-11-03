@@ -1,4 +1,4 @@
-/* ==========================================================
+﻿/* ==========================================================
    SEGURANÇA — Alertas, usuários, auditoria e configurações
    ========================================================== */
 'use strict';
@@ -6,6 +6,18 @@
 /* ==========================================================
    ALERTAS
    ========================================================== */
+/* De onde sai a imagem deste alerta.
+
+   A captura que o gerou, quando houve uma. Quando não houve — alerta de sala
+   reportando que ela ficou vazia, por exemplo — o próprio alerta guarda o
+   quadro daquele instante. Sem esta escolha a coluna CAPTURA ficava em branco
+   justamente nos alertas que mais precisam dela. */
+function imagemDoAlerta(a){
+  if(a.deteccao_codigo) return {codigo: a.deteccao_codigo, fonte: 'deteccoes'};
+  if(a.tem_imagem)      return {codigo: a.codigo, fonte: 'alertas'};
+  return null;
+}
+
 async function renderAlertas(alvo){
   const resumo = await API.resumoAlertas();
   const f = FILTRO.alertas, hoje = diaISO(new Date());
@@ -51,12 +63,16 @@ async function renderAlertas(alvo){
         ate: limiteDia(FILTRO.alertas.ate, true)
       });
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th style="width:8px"></th><th>Alerta</th><th>Tipo</th><th>Câmera</th>
+        <thead><tr><th style="width:8px"></th><th style="width:64px">Captura</th>
+          <th>Alerta</th><th>Tipo</th><th>Câmera</th>
           <th>Data / hora</th><th>Status</th><th style="width:110px"></th></tr></thead>
         <tbody>${(r.itens||[]).map(a => {
           const st = STATUS_ALERTA[a.status] || {};
           return `<tr class="clickable" data-a="${esc(a.codigo)}">
             <td style="padding:0"><div class="sev sev-${a.severidade}" style="height:100%;min-height:44px;width:3px"></div></td>
+            <td>${imagemDoAlerta(a)
+              ? `<canvas data-snap="${snapAttr(imagemDoAlerta(a), imagemDoAlerta(a).fonte)}" width="54"></canvas>`
+              : ''}</td>
             <td><b>${esc(a.titulo)}</b><br><span class="td-ts">${esc((a.detalhe||'').slice(0,72))}${(a.detalhe||'').length>72?'…':''}</span></td>
             <td><span class="chip ${a.tipo==='FACIAL'?'c-blue':a.tipo==='OBJETO'?'c-green':'c-violet'}">${esc(a.tipo)}</span></td>
             <td><b>${esc(a.camera?a.camera.codigo:'')}</b><br><span class="td-ts">${esc((a.camera?a.camera.nome:'').slice(0,24))}</span></td>
@@ -65,10 +81,11 @@ async function renderAlertas(alvo){
             <td style="text-align:right">${a.status!=='RESOLVIDO' && API.pode('edit')
               ? `<button class="btn btn-soft btn-sm" data-assume="${esc(a.codigo)}">Assumir</button>` : ''}</td>
           </tr>`;
-        }).join('') || `<tr><td colspan="7">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
+        }).join('') || `<tr><td colspan="8">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
         </tbody></table></div>
         ${pagerHTML(r.total, r.pagina, r.por_pagina, 'alertas')}`;
 
+      pintarSnaps(corpo);
       $$('tr[data-a]', corpo).forEach(t => t.onclick = () => abrirAlerta(t.dataset.a));
       $$('[data-assume]', corpo).forEach(b => b.onclick = async e => {
         e.stopPropagation();
@@ -110,6 +127,12 @@ async function abrirAlerta(codigo){
       <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
     <div class="modal-bd">
       <p style="margin:0 0 15px;color:var(--txt-2);font-size:13.5px;line-height:1.55">${esc(a.detalhe)}</p>
+      ${imagemDoAlerta(a) ? `<div class="eyebrow" style="margin:0 0 7px">${
+          a.deteccao_codigo ? 'Captura que gerou o alerta' : 'A sala no momento do alerta'}</div>
+      <div id="alMold" style="margin-bottom:15px">
+        <canvas id="alSnap" style="border-radius:var(--r-m);display:block"></canvas>
+        <div class="td-ts" style="margin-top:6px">${esc(imagemDoAlerta(a).codigo)} · ${esc(a.camera?a.camera.nome:'')}</div>
+      </div>` : ''}
       ${p ? `<div style="display:flex;gap:12px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--ink-800);margin-bottom:15px">
         <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="48" height="48"></canvas>
         <div style="flex:1;min-width:0"><b style="display:block">${esc(p.nome)}</b>
@@ -122,6 +145,7 @@ async function abrirAlerta(codigo){
         <dt>Setor</dt><dd>${esc(a.camera?a.camera.setor:'—')}</dd>
         <dt>Severidade</dt><dd><span class="chip ${CLS_SEV[a.severidade]}">${esc(SEVERIDADE[a.severidade])}</span></dd>
         <dt>Disparado em</dt><dd class="mono">${fmtDT(a.disparado_em)}</dd>
+        ${a.atribuido_nome ? `<dt>Responsável</dt><dd>${esc(a.atribuido_nome)}</dd>` : ''}
         ${a.fechado_em ? `<dt>Encerrado em</dt><dd class="mono">${fmtDT(a.fechado_em)}</dd>
         <dt>Desfecho</dt><dd>${esc(a.resolucao)}</dd>` : ''}
       </dl>
@@ -133,13 +157,60 @@ async function abrirAlerta(codigo){
     </div>
     <div class="modal-ft">
       <button class="btn btn-ghost" data-close>Fechar</button>
+      ${API.pode('settings') ? `<button class="btn btn-danger" id="alDel">Excluir</button>` : ''}
+      <span class="sp" style="flex:1"></span>
       ${a.camera ? `<button class="btn btn-soft" id="alCam">${ico('live',14)} Ver câmera</button>` : ''}
+      ${podeFechar && a.status === 'ABERTO'
+        ? `<button class="btn btn-soft" id="alAssume">${ico('check',14)} Assumir</button>` : ''}
       ${podeFechar ? `<button class="btn btn-primary" id="alClose">${ico('check',14)} Encerrar alerta</button>` : ''}
     </div>`;
 
   $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
+
+  /* Assumir existia na lista e faltava aqui — quem abre o alerta para
+     trabalhar nele é justamente quem deveria poder dizer que está cuidando.
+     Sem isso, duas pessoas podem despachar guarnição para a mesma coisa, e
+     o encerramento não registra quem assumiu a responsabilidade. */
+  const bass = $('#alAssume', box);
+  if(bass) bass.onclick = async () => {
+    bass.disabled = true;
+    try{
+      await API.assumirAlerta(a.codigo);
+      toast('Alerta assumido', `${a.codigo} atribuído a ${API.usuario.nome}.`, 'ok');
+      fecharModal();
+      abrirAlerta(a.codigo);
+    }catch(err){ bass.disabled = false; erroToast(err); }
+  };
   pintarFaces(box);
+
+  // A moldura é medida no contêiner, não no canvas: o canvas ainda não tem
+  // largura própria, e `encaixarRecorte` a redefine conforme a proporção da
+  // captura — vertical não ganha tarja preta nem é esticada.
+  const snap = $('#alSnap'), fonteImg = imagemDoAlerta(a);
+  if(snap && fonteImg){
+    const w = Math.round($('#alMold').getBoundingClientRect().width);
+    molduraVazia(snap, w, Math.round(w * .6));
+    carregarRecorte(snap, fonteImg.codigo, w, fonteImg.fonte);
+  }
+
   const bc = $('#alCam'); if(bc) bc.onclick = () => { fecharModal(); abrirCamera(a.camera.codigo); };
+
+  const bd = $('#alDel');
+  if(bd) bd.onclick = async () => {
+    const motivo = await confirmar('Excluir alerta',
+      `<b>${esc(a.codigo)}</b> — ${esc(a.titulo)}<br><br>
+       Encerrar com desfecho preserva o histórico; excluir não se desfaz.
+       A detecção que originou este alerta <b>permanece</b> nos registros —
+       o que sai é a pendência de triagem.`,
+      {rotulo:'Excluir alerta', perigo:true, exigeTexto:'Motivo da exclusão'});
+    if(!motivo) return;
+    try{
+      await API.excluirAlerta(a.codigo, motivo);
+      fecharModal();
+      toast('Alerta excluído', `${a.codigo} — motivo registrado na trilha de auditoria.`, 'ok');
+      irPara('alerts');
+    }catch(e){ erroToast(e); }
+  };
 
   if(podeFechar) $('#alClose').onclick = async () => {
     const txt = $('#alRes').value.trim();
@@ -160,13 +231,23 @@ const PERMS_COLUNAS = ['live','cams','facial','biometrics','alerts','users','aud
 const PERMS_ROTULO = {live:'Ao vivo', cams:'Câmeras', facial:'Registros', biometrics:'Base bio.',
   alerts:'Alertas', users:'Usuários', audit:'Auditoria', settings:'Config.', export:'Exportar', edit:'Editar'};
 
+/* Três estados, não dois: bloqueado volta, excluído não. */
+const statusUsuario = u => u.excluido_em ? '<span class="chip c-gray">Excluído</span>'
+  : u.ativo ? '<span class="chip c-green">Ativo</span>'
+  : '<span class="chip c-amber">Bloqueado</span>';
+
 async function renderUsuarios(alvo){
-  const [perfis, usuarios] = await Promise.all([API.perfis(), API.usuarios()]);
+  // Os setores vêm das câmeras: é o mesmo prédio, e manter uma lista à parte
+  // faria a unidade do usuário divergir de onde ele de fato trabalha.
+  const [perfis, setores] = await Promise.all([API.perfis(), API.setores(true)]);
+  let usuarios = await API.usuarios();
+  let verExcluidos = false;
 
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Usuários e perfis de acesso</h2><span class="sp"></span>
     <div class="toolbar">
       <div class="search">${ico('search',14)}<input class="inp" id="usQ" placeholder="Nome, matrícula, e-mail…"></div>
+      <button class="btn btn-ghost btn-sm" id="usExc">${ico('eye',14)} Ver excluídos</button>
       <button class="btn btn-primary btn-sm" id="usNovo">${ico('plus',14)} Novo usuário</button>
     </div></div>
 
@@ -174,7 +255,7 @@ async function renderUsuarios(alvo){
 
   <div class="sec-hd" style="margin-top:22px"><h3>Usuários do sistema</h3></div>
   <div class="panel"><div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl" id="usTbl">
-    <thead><tr><th>Usuário</th><th>Perfil</th><th>Unidade</th><th>MFA</th>
+    <thead><tr><th>Usuário</th><th>Perfil</th><th>Setor</th><th>MFA</th>
       <th>Último acesso</th><th>Status</th><th style="width:80px"></th></tr></thead>
     <tbody></tbody></table></div></div></div>`;
 
@@ -194,70 +275,98 @@ async function renderUsuarios(alvo){
 
   const pintar = lista => {
     $('#usTbl tbody').innerHTML = lista.map(u => `
-      <tr class="user-row clickable" data-u="${esc(u.id)}">
+      <tr class="user-row ${u.excluido_em ? '' : 'clickable'}" ${u.excluido_em ? '' : `data-u="${esc(u.id)}"`}
+          style="${u.excluido_em ? 'opacity:.55' : ''}">
         <td><div class="face-cell"><span class="avatar" style="width:36px;height:36px;font-size:12px">${esc(iniciais(u.nome))}</span>
           <div class="face-meta"><b>${esc(u.nome)}</b><span style="color:var(--txt-3);font-family:var(--f-mono);font-size:11px">${esc(u.email)}</span></div></div></td>
         <td><span class="chip ${u.perfil==='ADMIN'?'c-red':u.perfil==='SUPER'?'c-amber':u.perfil==='AUDITOR'?'c-violet':'c-blue'}">${esc(rotuloPerfil(u.perfil))}</span></td>
         <td style="color:var(--txt-2);font-size:13px">${esc(u.unidade||'—')}</td>
         <td>${u.mfa_ativo ? '<span class="chip c-green">Ativo</span>' : '<span class="chip c-amber">Inativo</span>'}</td>
         <td class="mono" style="font-size:12px">${u.ultimo_acesso ? '<b>'+fmtDT(u.ultimo_acesso).split(' ')[1]+'</b><br><span style="color:var(--txt-4)">'+fmtDT(u.ultimo_acesso).split(' ')[0]+'</span>' : '—'}</td>
-        <td>${u.ativo ? '<span class="chip c-green">Ativo</span>' : '<span class="chip c-gray">Desativado</span>'}</td>
-        <td style="text-align:right"><button class="btn btn-ghost btn-sm btn-icon" data-eu="${esc(u.id)}">${ico('edit',14)}</button></td>
+        <td>${statusUsuario(u)}</td>
+        <td style="text-align:right">${u.excluido_em ? ''
+          : `<button class="btn btn-ghost btn-sm btn-icon" data-eu="${esc(u.id)}">${ico('edit',14)}</button>`}</td>
       </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;padding:24px">${vazio('users','Nenhum usuário encontrado.')}</td></tr>`;
-    $$('#usTbl [data-eu]').forEach(b => b.onclick = e => { e.stopPropagation(); editarUsuario(b.dataset.eu, usuarios, perfis); });
-    $$('#usTbl tr[data-u]').forEach(t => t.onclick = () => editarUsuario(t.dataset.u, usuarios, perfis));
+    $$('#usTbl [data-eu]').forEach(b => b.onclick = e => { e.stopPropagation(); editarUsuario(b.dataset.eu, usuarios, perfis, setores); });
+    $$('#usTbl tr[data-u]').forEach(t => t.onclick = () => editarUsuario(t.dataset.u, usuarios, perfis, setores));
   };
 
-  $('#usQ').oninput = debounce(() => {
+  const filtrados = () => {
     const q = $('#usQ').value.toLowerCase().trim();
-    pintar(usuarios.filter(u => !q ||
-      [u.nome, u.email, u.matricula, u.unidade].join(' ').toLowerCase().includes(q)));
-  }, 200);
-  $('#usNovo').onclick = () => editarUsuario(null, usuarios, perfis);
+    return usuarios.filter(u => !q ||
+      [u.nome, u.email, u.matricula, u.unidade].join(' ').toLowerCase().includes(q));
+  };
+
+  $('#usQ').oninput = debounce(() => pintar(filtrados()), 200);
+  $('#usNovo').onclick = () => editarUsuario(null, usuarios, perfis, setores);
+  $('#usExc').onclick = async () => {
+    verExcluidos = !verExcluidos;
+    // Contas excluídas seguem ocupando e-mail e matrícula; sem poder vê-las,
+    // o cadastro de um substituto homônimo falharia sem explicação.
+    $('#usExc').innerHTML = ico('eye',14) + (verExcluidos ? ' Ocultar excluídos' : ' Ver excluídos');
+    usuarios = await API.usuarios(null, verExcluidos);
+    pintar(filtrados());
+  };
   pintar(usuarios);
 }
 
-function editarUsuario(id, usuarios, perfis){
+function editarUsuario(id, usuarios, perfis, setores){
   const novo = !id;
   const u = novo ? null : usuarios.find(x => x.id === id);
   const listaPerfis = (perfis.perfis || []).map(p => p.codigo);
+  // O setor gravado entra na lista mesmo que nenhuma câmera o use mais: sem
+  // isso, abrir a ficha de alguém de um setor desativado trocaria o setor
+  // dele em silêncio, no primeiro salvamento.
+  const listaSetores = [...new Set([...(setores.setores || []),
+                                    ...(u && u.unidade ? [u.unidade] : [])])].sort();
+
+  // Sem ícone nestes dois: com "Desbloquear" por extenso, os quatro botões do
+  // rodapé encostam nos 560px do modal e a linha quebra.
+  const acoes = novo ? '' :
+    `<button class="btn btn-soft" id="uBloq">${u.ativo ? 'Bloquear' : 'Desbloquear'}</button>
+     <button class="btn btn-danger" id="uDel">Excluir</button>`;
 
   abrirModal(`
     <div class="modal-hd"><h3>${novo ? 'Novo usuário' : 'Editar usuário'}</h3>
       <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
     <div class="modal-bd">
       <div class="form-grid">
-        <div class="field full"><label for="uNome">Nome e posto/graduação</label>
-          <input class="inp" id="uNome" value="${u?esc(u.nome):''}" placeholder="Ex.: Sgt. Priscila Tavares"></div>
+        <div class="field full"><label for="uNome">Nome completo</label>
+          <input class="inp" id="uNome" value="${u?esc(u.nome):''}" placeholder="Ex.: Priscila Tavares"></div>
         <div class="field"><label for="uMat">Matrícula</label>
           <input class="inp mono" id="uMat" value="${u?esc(u.matricula):''}" placeholder="PA-000000"></div>
         <div class="field"><label for="uMail">E-mail funcional</label>
-          <input class="inp mono" id="uMail" value="${u?esc(u.email):''}" placeholder="nome@pm.gov.br"></div>
+          <input class="inp mono" id="uMail" value="${u?esc(u.email):''}" placeholder="nome@exemplo.com.br"></div>
         <div class="field"><label for="uPerfil">Perfil de acesso</label>
           <select class="inp" id="uPerfil">${listaPerfis.map(p =>
             `<option value="${p}" ${u&&u.perfil===p?'selected':''}>${esc(rotuloPerfil(p))}</option>`).join('')}</select></div>
-        <div class="field"><label for="uUni">Unidade</label>
-          <select class="inp" id="uUni">${['Comando Geral','COPOM','Inteligência','1º BPM','2º BPM','3º BPM','Corregedoria']
-            .map(x => `<option ${u&&u.unidade===x?'selected':''}>${x}</option>`).join('')}</select></div>
+        <div class="field"><label for="uSetor">Setor</label>
+          <select class="inp" id="uSetor">${listaSetores.map(x =>
+            `<option ${u&&u.unidade===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
       </div>
       <div class="eyebrow" style="margin:17px 0 4px">Permissões efetivas</div>
       <div id="permBox" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px"></div>
       <div class="sw-row" data-usw="mfa_ativo"><div class="bd"><b>Autenticação em dois fatores</b>
         <span>Recomendada para todos os perfis com permissão de edição</span></div>
         <span class="sw ${(!u||u.mfa_ativo)?'on':''}"></span></div>
-      <div class="sw-row" data-usw="ativo"><div class="bd"><b>Conta ativa</b>
-        <span>Contas desativadas não autenticam nem mantêm sessão</span></div>
-        <span class="sw ${(!u||u.ativo)?'on':''}"></span></div>
-      ${novo ? `<div class="note" style="margin-top:14px">${ico('key',15)}<div>Uma senha provisória será gerada e exibida uma única vez. O usuário deverá redefini-la no primeiro acesso.</div></div>` : ''}
+      ${novo ? `<div class="note" style="margin-top:14px">${ico('key',15)}<div>Um link de primeiro acesso será enviado para o e-mail informado. A pessoa define a própria senha — ninguém mais a conhece. O link vale 30 minutos e serve uma vez.</div></div>` : ''}
+      ${u && !u.ativo ? `<div class="note" style="margin-top:14px">${ico('lock',15)}<div><b>Conta bloqueada.</b> ${esc(u.nome)} não consegue autenticar. Desbloquear devolve o acesso com as mesmas permissões.</div></div>` : ''}
+      ${u && u.ativo ? `<div class="note" style="margin-top:14px;align-items:flex-start">${ico('key',15)}
+        <div style="flex:1">
+          <b>Esqueceu a senha?</b> Emita um link de redefinição e entregue a
+          ${esc(u.nome.split(' ')[0])} pelo canal que você já usa — pessoalmente,
+          por rádio ou telefone. Vale 30 minutos e serve uma vez só.
+          <div style="margin-top:10px"><button class="btn btn-soft btn-sm" id="uLink">${ico('key',13)} Emitir link</button></div>
+        </div></div>` : ''}
     </div>
     <div class="modal-ft">
-      ${!novo ? `<button class="btn btn-soft" id="uReset">${ico('key',14)} Forçar troca de senha</button>` : ''}
+      ${acoes}
       <span style="flex:1"></span>
       <button class="btn btn-ghost" data-close>Cancelar</button>
       <button class="btn btn-primary" id="uSave">${ico('check',14)} ${novo ? 'Criar usuário' : 'Salvar'}</button>
     </div>`);
 
-  const flags = {mfa_ativo: !u || u.mfa_ativo, ativo: !u || u.ativo};
+  const flags = {mfa_ativo: !u || u.mfa_ativo};
   $$('[data-usw]').forEach(r => r.onclick = () => {
     const k = r.dataset.usw; flags[k] = !flags[k];
     r.querySelector('.sw').classList.toggle('on', flags[k]);
@@ -269,13 +378,110 @@ function editarUsuario(id, usuarios, perfis){
   $('#uPerfil').onchange = pintarPerms;
   pintarPerms();
 
-  const br = $('#uReset');
-  if(br) br.onclick = async () => {
+  const bb = $('#uBloq');
+  if(bb) bb.onclick = async () => {
     try{
-      const r = await API.forcarTrocaSenha(u.id);
-      fecharModal();
-      toast('Troca de senha exigida', r.mensagem, 'warn', 5000);
+      if(!u.ativo){
+        if(!await confirmar('Desbloquear usuário',
+          `Devolver o acesso de <b>${esc(u.nome)}</b>?<br><br>` +
+          `A conta volta a autenticar com o perfil <b>${esc(rotuloPerfil(u.perfil))}</b> e as mesmas permissões de antes.`,
+          {rotulo:'Desbloquear'})) return;
+        await API.desbloquearUsuario(u.id);
+        fecharModal();
+        toast('Usuário desbloqueado', `${u.nome} voltou a ter acesso.`, 'ok');
+      }else{
+        const motivo = await confirmar('Bloquear usuário',
+          `Suspender o acesso de <b>${esc(u.nome)}</b>?<br><br>` +
+          `A conta deixa de autenticar e a sessão aberta cai na próxima requisição. ` +
+          `O cadastro, o perfil e o histórico ficam como estão — isto se desfaz a qualquer momento.`,
+          {rotulo:'Bloquear', exigeTexto:'Motivo do bloqueio'});
+        if(!motivo) return;
+        await API.bloquearUsuario(u.id, motivo);
+        fecharModal();
+        toast('Usuário bloqueado', `${u.nome} está sem acesso.`, 'warn');
+      }
+      irPara('users');
     }catch(e){ erroToast(e); }
+  };
+
+  const bd = $('#uDel');
+  if(bd) bd.onclick = async () => {
+    const motivo = await confirmar('Excluir usuário',
+      `Excluir <b>${esc(u.nome)}</b> — ${esc(u.email)} — em definitivo?<br><br>` +
+      `A conta perde o acesso e sai da lista. O cadastro <b>não é apagado do banco</b>: ` +
+      `a trilha de auditoria é encadeada por hash e remover a linha acusaria adulteração ` +
+      `em tudo que ${esc(u.nome)} assinou. Por isso o e-mail e a matrícula seguem ocupados.` +
+      `<br><br>Isto não se desfaz — para suspender o acesso de forma reversível, use <b>Bloquear</b>.`,
+      {rotulo:'Excluir em definitivo', perigo:true, exigeTexto:'Motivo da exclusão'});
+    if(!motivo) return;
+    try{
+      await API.excluirUsuario(u.id, motivo);
+      fecharModal();
+      toast('Usuário excluído', `${u.nome} não tem mais acesso ao sistema.`, 'warn');
+      irPara('users');
+    }catch(e){ erroToast(e); }
+  };
+
+  /* Emitir o link é entregar o acesso à conta a quem o receber, então o aviso
+     diz isso com todas as letras: o risco não está em gerar, está em entregar
+     à pessoa errada — e quem entrega é o administrador, fora do sistema, onde
+     nada mais consegue conferir. */
+  const bl = $('#uLink');
+  if(bl) bl.onclick = async () => {
+    const primeiro = esc(u.nome.split(' ')[0]);
+    const motivo = await confirmar('Emitir link de redefinição',
+      `Gerar um link de troca de senha para <b>${esc(u.nome)}</b>?<br><br>` +
+      `Quem abrir o link define a senha da conta <b>sem precisar da senha atual</b>. ` +
+      `Entregue só a ${primeiro}, e por um canal em que você tenha certeza de com quem fala.` +
+      `<br><br>Vale 30 minutos, serve uma vez e cancela qualquer link anterior ainda aberto. ` +
+      `A emissão fica na trilha de auditoria com o seu nome.`,
+      {rotulo:'Emitir link', exigeTexto:'Motivo da emissão'});
+    if(!motivo) return;
+
+    bl.disabled = true;
+    try{
+      const r = await API.linkRedefinicao(u.id, motivo);
+      const minutos = Math.round((r.expira_em_segundos || 1800) / 60);
+
+      /* Modal próprio, e não uma caixa dentro da ficha: `abrirModal` troca o
+         conteúdo do mesmo contêiner, então a confirmação acima já desmontou a
+         ficha de edição — escrever num elemento dela daria em `null`. */
+      abrirModal(`
+        <div class="modal-hd"><h3>Link emitido</h3><span class="sp" style="flex:1"></span>
+          <button class="x" data-close>${ico('x',17)}</button></div>
+        <div class="modal-bd">
+          <div class="note" style="margin-bottom:15px;align-items:flex-start">${ico('key',15)}
+            <div>Entregue a <b>${esc(u.nome)}</b>. Quem abrir este link define a senha
+            da conta — ele vale por si só, como uma chave.</div></div>
+          <div class="field">
+            <label for="uLinkTxt">Link de redefinição — expira em ${minutos} minutos</label>
+            <div style="display:flex;gap:6px">
+              <input class="inp mono" id="uLinkTxt" readonly value="${esc(r.link)}"
+                     style="flex:1;min-width:0;font-size:11px">
+              <button class="btn btn-primary" id="uLinkCopy">Copiar</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-ft"><span style="flex:1"></span>
+          <button class="btn btn-ghost" data-close>Fechar</button></div>`);
+
+      const campo = $('#uLinkTxt');
+      campo.onclick = () => campo.select();
+      $('#uLinkCopy').onclick = async () => {
+        try{
+          await navigator.clipboard.writeText(campo.value);
+        }catch(e){
+          // `clipboard` exige contexto seguro e permissão; em http sem ser
+          // localhost ela nem existe. A seleção manual continua valendo, e
+          // `execCommand` é obsoleto mas é o que ainda funciona ali.
+          campo.select();
+          try{ document.execCommand('copy'); }catch(e2){}
+        }
+        toast('Link copiado', `Entregue a ${u.nome.split(' ')[0]} — vale ${minutos} minutos.`, 'ok');
+      };
+      campo.select();
+    }catch(e){ erroToast(e); }
+    finally{ bl.disabled = false; }
   };
 
   $('#uSave').onclick = async () => {
@@ -284,10 +490,10 @@ function editarUsuario(id, usuarios, perfis){
       email: $('#uMail').value.trim().toLowerCase(),
       matricula: $('#uMat').value.trim(),
       perfil: $('#uPerfil').value,
-      unidade: $('#uUni').value,
+      unidade: $('#uSetor').value,
       ...flags
     };
-    if(dados.nome.length < 4){ toast('Nome inválido', 'Informe nome e posto/graduação.', 'err'); return; }
+    if(dados.nome.length < 4){ toast('Nome inválido', 'Informe o nome completo.', 'err'); return; }
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dados.email)){
       toast('E-mail inválido', 'Use o e-mail funcional institucional.', 'err'); return;
     }
@@ -296,15 +502,29 @@ function editarUsuario(id, usuarios, perfis){
       if(novo){
         const r = await API.criarUsuario(dados);
         fecharModal();
-        if(r.senha_provisoria){
+        const pa = r.primeiro_acesso;
+        if(pa && pa.envio === 'enviado'){
+          toast('Usuário criado', `Link de primeiro acesso enviado para ${dados.email}.`, 'ok', 6000);
+          irPara('users');
+        }else if(pa){
+          /* O e-mail não saiu, mas a conta existe. Sem o link aqui ela
+             nasceria inacessível e alguém teria de emitir outro à mão —
+             então ele aparece, uma vez, para entrega por canal seguro. */
+          const motivo = pa.envio === 'nao_configurado'
+            ? 'O envio de e-mail não está configurado nesta instalação.'
+            : `O e-mail não saiu: ${esc(pa.erro || 'falha no servidor de e-mail')}`;
           abrirModal(`
-            <div class="modal-hd"><h3>Usuário criado</h3><span class="sp" style="flex:1"></span>
+            <div class="modal-hd"><h3>Usuário criado — entregue o link</h3><span class="sp" style="flex:1"></span>
               <button class="x" data-close>${ico('x',17)}</button></div>
             <div class="modal-bd">
-              <p style="margin:0 0 14px;color:var(--txt-2)">Entregue esta senha provisória a <b>${esc(dados.nome)}</b> por canal seguro. Ela não será exibida de novo.</p>
-              <div class="demo-box"><div class="eyebrow">Senha provisória</div>
-                <div class="mono" style="font-size:19px;color:var(--acc-2);padding:8px 0;user-select:all">${esc(r.senha_provisoria)}</div></div>
-              <div class="note" style="margin-top:14px">${ico('info',15)}<div>A troca é obrigatória no primeiro acesso.</div></div>
+              <p style="margin:0 0 14px;color:var(--txt-2)">${motivo} Entregue o
+                endereço abaixo a <b>${esc(dados.nome)}</b> por canal seguro — pessoalmente,
+                por rádio ou telefone. Ele não será exibido de novo.</p>
+              <div class="demo-box"><div class="eyebrow">Link de primeiro acesso</div>
+                <div class="mono" style="font-size:12px;color:var(--acc-2);padding:8px 0;user-select:all;word-break:break-all">${esc(pa.link)}</div></div>
+              <div class="note" style="margin-top:14px">${ico('info',15)}<div>Vale
+                ${Math.round((pa.expira_em_segundos || 1800) / 60)} minutos e serve uma vez só.
+                A senha que ela escolher não é conhecida por mais ninguém.</div></div>
             </div>
             <div class="modal-ft"><button class="btn btn-primary" data-close>Entendi</button></div>`);
           $$('[data-close]').forEach(b => b.onclick = () => { fecharModal(); irPara('users'); });
@@ -342,6 +562,12 @@ async function renderAuditoria(alvo){
   <div class="note" style="margin-bottom:14px">${ico('lock',15)}<div>Registros encadeados por hash e somente-inserção — uma trigger no banco recusa <span class="mono">UPDATE</span> e <span class="mono">DELETE</span>. Consulta de biométricos, exportação ou mudança de limiar fica vinculada à matrícula do operador.</div></div>
   <div class="panel"><div class="panel-bd tight"><div id="auCorpo">${carregando()}</div></div></div>`;
 
+  /* Quantos registros o filtro atual alcança. Guardado da última consulta
+     para o diálogo de exportação poder dizer o tamanho do que vai sair —
+     exportar às cegas uma trilha de milhares de linhas é o tipo de coisa que
+     só se descobre quando o arquivo chega. */
+  let ultimoTotal = null;
+
   const carregar = async () => {
     const corpo = $('#auCorpo');
     FILTRO.audit = {q: $('#auQ').value.trim(), acao: $('#auAcao').value};
@@ -350,6 +576,7 @@ async function renderAuditoria(alvo){
         pagina: PAG.audit, por_pagina: 30,
         q: FILTRO.audit.q || undefined, acao: FILTRO.audit.acao || undefined
       });
+      ultimoTotal = r.total;
       const itens = r.itens || [];
 
       const iconoPorAcao = (acao) => {
@@ -398,8 +625,18 @@ async function renderAuditoria(alvo){
     box.innerHTML = `<div class="alert alert-info" style="margin-bottom:13px">${ico('info',15)}<div>Recalculando a cadeia…</div></div>`;
     try{
       const v = await API.verificarCadeia();
-      box.innerHTML = `<div class="alert alert-${v.integra ? 'ok' : 'err'}" style="margin-bottom:13px">
-        ${ico(v.integra ? 'check' : 'alert', 15)}<div><b>${v.integra ? 'Cadeia íntegra' : 'Cadeia comprometida'}</b><br>${esc(v.mensagem)}</div></div>`;
+      /* Três veredictos, não dois. "Comprometida" em vermelho é para linha
+         reescrita — e só. Esta trilha tem 83 elos bifurcados por gravação
+         simultânea e 10 vínculos zerados pela exclusão de uma conta: nada
+         disso é adulteração, e pintar tudo de vermelho ensina o operador a
+         ignorar o aviso. Quando ele ignorar o aviso de verdade, a trilha
+         deixou de servir para o que existe. */
+      const adulteradas = (v.conteudo_divergente||0) - (v.vinculo_de_usuario_perdido||0);
+      const nivel = v.integra ? 'ok' : (adulteradas > 0 ? 'err' : 'warn');
+      const titulo = v.integra ? 'Cadeia íntegra'
+                   : (adulteradas > 0 ? 'Cadeia comprometida' : 'Cadeia íntegra, com ressalvas');
+      box.innerHTML = `<div class="alert alert-${nivel}" style="margin-bottom:13px">
+        ${ico(nivel === 'ok' ? 'check' : 'alert', 15)}<div><b>${titulo}</b><br>${esc(v.mensagem)}</div></div>`;
     }catch(e){
       box.innerHTML = `<div class="alert alert-err" style="margin-bottom:13px">${ico('alert',15)}<div>${esc(e.message)}</div></div>`;
     }
@@ -407,12 +644,46 @@ async function renderAuditoria(alvo){
 
   const be = $('#auExp');
   if(be) be.onclick = async () => {
-    const fin = await confirmar('Exportar trilha',
-      'A exportação em si será registrada na trilha, com a justificativa informada.',
-      {rotulo:'Exportar', exigeTexto:'Finalidade da exportação'});
+    /* O que vai no arquivo é o que está na tela. Dizer isso *antes* evita o
+       engano mais caro desta tela: filtrar por uma ação, exportar e entregar
+       a corregedoria um arquivo com outro conteúdo — ou o contrário, achar
+       que levou tudo e ter levado um recorte. */
+    const filtro = {q: FILTRO.audit.q || undefined, acao: FILTRO.audit.acao || undefined};
+    const recorte = [
+      filtro.acao ? `ação <b>${esc(filtro.acao)}</b>` : '',
+      filtro.q ? `busca por <b>${esc(filtro.q)}</b>` : '',
+    ].filter(Boolean).join(' e ');
+    const quantas = ultimoTotal == null ? '' : ` <b>${fmtNum(ultimoTotal)}</b> registro(s)`;
+
+    const fin = await confirmar('Exportar trilha em PDF',
+      (recorte
+        ? `Vai no documento o que está filtrado na tela:${quantas} com ${recorte}.`
+        : `Vai no documento a <b>trilha completa</b>, sem filtro —${quantas}.`)
+      + `<br>O PDF sai com capa de identificação, selo de integridade da cadeia
+         e numeração de páginas — pronto para juntar a processo.`
+      + '<br><br>A exportação em si será registrada na trilha, com a finalidade informada.',
+      {rotulo:'Exportar PDF', exigeTexto:'Finalidade da exportação'});
     if(!fin) return;
-    window.open(API.urlExportarAuditoria(fin), '_blank');
-    toast('Exportação solicitada', 'O download começa em instantes.', 'ok');
+
+    /* O botão sai do ar enquanto o documento é montado. São segundos de
+       espera numa trilha grande — montar mil e trezentas linhas leva uns
+       quatro —, e dois cliques gerariam dois documentos e duas linhas na
+       própria trilha. */
+    const antes = be.innerHTML;
+    be.disabled = true;
+    be.innerHTML = `${ico('dl',14)} Gerando o PDF…`;
+    try{
+      const nome = await API.exportarAuditoria(fin, filtro);
+      toast('Trilha exportada', `Documento ${nome} salvo nos downloads.`, 'ok');
+      // A exportação virou uma linha nova na trilha; a tela mostra isso.
+      PAG.audit = 1;
+      await carregar();
+    }catch(e){
+      toast('Exportação não concluída', e.message, 'err', 8000);
+    }finally{
+      be.disabled = false;
+      be.innerHTML = antes;
+    }
   };
 
   await carregar();
@@ -421,8 +692,37 @@ async function renderAuditoria(alvo){
 /* ==========================================================
    CONFIGURAÇÕES
    ========================================================== */
+const GRUPOS_CFG = [
+  ['retencao', 'Retenção e privacidade', 'shield'],
+  ['acesso',   'Acesso e sessão',        'key'],
+  ['deteccao', 'Detecção',               'gauge'],
+];
+
+/* Um campo por parâmetro, com a faixa que o servidor declarou. O `min`/`max`
+   aqui é conveniência de digitação — quem recusa de verdade é o servidor,
+   porque o navegador não é lugar para guardar regra. */
+function campoCfg(p){
+  const id = 'cfg_' + p.chave;
+  if(p.tipo === 'perfis'){
+    const atuais = String(p.valor || '').split(',').map(x => x.trim()).filter(Boolean);
+    return `<div class="field full" data-cfg="${esc(p.chave)}" data-tipo="perfis">
+      <label>${esc(p.rotulo)}</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 5px">
+        ${(p.opcoes||[]).map(o => `<span class="chip ${atuais.includes(o)?'c-blue':'c-gray'} clickable"
+          data-perfil="${esc(o)}" style="cursor:pointer;user-select:none">${esc(rotuloPerfil(o))}</span>`).join('')}
+      </div>
+      <span class="hint">${esc(p.ajuda)}</span></div>`;
+  }
+  const passo = p.tipo === 'float' ? '0.01' : '1';
+  return `<div class="field" data-cfg="${esc(p.chave)}" data-tipo="${esc(p.tipo)}">
+    <label for="${id}">${esc(p.rotulo)}${p.unidade ? ` <span style="color:var(--txt-3);font-weight:400">(${esc(p.unidade)})</span>` : ''}</label>
+    <input class="inp mono" id="${id}" type="number" value="${esc(String(p.valor))}"
+           min="${p.minimo}" max="${p.maximo}" step="${passo}">
+    <span class="hint">${esc(p.ajuda)} <b>Faixa: ${p.minimo} a ${p.maximo}.</b></span></div>`;
+}
+
 async function renderConfiguracoes(alvo){
-  const [info, saude] = await Promise.all([API.info(), API.saude()]);
+  const [info, saude, cfg] = await Promise.all([API.info(), API.saude(), API.configuracao()]);
   const c = info.config || {};
 
   alvo.innerHTML = `
@@ -441,7 +741,7 @@ async function renderConfiguracoes(alvo){
           <dt>Dispositivo</dt><dd class="mono">${esc(c.device||'cpu')}</dd>
         </dl>
         ${!(info.modelos && info.modelos.face) ? `<div class="note" style="margin-top:14px">${ico('info',15)}<div>Sem os modelos instalados, a busca por imagem fica indisponível — o restante do sistema opera normalmente com o simulador. Para habilitar:<br><span class="mono" style="color:var(--acc-2)">pip install insightface onnxruntime ultralytics</span></div></div>` : ''}
-        <div class="note" style="margin-top:12px">${ico('alert',15)}<div>O limiar é ajustado <b>por câmera</b>, na tela de configuração de cada uma. Limiares baixos aumentam falsos positivos — e, em uso policial, o custo de um falso positivo recai sobre uma pessoa inocente.</div></div>
+        <div class="note" style="margin-top:12px">${ico('alert',15)}<div>O limiar é ajustado <b>por câmera</b>, na tela de configuração de cada uma. Limiares baixos aumentam falsos positivos — e o custo de um falso positivo recai sobre uma pessoa inocente.</div></div>
       </div>
     </div>
     <div class="panel">
@@ -450,14 +750,39 @@ async function renderConfiguracoes(alvo){
         <dl class="kv">
           <dt>Retenção de não identificadas</dt><dd>${c.retencao_dias || 90} dias</dd>
           <dt>Mascaramento de PII</dt><dd>${esc((c.mascarar_para||[]).join(', ') || 'nenhum perfil')}</dd>
-          <dt>Marca d'água</dt><dd>${c.watermark ? '<span class="chip c-green">Ativa</span>' : '<span class="chip c-gray">Inativa</span>'}</dd>
           <dt>Expiração de senha</dt><dd>${c.senha_expira_dias || 90} dias</dd>
           <dt>Tentativas de login</dt><dd>${c.max_tentativas || 5} antes do bloqueio</dd>
           <dt>Sessão</dt><dd>${c.sessao_minutos || 60} minutos</dd>
         </dl>
         ${API.pode('settings') ? `<button class="btn btn-soft btn-sm" id="cfgExpurgo" style="margin-top:14px">${ico('trash',13)} Expurgar capturas vencidas</button>` : ''}
-        <div class="note" style="margin-top:14px">${ico('shield',15)}<div>Reconhecimento facial em segurança pública exige <b>base legal específica</b>, avaliação de impacto e supervisão. Este ambiente é uma demonstração técnica — em produção, a implantação depende das normas aplicáveis na sua jurisdição e de decisão da autoridade competente.</div></div>
+        <div class="note" style="margin-top:14px">${ico('shield',15)}<div>Tratamento de dado biométrico exige <b>base legal específica</b> na LGPD, aviso às pessoas monitoradas e avaliação de impacto. O uso em ambiente de trabalho depende ainda do que a norma interna e a legislação trabalhista permitem.</div></div>
       </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:14px">
+    <div class="panel-hd"><h3>Ajustar parâmetros</h3>
+      <span class="sub">valem na requisição seguinte, sem reiniciar</span>
+      <span class="sp"></span>
+      <button class="btn btn-primary btn-sm" id="cfgSalvar">${ico('check',14)} Salvar alterações</button></div>
+    <div class="panel-bd">
+      ${GRUPOS_CFG.map(([g, titulo, icone]) => {
+        const doGrupo = (cfg.parametros||[]).filter(p => p.grupo === g);
+        if(!doGrupo.length) return '';
+        return `<div class="eyebrow" style="display:flex;align-items:center;gap:6px;margin:4px 0 9px">
+            <span style="color:var(--acc)">${ico(icone,14)}</span>${esc(titulo)}</div>
+          <div class="form-grid" style="margin-bottom:18px">${doGrupo.map(campoCfg).join('')}</div>`;
+      }).join('')}
+
+      <div class="eyebrow" style="display:flex;align-items:center;gap:6px;margin:4px 0 9px">
+        <span style="color:var(--txt-3)">${ico('lock',14)}</span>Fixos — exigem reinício</div>
+      <dl class="kv" style="margin-bottom:14px">
+        ${(cfg.fixos||[]).map(f => `<dt>${esc(f.rotulo)}</dt>
+          <dd class="mono">${esc(String(f.valor))}
+            <span style="color:var(--txt-4);font-size:11px"> · ${esc(f.variavel)}</span></dd>`).join('')}
+      </dl>
+
+      <div class="note">${ico('info',15)}<div>Os fixos são lidos quando o processo sobe: mudá-los é no <span class="mono">.env</span> seguido de reinício. Gravá-los aqui mostraria um número que o sistema não está usando. Cada alteração dos ajustáveis fica na trilha de auditoria, com o valor anterior e o novo.</div></div>
     </div>
   </div>
 
@@ -510,6 +835,39 @@ async function renderConfiguracoes(alvo){
       </div>
     </div>
   </div>`;
+
+  $$('[data-cfg][data-tipo="perfis"] [data-perfil]').forEach(ch => ch.onclick = () => {
+    const ligado = ch.classList.toggle('c-blue');
+    ch.classList.toggle('c-gray', !ligado);
+  });
+
+  $('#cfgSalvar').onclick = async () => {
+    const valores = {};
+    (cfg.parametros||[]).forEach(p => {
+      const campo = $(`[data-cfg="${p.chave}"]`);
+      if(!campo) return;
+      if(p.tipo === 'perfis'){
+        const escolhidos = $$('[data-perfil]', campo)
+          .filter(c => c.classList.contains('c-blue')).map(c => c.dataset.perfil);
+        const atual = String(p.valor || '').split(',').map(x => x.trim()).filter(Boolean);
+        if(escolhidos.join(',') !== atual.join(',')) valores[p.chave] = escolhidos.join(',');
+      }else{
+        const bruto = $('input', campo).value.trim();
+        if(bruto !== '' && Number(bruto) !== Number(p.valor)) valores[p.chave] = Number(bruto);
+      }
+    });
+
+    if(!Object.keys(valores).length){ toast('Nada a salvar', 'Nenhum parâmetro foi alterado.', 'info'); return; }
+
+    const btn = $('#cfgSalvar'); btn.disabled = true;
+    try{
+      const r = await API.salvarConfiguracao(valores);
+      toast('Configuração salva',
+        `${r.alterados.length} parâmetro(s) em vigor a partir de agora.`, 'ok');
+      irPara('settings');
+    }catch(e){ erroToast(e); }
+    finally{ btn.disabled = false; }
+  };
 
   const be = $('#cfgExpurgo');
   if(be) be.onclick = async () => {

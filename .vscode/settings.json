@@ -1,0 +1,44 @@
+{
+  // O que o Python e o pytest geram sozinhos. Continua no disco e continua
+  // no .gitignore — some só da árvore de arquivos, que é onde atrapalhava:
+  // `app/` tinha mais linhas de __pycache__ do que de código, e com dois
+  // interpretadores na máquina cada módulo aparecia duas vezes
+  // (.cpython-313 e .cpython-314).
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.py[cod]": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true
+  },
+
+  // Fora da busca, mas visíveis na árvore: são dados do sistema, e quem
+  // procura por um trecho de código não quer 19 mil recortes de evidência
+  // nem 161 MB de pesos de modelo no resultado.
+  "search.exclude": {
+    "**/evidencias": true,
+    "**/models": true,
+    "**/data": true,
+    "**/logs": true,
+    "**/__pycache__": true
+  },
+
+  // Mesma lista para o observador de arquivos. Sem isto o editor fica
+  // acordando a cada recorte que a inferência grava — e ela grava sempre.
+  "files.watcherExclude": {
+    "**/evidencias/**": true,
+    "**/models/**": true,
+    "**/data/**": true,
+    "**/logs/**": true,
+    "**/__pycache__/**": true
+  },
+
+  "python.analysis.exclude": ["**/evidencias", "**/models", "**/data", "**/logs"],
+  "[python]": { "editor.rulers": [88] },
+  "[javascript]": {
+    "editor.rulers": [
+      100
+    ]
+  },
+  "python.terminal.useEnvFile": true,
+  "python-envs.defaultEnvManager": "ms-python.python:system"
+}

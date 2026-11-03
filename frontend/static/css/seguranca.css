@@ -63,14 +63,12 @@ a{color:var(--acc);text-decoration:none}
 ::-webkit-scrollbar-thumb:hover{background:var(--ink-600)}
 :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
-.tnum{font-variant-numeric:tabular-nums}
 
 /* ---------- Tipografia utilitária ---------- */
 .eyebrow{
   font-family:var(--f-body);font-size:10px;font-weight:600;
   letter-spacing:.14em;text-transform:uppercase;color:var(--txt-3);
 }
-.h-disp{font-family:var(--f-disp);font-weight:600;letter-spacing:.01em;line-height:1.05;text-wrap:balance}
 
 /* ============================================================
    1. AUTENTICAÇÃO
@@ -88,8 +86,10 @@ a{color:var(--acc);text-decoration:none}
 .auth-mark{display:flex;align-items:center;gap:13px}
 .shield{width:42px;height:48px;flex:none}
 .auth-mark-txt b{
-  display:block;font-family:var(--f-disp);font-size:27px;font-weight:700;
-  letter-spacing:.18em;line-height:1;color:var(--txt-1);
+  /* O nome ficou o dobro de longo; `clamp` evita que ele empurre o cartão de
+     login em tela estreita, sem encolher onde há espaço. */
+  display:block;font-family:var(--f-disp);font-size:clamp(19px,2.3vw,27px);
+  font-weight:700;letter-spacing:.15em;line-height:1;color:var(--txt-1);
 }
 .auth-mark-txt span{display:block;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--acc);margin-top:5px;font-weight:600}
 .auth-head{font-family:var(--f-disp);font-size:clamp(34px,4.6vw,58px);font-weight:600;line-height:1.02;letter-spacing:.005em;margin:0;text-wrap:balance}
@@ -193,19 +193,37 @@ textarea.inp{resize:vertical;min-height:70px}
 .demo-box .eyebrow{margin-bottom:7px}
 
 /* Stepper recuperação */
-.stepper{display:flex;align-items:center;gap:0;margin-bottom:2px}
-.step{display:flex;align-items:center;gap:8px;flex:none}
+/* O stepper não pode transbordar o cartão, e transbordava: com `flex:none` em
+   cada etapa, a régua ocupava a soma dos rótulos, desse o que desse. Os três
+   juntos pediam 438px dentro dos 356px úteis do cartão, e "Nova senha" saía
+   pela borda direita.
+
+   Encurtar o rótulo sozinho não resolve: a folga que sobra é de poucos pixels,
+   e some com zoom do navegador, com a fonte da web não carregando ou com uma
+   tradução mais longa. Por isso a contenção é estrutural — as etapas podem
+   encolher (`min-width:0` libera o encolhimento que o flex bloqueia por
+   padrão) e o rótulo corta com reticências em vez de empurrar a borda.
+
+   A etapa ativa é a exceção: ela não encolhe, porque é justamente a que diz
+   onde a pessoa está. Quem cede espaço são as outras. */
+.stepper{display:flex;align-items:center;gap:0;margin-bottom:2px;min-width:0}
+.step{display:flex;align-items:center;gap:7px;flex:0 1 auto;min-width:0}
+.step.active{flex:none}
 .step-dot{
+  flex:none;
   width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
   font-family:var(--f-mono);font-size:11.5px;font-weight:600;
   background:var(--ink-800);border:1px solid var(--line);color:var(--txt-3);transition:all .25s;
 }
 .step.active .step-dot{background:var(--acc);border-color:var(--acc);color:#04202E}
 .step.done .step-dot{background:var(--green-ghost);border-color:var(--green);color:var(--green)}
-.step-lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--txt-4)}
+.step-lbl{
+  font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;
+  color:var(--txt-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
+}
 .step.active .step-lbl{color:var(--txt-1)}
 .step.done .step-lbl{color:var(--txt-2)}
-.step-bar{flex:1;height:1px;background:var(--line);margin:0 10px;min-width:12px}
+.step-bar{flex:1 1 auto;height:1px;background:var(--line);margin:0 8px;min-width:8px}
 .step-bar.done{background:var(--green)}
 
 .otp-row{display:flex;gap:8px;justify-content:space-between}
@@ -236,6 +254,12 @@ textarea.inp{resize:vertical;min-height:70px}
   background:var(--ink-850);
 }
 .brand-cell .shield{width:24px;height:28px}
+/* Duas linhas porque "SISTEMA DE SEGURANÇA" não cabe numa só: a célula tem
+   230px, e descontados o escudo e os respiros sobram ~166px para o texto. Em
+   linha única o nome estourava a borda da barra lateral. */
+.brand-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.brand-txt span{font-size:9px;font-weight:600;letter-spacing:.17em;
+  text-transform:uppercase;color:var(--acc);line-height:1}
 .brand-cell b{font-family:var(--f-disp);font-size:16px;font-weight:700;letter-spacing:.12em;line-height:1;white-space:nowrap}
 
 .topbar{
@@ -284,8 +308,6 @@ textarea.inp{resize:vertical;min-height:70px}
 .nav-foot{margin-top:auto;padding:14px 15px 0;border-top:1px solid var(--line-soft);margin-left:0;display:flex;flex-direction:column;gap:9px}
 .sys-row{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--txt-3);font-family:var(--f-mono)}
 .sys-row b{color:var(--txt-2);font-weight:500}
-.sys-bar{height:3px;border-radius:2px;background:var(--ink-700);overflow:hidden}
-.sys-bar i{display:block;height:100%;border-radius:2px;transition:width .6s}
 
 .main{grid-area:main;overflow-y:auto;overflow-x:hidden;position:relative}
 .view{padding:18px;display:none;min-height:100%}
@@ -363,7 +385,6 @@ textarea.inp{resize:vertical;min-height:70px}
 .c-red{background:var(--red-ghost);color:#FF8C90;border-color:rgba(232,71,77,.34)}
 .c-violet{background:var(--violet-ghost);color:#B49BF0;border-color:rgba(140,111,224,.32)}
 .c-gray{background:var(--ink-700);color:var(--txt-2);border-color:var(--line)}
-.c-pink{background:rgba(224,95,158,.13);color:#F08CBE;border-color:rgba(224,95,158,.32)}
 
 .sev{display:inline-block;width:3px;border-radius:2px;align-self:stretch}
 .sev-1{background:var(--txt-4)}.sev-2{background:var(--acc)}.sev-3{background:var(--amber)}.sev-4{background:var(--red)}
@@ -459,6 +480,111 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 
 /* Toast */
 #toasts{position:fixed;bottom:18px;right:18px;z-index:180;display:flex;flex-direction:column;gap:9px;max-width:min(360px,calc(100vw - 32px));pointer-events:none}
+/* ---------- Painel de alerta ----------
+   O toast não serve aqui. Ele divide espaço com avisos de rotina, some
+   sozinho em sete segundos e some mesmo que ninguém tenha olhado. Num
+   sistema integrado a presídio, alerta que passa despercebido é falha de
+   operação, não de interface.
+
+   Este painel fica acima de tudo — inclusive do modal — **no centro da
+   tela**, e só sai quando alguém confirma a ciência. No topo ele competia
+   com a barra do navegador e com o cabeçalho do sistema; no centro, o olho
+   vai nele mesmo quem estiver lendo outra parte da tela.
+
+   O contêiner cobre a janela inteira só para poder centralizar, mas é
+   transparente a cliques (`pointer-events:none`) — só o cartão recebe. Quem
+   recebe o alerta pode precisar agir no sistema antes de encerrá-lo, e um
+   bloqueio total atrapalharia justamente aí. */
+/* Janela de horário, dentro da linha da ação que ela configura.
+   Recuada à esquerda para ler como detalhe daquela ação, e não como mais um
+   campo solto do formulário. */
+/* A lista de ações é plana, só com filete embaixo de cada linha — uma caixa
+   fechada aqui flutuaria no meio dela. A barra à esquerda é o que prende este
+   trecho à ação de cima. */
+.acao-horario{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  margin:0 0 9px;padding:10px 12px;
+  border-left:2px solid var(--acc);border-radius:0 var(--r-s) var(--r-s) 0;
+  background:var(--ink-850);}
+.acao-horario.oculta{display:none}
+.acao-horario label{font-size:12.5px;color:var(--txt-2);white-space:nowrap}
+.acao-horario input[type=time]{width:112px;padding:7px 9px;font-size:13px}
+.acao-horario .hint{flex-basis:100%;margin:0;font-size:11.5px;color:var(--txt-3)}
+
+#alertaFaixa{
+  position:fixed;inset:0;z-index:400;
+  display:flex;align-items:center;justify-content:center;
+  padding:16px;pointer-events:none;
+}
+#alertaFaixa[hidden]{display:none}
+.alerta-cartao{
+  pointer-events:auto;width:min(680px,100%);display:flex;gap:19px;
+  background:var(--ink-800);border:1px solid var(--red);border-top-width:4px;
+  border-radius:var(--r-l);padding:22px 24px;
+  box-shadow:0 26px 70px rgba(0,0,0,.78), 0 0 0 1px rgba(232,71,77,.2);
+  animation:alertaEntra .26s cubic-bezier(.2,.9,.3,1.3);
+}
+.alerta-cartao.sev-media{border-color:var(--amber);box-shadow:0 26px 70px rgba(0,0,0,.78), 0 0 0 1px rgba(240,160,42,.2)}
+/* Cresce no lugar, não desliza de cima: centralizado, a entrada vinda do
+   topo fazia o cartão atravessar meia tela antes de parar. */
+@keyframes alertaEntra{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+
+/* O ícone pulsa porque o cartão pode nascer enquanto a pessoa olha para
+   outro canto da tela — o movimento é o que traz o olho de volta. */
+.alerta-cartao .sino{flex:none;width:54px;height:54px;border-radius:50%;
+  display:grid;place-items:center;color:var(--red);
+  background:var(--red-ghost);animation:alertaPulsa 1.4s ease-in-out infinite}
+.alerta-cartao.sev-media .sino{color:var(--amber);background:var(--amber-ghost)}
+@keyframes alertaPulsa{0%,100%{box-shadow:0 0 0 0 rgba(232,71,77,.45)}
+  70%{box-shadow:0 0 0 14px rgba(232,71,77,0)}}
+
+.alerta-cartao .corpo{flex:1;min-width:0}
+/* A tarja de severidade entra acima do título, não ao lado: ela é a
+   primeira coisa que o operador precisa ler, antes mesmo de onde foi. */
+.alerta-cartao .faixa-sev{display:block;font-size:10px;font-weight:700;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--red);margin-bottom:5px}
+.alerta-cartao.sev-media .faixa-sev{color:var(--amber)}
+.alerta-cartao .corpo b{display:block;font-family:var(--f-disp);font-size:24px;
+  font-weight:600;letter-spacing:.01em;line-height:1.1;color:var(--txt-1)}
+.alerta-cartao .corpo p{margin:7px 0 0;font-size:14px;color:var(--txt-2);line-height:1.55}
+.alerta-cartao .meta{margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  font-family:var(--f-mono);font-size:11.5px;color:var(--txt-3)}
+/* `align-self:center` porque a altura do cartão vem da coluna de texto, não da
+   captura: alinhada ao topo, ela deixava um vão morto embaixo que fazia o
+   cartão parecer grande por acidente. E 4:3 sem esticar — imagem de câmera
+   deformada é evidência deformada. */
+/* Largura e altura aqui valem só até o recorte chegar: `encaixarRecorte` então
+   redefine as duas no `style` do elemento, assumindo a proporção da imagem. Os
+   110x150 são a forma mediana das capturas deste parque, para a moldura não
+   dar um pulo visível quando a foto carrega. */
+.alerta-cartao canvas{flex:none;align-self:center;width:110px;height:150px;border-radius:var(--r-m);
+  border:1px solid var(--line);background:var(--ink-850)}
+.alerta-cartao .acoes{margin-top:17px;display:flex;gap:10px;align-items:center}
+/* Quantos esperam atrás deste. Sem o contador, uma rajada de alertas
+   pareceria um alerta só. */
+.alerta-fila{margin-left:auto;font-family:var(--f-mono);font-size:12px;
+  font-weight:600;color:var(--txt-2);white-space:nowrap}
+
+/* Em tela estreita a miniatura sai da linha e o cartão vira coluna — a
+   imagem espremida ao lado de um texto de 14px não se lê. */
+@media (max-width:620px){
+  .alerta-cartao{flex-wrap:wrap;padding:18px;gap:14px}
+  /* A captura desce para a própria linha, centrada e no tamanho real. A versão
+     anterior esticava ela para a largura do cartão (2,3:1 numa imagem 4:3) — e
+     ainda assim não pegava, porque `molduraVazia` fixa o tamanho no `style` do
+     elemento, que vence a folha. */
+  .alerta-cartao canvas{order:3;margin:0 auto}
+  /* Quebra de linha forçada antes da captura. `order:3` sozinho não a descia:
+     a coluna de texto tem `flex:1` (base 0), então sino + captura cabiam na
+     mesma linha e ela só espremia o texto. Este item de altura zero e base
+     cheia ocupa o resto da primeira linha e empurra a captura para a segunda —
+     sem esticá-la, que é o que `flex-basis:100%` nela faria. */
+  .alerta-cartao::before{content:'';order:2;flex:0 0 100%;height:0}
+  /* Os botões não quebram linha: juntos firmavam uma largura mínima maior que a
+     tela e o cartão vazava pela direita no telefone. */
+  .alerta-cartao .acoes{flex-wrap:wrap;row-gap:10px}
+  .alerta-fila{margin-left:0}
+}
+
 .toast{display:flex;gap:10px;align-items:flex-start;background:var(--ink-750);border:1px solid var(--line);border-left-width:3px;border-radius:var(--r-m);padding:11px 13px;box-shadow:var(--sh-2);animation:slideIn .22s ease-out;pointer-events:auto}
 @keyframes slideIn{from{opacity:0;transform:translateX(22px)}to{opacity:1;transform:none}}
 .toast.out{animation:slideOut .22s ease-in forwards}
@@ -521,8 +647,9 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
    o arranjo sem sair da tela cheia — e sair a cada troca de andar é o que
    torna uma parede inútil para quem está de plantão. */
 /* Altura explícita: em tela cheia o elemento vira a raiz da renderização, e o
-   `height:100%` que a casca já traz passa a não ter contra o que medir. */
-.live-shell.wall{background:#000;width:100vw;height:100vh}
+   `height:100%` que a casca já traz passa a não ter contra o que medir.
+   `relative` porque a barra e o aviso se posicionam contra esta caixa. */
+.live-shell.wall{position:relative;background:#000;width:100vw;height:100vh}
 .live-shell.wall .live-side{display:none}
 /* A barra sai do fluxo e fica escondida: na parede o que se vê é imagem, e
    uma faixa de controles permanente no alto rouba altura de todas as células
@@ -539,12 +666,31 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .live-shell.wall .live-bar.aparece{opacity:1;transform:none;pointer-events:auto}
 /* Sem a barra empurrando, a parede ocupa a tela inteira. */
 .live-shell.wall .live-main{height:100%}
-.live-shell.wall{position:relative}
 .live-shell.wall .mosaic{gap:2px;padding:2px;background:#000}
 .live-shell.wall .tile{border-radius:0;border-color:rgba(255,255,255,.08)}
 .live-shell.wall .tile.sel{box-shadow:inset 0 0 0 2px var(--acc)}
 /* Em 4×4 o rótulo de quem está fora do ar não cabe sem atropelar o resto. */
 .live-shell.wall .mosaic.g16 .tile-off{font-size:9.5px;gap:4px}
+
+/* O aviso de saída. O navegador mostra o dele no alto, com a URL junto e sem
+   deixar mexer por nenhum meio; este ocupa o mesmo lugar e entra quando o
+   outro já saiu, de modo que o que fica na tela diz o nome do sistema em vez
+   do endereço do servidor. */
+.fs-aviso{
+  position:absolute;top:16px;left:50%;transform:translateX(-50%) translateY(-9px);
+  z-index:6;display:flex;align-items:center;gap:7px;
+  padding:11px 17px;border-radius:var(--r-l);
+  background:rgba(8,12,17,.9);border:1px solid rgba(255,255,255,.13);
+  backdrop-filter:blur(10px);box-shadow:var(--sh-2);
+  color:var(--txt-2);font-size:12.5px;line-height:1;white-space:nowrap;
+  opacity:0;pointer-events:none;transition:opacity .24s ease,transform .24s ease
+}
+.fs-aviso.aparece{opacity:1;transform:translateX(-50%)}
+.fs-aviso kbd{
+  font-family:var(--f-mono);font-size:11px;font-weight:600;line-height:1;color:var(--txt-1);
+  padding:4px 8px;border-radius:var(--r-s);
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)
+}
 
 .live-side{width:290px;border-left:1px solid var(--line-soft);background:var(--ink-850);display:flex;flex-direction:column;flex:none;overflow:hidden}
 .live-main{display:flex;min-height:0;flex:1}
@@ -567,11 +713,43 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .ptz button.mid{background:var(--ink-800);color:var(--txt-4)}
 
 /* Gráficos */
-.chart-wrap{position:relative;width:100%}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--txt-2)}
 .legend i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}
 
+/* O número que a rosca não dá: quanto do volume virou comportamento. */
+.comp-destaque{display:flex;align-items:center;gap:8px;margin-top:3px;padding-top:9px;
+  border-top:1px solid var(--line-soft)}
+.comp-destaque span{flex:1;font-size:11px;color:var(--txt-3);line-height:1.3}
+.comp-destaque b{font-size:14px;color:var(--violet)}
+
 /* Listas compactas */
+/* Sanfona: cabeçalho e conteúdo no mesmo bloco.
+   O histórico de capturas de quem passa todo dia tem dezenas de linhas, e
+   solto ele empurrava a ficha inteira para fora da tela — os dados do
+   cadastro ficavam acima do rolar e os botões abaixo.
+
+   O conteúdo fica *dentro* da moldura que o cabeçalho abre, e não embaixo de
+   um botão avulso: com a lista do lado de fora, nada dizia que aquelas
+   linhas pertenciam àquele botão. A contagem fica no cabeçalho porque,
+   fechada, a sanfona esconde o detalhe das capturas e nunca o fato de que
+   elas existem. */
+.sanfona{margin-top:17px;border:1px solid var(--line-soft);border-radius:var(--r-m);
+  background:var(--ink-850);overflow:hidden}
+.sanfona-hd{display:flex;align-items:center;gap:10px;width:100%;
+  padding:11px 14px;background:none;border:0;color:inherit;cursor:pointer;
+  text-align:left;font:inherit;transition:background .15s}
+.sanfona-hd:hover{background:var(--ink-800)}
+.sanfona-hd b{flex:1;font-size:12.5px;font-weight:600;color:var(--txt-1);
+  letter-spacing:.01em}
+.sanfona-hd .chev{display:inline-flex;flex:none;color:var(--txt-3);transition:transform .18s}
+.sanfona-hd[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.sanfona-bd{display:none;border-top:1px solid var(--line-soft)}
+.sanfona.aberta .sanfona-bd{display:block}
+/* As linhas já estão dentro da moldura da sanfona: moldura própria viraria
+   borda dupla, e o arredondado brigaria com o canto do bloco. */
+.sanfona-bd .rank{border:0;border-radius:0}
+.sanfona-bd > .hint{padding:12px 14px;margin:0}
+
 .rank{display:flex;flex-direction:column}
 /* Com o parque inteiro listado, a altura acompanha o gráfico ao lado em vez
    de esticar a linha e empurrar o resto do painel para fora da tela. */
@@ -587,12 +765,41 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .rank-val{font-family:var(--f-mono);font-size:12.5px;font-weight:600;color:var(--txt-1)}
 
 /* Zonas de detecção (editor) */
-.zone-editor{position:relative;background:#000;border:1px solid var(--line);border-radius:var(--r-s);overflow:hidden;aspect-ratio:16/9}
-.zone-editor canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
 .zone-list{display:flex;flex-direction:column;gap:6px}
 .zone-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--line-soft);border-radius:var(--r-s);background:var(--ink-800);font-size:12px}
 .zone-swatch{width:11px;height:11px;border-radius:2px;flex:none}
 .zone-item b{flex:1;font-weight:500;color:var(--txt-1)}
+
+/* Editor de zonas: imagem da câmera à esquerda, zonas e campos à direita.
+   O desenho precisa de largura — é sobre ele que se clica —, então a coluna
+   de controles fica estreita e fixa. */
+.zona-edit{display:grid;grid-template-columns:1fr 226px;gap:14px;align-items:start}
+.zona-tela{position:relative;border:1px solid var(--line);border-radius:var(--r-m);
+  overflow:hidden;background:var(--ink-900);min-width:0}
+.zona-tela canvas{display:block;width:100%;height:auto;cursor:crosshair}
+.zona-vazia{position:absolute;left:0;right:0;bottom:0;padding:7px 10px;font-size:11px;
+  color:var(--txt-3);background:rgba(10,18,24,.86);border-top:1px solid var(--line-soft)}
+.zona-lado{min-width:0}
+.zona-item{display:flex;align-items:center;gap:7px;padding:6px 8px;margin-bottom:5px;
+  border:1px solid var(--line-soft);border-radius:var(--r-s);background:var(--ink-800);
+  font-size:11.5px;cursor:pointer}
+.zona-item.on{border-color:var(--acc);background:var(--ink-750,var(--ink-800))}
+.zona-item b{flex:1;font-weight:500;color:var(--txt-1);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.zona-item .x{padding:2px;flex:none;color:var(--txt-4)}
+.zona-item .x:hover{color:var(--red)}
+.zona-cor{width:22px;height:22px;border-radius:var(--r-s);cursor:pointer;
+  border:2px solid transparent}
+.zona-cor.on{border-color:var(--txt-1)}
+/* É um <label> dentro de .field, então herdava o estilo de etiqueta do
+   formulário — caixa alta e o marcador "►" antes do texto. Aqui o texto é
+   frase, não rótulo de campo. */
+.field label.zona-regra{display:flex;align-items:center;gap:7px;padding:3px 0;
+  font-size:11.5px;color:var(--txt-2);cursor:pointer;
+  text-transform:none;letter-spacing:normal;font-weight:400}
+.field label.zona-regra::before{content:none}
+.field label.zona-regra input{flex:none;accent-color:var(--acc);margin:0}
+@media (max-width:760px){.zona-edit{grid-template-columns:1fr}}
 
 /* Toggle */
 .sw{position:relative;width:34px;height:19px;border-radius:10px;background:var(--ink-700);border:1px solid var(--line);flex:none;transition:all .18s}
@@ -600,15 +807,59 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .sw.on{background:var(--acc-dim);border-color:var(--acc)}
 .sw.on::after{left:17px;background:var(--acc-2)}
 .sw-row{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line-soft);cursor:pointer}
+/* Opção que existe mas não tem detector por trás: aparece para quem a procura,
+   sem fingir que liga alguma coisa. */
+.sw-row.sem-detector{cursor:default;opacity:.55}
+.sw-row.sem-detector b{color:var(--txt-3)}
 .sw-row:last-child{border-bottom:0}
 .sw-row .bd{flex:1;min-width:0}
 .sw-row .bd b{display:block;font-size:12.5px;font-weight:500;color:var(--txt-1)}
 .sw-row .bd span{display:block;font-size:11px;color:var(--txt-3);line-height:1.4}
 
+/* Seleção de ações por câmera.
+   Sempre à vista, inclusive com a análise desligada: é esta lista que diz o
+   que a funcionalidade faz, e escondê-la atrás do interruptor deixava a tela
+   sem nenhuma pista de que a escolha por câmera existe. Desligada, a lista
+   aparece esmaecida — e marcar qualquer item religa a análise. */
+.acoes-sel{display:block;margin:2px 0 4px;padding:10px 12px;border-radius:var(--r-m);
+  background:var(--ink-800);border:1px solid var(--line-soft);transition:opacity .18s}
+.acoes-sel.travada{opacity:.55}
+.acoes-sel .topo{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+.acoes-sel .topo .eyebrow{margin:0;flex:1}
+.acoes-sel .topo button{background:none;border:0;padding:0;cursor:pointer;
+  font-size:11px;font-weight:600;color:var(--acc);letter-spacing:.02em}
+.acoes-sel .topo button:hover{text-decoration:underline}
+.acoes-sel .topo button:disabled{color:var(--txt-4);cursor:default;text-decoration:none}
+
+/* Mesma linha das chaves de analítico logo acima: a ação se liga, não se
+   marca. Caixa de marcação dizia "selecione para uma lista"; o interruptor
+   diz "isto está ligado nesta câmera", que é o que de fato acontece. */
+.acao-item{display:flex;align-items:center;gap:11px;padding:9px 0;
+  border-bottom:1px solid var(--line-soft);cursor:pointer}
+.acao-item:last-child{border-bottom:0}
+.acao-item .bd{flex:1;min-width:0}
+.acao-item .bd b{display:block;font-size:12.5px;font-weight:500;color:var(--txt-1)}
+/* O motivo de a ação não valer naquela câmera. É a parte que não pode sumir:
+   é ela que impede a tela de prometer vigilância que não acontece. */
+.acao-item .bd span{display:block;font-size:11px;color:var(--txt-3);line-height:1.4;margin-top:1px}
+/* Ressalva vira etiqueta curta, não frase. Em frase, "precisa de zona" e
+   "mede movimento entre quadros" ocupavam duas linhas por item e a lista de
+   dez virava um muro de texto cinza. */
+.acao-item .marcas{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.acao-item .marcas .chip{font-size:9.5px;padding:1px 7px;letter-spacing:.04em}
+.acao-item.indisponivel{cursor:not-allowed}
+.acao-item.indisponivel .bd b{color:var(--txt-4);font-weight:400}
+.acao-item.indisponivel .sw{opacity:.35}
+
+/* As sem detector ficam juntas no fim, sob um título próprio. Intercaladas
+   com as que funcionam, a lista pedia leitura item a item para saber o que
+   dava para ligar. */
+.acoes-grupo{display:flex;align-items:center;gap:8px;margin:12px 0 2px}
+.acoes-grupo b{font-size:10px;font-weight:600;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--txt-4);white-space:nowrap}
+.acoes-grupo i{flex:1;height:1px;background:var(--line-soft)}
+
 /* Slider */
-.slider{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;background:var(--ink-700);outline:none}
-.slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--acc);cursor:pointer;border:2px solid var(--ink-850)}
-.slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--acc);cursor:pointer;border:2px solid var(--ink-850)}
 
 /* Paginação */
 .pager{display:flex;align-items:center;gap:8px;padding:11px 15px;border-top:1px solid var(--line-soft);flex-wrap:wrap}
@@ -628,10 +879,9 @@ table.tbl tbody tr.audit-row:hover{background:rgba(53,167,222,0.05)}
 @media (max-width:980px){.split{grid-template-columns:1fr}}
 .cols-4{grid-template-columns:repeat(4,1fr)}
 .cols-3{grid-template-columns:repeat(3,1fr)}
-.cols-2{grid-template-columns:repeat(2,1fr)}
 @media (max-width:1180px){.cols-4{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:1020px){.cols-3{grid-template-columns:repeat(2,1fr)}}
-@media (max-width:640px){.cols-4,.cols-3,.cols-2{grid-template-columns:1fr}}
+@media (max-width:640px){.cols-4,.cols-3{grid-template-columns:1fr}}
 
 /* Cartões de perfil e permissões */
 .perm-card{border:1px solid var(--line);border-radius:var(--r-m);overflow:hidden;background:var(--ink-800);transition:all .2s}
@@ -668,13 +918,105 @@ table.tbl .face-meta span{display:block;font-size:11.5px;color:var(--txt-3);marg
 .note svg{flex:none;margin-top:2px;color:var(--acc)}
 .note b{color:var(--txt-1)}
 
-.thumb-strip{display:flex;gap:6px;flex-wrap:wrap}
-.thumb{width:56px;height:56px;border-radius:var(--r-s);border:1px solid var(--line);overflow:hidden;position:relative;flex:none;background:var(--ink-800)}
-.thumb canvas{width:100%;height:100%;display:block}
-.thumb .t-lbl{position:absolute;left:0;right:0;bottom:0;font-family:var(--f-mono);font-size:7.5px;text-align:center;background:rgba(0,0,0,.7);color:#CFE2F0;padding:1px 0}
-
-.watermark{position:absolute;right:9px;bottom:7px;font-family:var(--f-mono);font-size:8px;letter-spacing:.14em;color:rgba(255,255,255,.28);text-transform:uppercase;pointer-events:none}
-
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+/* ======================================================================
+   TRILHA — por onde a pessoa passou
+   ======================================================================
+   Linha do tempo vertical, do mais recente para o mais antigo. O fio à
+   esquerda é o que diferencia uma trilha de uma lista: ele diz que os itens
+   são o mesmo percurso em momentos diferentes, e não registros avulsos. */
+.trilha-resumo{
+  display:flex;gap:18px;flex-wrap:wrap;margin-bottom:11px;
+  font-size:11.5px;color:var(--txt-3)
+}
+.trilha-resumo b{color:var(--txt-1);font-family:var(--f-mono);font-size:13px}
+.trilha{position:relative;padding-left:16px}
+/* O fio. Recuado das bordas da caixa: sobrando, parecia que a trilha
+   continuava fora da tela. */
+.trilha::before{
+  content:"";position:absolute;left:4px;top:9px;bottom:9px;width:1px;
+  background:linear-gradient(180deg,var(--acc-dim),var(--line-soft))
+}
+.trilha-item{
+  position:relative;display:flex;align-items:center;gap:11px;
+  padding:9px 11px 9px 4px;border-radius:var(--r-s);
+  border-bottom:1px solid var(--line-soft)
+}
+.trilha-item:last-child{border-bottom:0}
+.trilha-item:hover{background:var(--acc-ghost)}
+/* A miniatura, no lugar do marcador que a linha do tempo tinha antes. Uma
+   bolinha dizia só "houve algo aqui"; o recorte diz o quê, e é o que permite
+   percorrer a trajetória com os olhos sem abrir passagem por passagem. As
+   duas listas da ficha — passagens e registros por corpo — usam a mesma
+   medida de propósito: são a mesma pessoa vista de dois jeitos. */
+.trilha-item > canvas{
+  border-radius:var(--r-s);background:var(--ink-900);flex:none;
+  border:1px solid var(--line-soft)
+}
+.trilha-bd{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.trilha-bd b{font-size:12.5px;color:var(--txt-1)}
+.trilha-bd .sub{font-size:10.5px;color:var(--txt-3)}
+.trilha-num{
+  display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;
+  font-size:12px;color:var(--acc-2)
+}
+.trilha-num .sub{font-size:10px;color:var(--txt-4)}
+
+/* Triagem de rostos sem cadastro.
+
+   Grade de recortes, e não lista: o que o operador faz aqui é comparar caras
+   entre si para dizer quais são a mesma pessoa, e isso se faz vendo várias ao
+   mesmo tempo. Numa lista em linha ele compararia de memória. */
+.triagem-grade{
+  display:flex;flex-wrap:wrap;gap:9px
+}
+.triagem-item{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:6px;border-radius:var(--r-m);cursor:pointer;
+  background:var(--ink-900);border:1px solid var(--line-soft);
+  transition:border-color .12s,background .12s
+}
+.triagem-item:hover{border-color:var(--acc-dim)}
+.triagem-item canvas{border-radius:var(--r-s);background:var(--ink-850)}
+.triagem-item .sub{font-size:10px;color:var(--txt-4);line-height:1.25}
+/* Selecionado precisa se ler de relance numa grade cheia: a borda sozinha
+   some entre vinte recortes, então o fundo muda junto. */
+.triagem-item.on{
+  border-color:var(--acc);background:var(--acc-ghost)
+}
+.triagem-item.on .sub{color:var(--acc-2)}
+
+/* Onde esteve, por lugar — antes da linha do tempo.
+
+   Existe porque a lista de passagens vem da mais recente e é longa: uma
+   câmera visitada uma única vez fica enterrada nela. Medido nesta base, uma
+   pessoa com 903 capturas tem 902 numa câmera e UMA em outra — e essa é
+   justamente a que responde por onde ela andou. */
+.trilha-locais{
+  display:flex;flex-direction:column;gap:1px;
+  border:1px solid var(--line-soft);border-radius:var(--r-m);overflow:hidden
+}
+.trilha-local{
+  display:flex;align-items:center;gap:12px;padding:9px 12px;
+  background:var(--ink-900);font-size:12px
+}
+.trilha-local + .trilha-local{border-top:1px solid var(--line-soft)}
+.trilha-local-bd{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.trilha-local-bd b{font-size:12.5px;color:var(--txt-1)}
+.trilha-local-bd .sub{font-size:10.5px;color:var(--txt-3)}
+.trilha-local-num{
+  display:flex;flex-direction:column;align-items:flex-end;gap:1px;flex:none;min-width:62px
+}
+.trilha-local-num .mono{font-family:var(--f-mono);font-size:14px;color:var(--acc-2)}
+.trilha-local-num .sub{font-size:9.5px;color:var(--txt-4)}
+.trilha-local-quando{
+  display:flex;flex-direction:column;align-items:flex-end;gap:1px;flex:none
+}
+.trilha-local-quando .sub{font-size:10px;color:var(--txt-4)}
+
+/* Senha mascarada sem ser `type="password"` — ver protegerCamposDeSenha em
+   app.js. Assim o navegador não oferece gerar nem guardar a senha. */
+.senha-mascarada { -webkit-text-security: disc; text-security: disc; }

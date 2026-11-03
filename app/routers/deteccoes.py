@@ -26,7 +26,7 @@ from app.models import (
     TipoDeteccao, Usuario, Zona,
 )
 from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn
-from app.services import biometrics, evidencias, face_engine, sequencias
+from app.services import biometrics, evidencias, face_engine, retencao, sequencias
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
 from app.services.vision import (
@@ -179,6 +179,18 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                 f"{cam.nome}, por {det.duracao_s or 0}s: corpos sobrepostos, "
                 "ambos em movimento rápido e errático. O sistema não conclui "
                 "agressão a partir do vídeo — confirme na imagem antes de "
+                "qualquer ação."
+            )
+        elif det.classe == "roubo":
+            # Mesma cautela da briga: o vídeo mostra contato seguido de fuga,
+            # não o objeto mudando de mão. Dizer o que foi visto é o que
+            # permite a quem atende decidir — e o que protege quem só
+            # esbarrou em alguém e saiu apressado.
+            detalhe = (
+                f"Indício de roubo em {cam.nome}: duas pessoas em contato e, "
+                f"em seguida, uma delas saiu em disparada enquanto a outra "
+                f"ficou ({det.duracao_s or 0}s do contato à fuga). O sistema "
+                "não vê o objeto mudar de mão — confirme na imagem antes de "
                 "qualquer ação."
             )
         else:
@@ -921,35 +933,33 @@ async def expurgo(db: AsyncSession = Depends(get_db),
                   usuario: Usuario = Depends(exige("settings"))):
     """Remove capturas sem correspondência cujo prazo de retenção venceu.
 
-    Agende via cron. Mantém as vinculadas a alerta ou já revisadas — elas podem
-    integrar inquérito.
+    Mantém as vinculadas a alerta ou já revisadas — elas podem integrar
+    inquérito.
+
+    A rotina vive em `services/retencao`, e este endpoint é só a porta manual
+    dela. Antes a regra estava escrita aqui, e o laço automático teria sido
+    uma segunda cópia: duas implementações da retenção acabam divergindo, e
+    aí uma delas apaga o que a outra guardaria.
     """
-    agora = datetime.now(timezone.utc)
-    alvos = (
-        await db.execute(
-            select(Deteccao).where(
-                Deteccao.expurgo_em.isnot(None),
-                Deteccao.expurgo_em <= agora,
-                Deteccao.pessoa_id.is_(None),
-                Deteccao.revisado.is_(False),
-            ).limit(5000)
-        )
-    ).scalars().unique().all()
+    saida = await retencao.expurgar(db, usuario=usuario, origem="manual")
+    saida["vencidas_restantes"] = await retencao.vencidas(db)
+    return saida
 
-    imagens = 0
-    for d in alvos:
-        # Apagar o registro e deixar o recorte no disco transformaria a
-        # retenção em promessa vazia.
-        if evidencias.apagar(d.snapshot_key):
-            imagens += 1
-        await db.delete(d)
 
-    await audit.registrar(
-        db, acao="EXPURGO", descricao="Expurgo de capturas não identificadas vencidas",
-        severidade="warn", usuario=usuario,
-        alvo=f"{len(alvos)} registro(s), {imagens} recorte(s)",
-        finalidade=f"Retenção de {settings.RETENTION_DAYS_UNMATCHED} dias",
-    )
-    return {"removidos": len(alvos), "imagens_removidas": imagens,
-            "prazo_dias": settings.RETENTION_DAYS_UNMATCHED}
+@router.get("/retencao", summary="Quanto já passou do prazo de retenção")
+async def estado_retencao(db: AsyncSession = Depends(get_db),
+                          usuario: Usuario = Depends(exige("settings"))):
+    """Só conta, não apaga.
+
+    A política de retenção não tinha como ser conferida sem executá-la, e
+    "não sei quanto está vencido" é a situação em que o prazo passa sem
+    ninguém notar — foi o que aconteceu aqui: zero linhas `EXPURGO` na trilha
+    em 2.152 registros.
+    """
+    return {
+        "vencidas": await retencao.vencidas(db),
+        "prazo_dias": settings.RETENTION_DAYS_UNMATCHED,
+        "automatico_horas": settings.RETENCAO_INTERVALO_HORAS,
+        "automatico_ligado": settings.RETENCAO_INTERVALO_HORAS > 0,
+    }
 

@@ -29,3 +29,7 @@ logs/*.log
 
 # Permissões locais do Claude Code (por máquina, não do projeto)
 .claude/
+
+# Bateria de teste de ações por vídeo (scripts/testar_acoes_video.py)
+videos_teste/
+resultados_teste/

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.config import settings
 from app.models import Perfil, Sexo, StatusAlerta, StatusCamera, StatusPessoa, TipoDeteccao, TipoZona
+from app.security import CREDENCIAL_OCULTA, mascarar_credencial
 from app.services.vision import ACOES_PADRAO, FICHA_ACAO, acoes_validas
 
 SENHA_REGRAS = [
@@ -143,6 +144,31 @@ class UsuarioOut(ORMModel):
 # ======================================================================
 # Câmeras e zonas
 # ======================================================================
+
+
+class PrimeiroAcesso(BaseModel):
+    """Como o convite de primeiro acesso terminou."""
+    envio: Literal["enviado", "nao_configurado", "falhou"]
+    erro: str = ""
+    expira_em_segundos: int
+    # Só vem preenchido quando o e-mail não saiu: é o caminho alternativo
+    # para a conta não nascer inacessível. Com o envio funcionando, o
+    # segredo não precisa passar pela tela de ninguém.
+    link: str = ""
+
+
+class UsuarioCriado(UsuarioOut):
+    """A resposta do cadastro, que leva o desfecho do convite junto.
+
+    Existe porque `response_model=UsuarioOut` filtra o que não está
+    declarado — e foi exatamente isso que descartou a senha provisória antes
+    dela chegar à tela do administrador. A conta de PA-000010 nasceu assim:
+    senha gerada, hasheada e perdida, com troca obrigatória no primeiro
+    acesso e ninguém sabendo qual era. Nunca foi acessada.
+    """
+    primeiro_acesso: Optional[PrimeiroAcesso] = None
+
+
 class ZonaIn(BaseModel):
     nome: str
     tipo: TipoZona = TipoZona.POLIGONO
@@ -324,33 +350,6 @@ class CameraUpdate(BaseModel):
     @classmethod
     def _hora(cls, v: Optional[str]) -> Optional[str]:
         return validar_hora(v)
-
-
-CREDENCIAL_OCULTA = "•••"
-
-
-def mascarar_credencial(url: str) -> str:
-    """Tira usuário e senha de uma URL de fluxo antes de ela sair daqui.
-
-    As 26 câmeras deste parque têm a senha de administrador embutida no
-    endereço RTSP, e `CameraOut` entregava o endereço inteiro a quem tivesse
-    a permissão `live` — que é ADMIN, SUPER, OPERADOR e ANALISTA, seis dos
-    sete usuários cadastrados. O navegador recebia as senhas e não fazia
-    nada com elas: `rtsp_url` não aparece uma única vez no JavaScript.
-
-    O que sobra ainda serve para conferir host, porta e caminho, que é para
-    o que alguém olharia o endereço numa tela de diagnóstico. A URL real
-    continua no banco, onde o worker a lê para abrir o fluxo.
-    """
-    if not url or "@" not in url:
-        return url
-    esquema, _, resto = url.partition("://")
-    if not resto:
-        return url
-    credencial, arroba, endereco = resto.partition("@")
-    if not arroba or "/" in credencial:
-        return url
-    return f"{esquema}://{CREDENCIAL_OCULTA}@{endereco}"
 
 
 class CameraOut(ORMModel):
@@ -575,6 +574,10 @@ class AlertaOut(ORMModel):
     severidade: int
     status: StatusAlerta
     atribuido_a: Optional[uuid.UUID]
+    # O nome de quem assumiu. Sem ele a tela só tinha o identificador, que
+    # não diz nada a quem está operando — e saber quem já está cuidando é
+    # justamente o que evita duas guarnições no mesmo chamado.
+    atribuido_nome: str = ""
     resolucao: str
     disparado_em: datetime
     fechado_em: Optional[datetime]
@@ -584,7 +587,6 @@ class AlertaOut(ORMModel):
     tem_imagem: bool = False
     camera: Optional[CameraOut] = None
     pessoa: Optional[PessoaOut] = None
-
 
 class AlertaFechaIn(BaseModel):
     resolucao: str = Field(..., min_length=8, description="Providência adotada")
@@ -617,10 +619,34 @@ class Pagina(BaseModel):
 
 
 class VerificacaoCadeia(BaseModel):
+    """O veredito sobre a trilha, separado por causa.
+
+    Um campo só não servia. A verificação dizia "a trilha pode ter sido
+    alterada fora da aplicação" para três coisas muito diferentes, e quem lê
+    não tinha como saber qual: linha adulterada, elo bifurcado por duas
+    gravações simultâneas, e vínculo de usuário zerado pelo banco quando a
+    conta foi apagada. Nesta instalação as três conviviam — 10, 83 e 10
+    linhas — e o resultado prático é que o alarme deixa de ser lido.
+
+    `integra` continua estrito: verdadeiro só quando nada diverge. O que
+    muda é que agora dá para responder *o quê* divergiu.
+    """
+
     integra: bool
     linhas_verificadas: int
     primeira_divergencia: Optional[int] = None
     mensagem: str
+    # Linha cujo conteúdo não corresponde ao próprio hash. É o sinal de
+    # adulteração, e o único que acusa texto reescrito.
+    conteudo_divergente: int = 0
+    # Linha que aponta para um elo que não é o da anterior. Duas gravações
+    # simultâneas produzem isso sem ninguém tocar em nada.
+    elos_bifurcados: int = 0
+    # Subconjunto de `conteudo_divergente` com assinatura conhecida: o
+    # `usuario_id` foi zerado pelo `ON DELETE SET NULL` depois que o hash já
+    # o cobria. O e-mail e o perfil continuam gravados, então a autoria não
+    # se perdeu — só o vínculo.
+    vinculo_de_usuario_perdido: int = 0
 
 
 TokenOut.model_rebuild()

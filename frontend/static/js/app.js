@@ -121,49 +121,16 @@ async function enviarCodigo(){
     REC.email = e;
     $('#recMailEcho').textContent = e;
 
-    // Sem SMTP configurado nada sai, e sem este atalho a instalação ficaria
-    // sem forma nenhuma de entrar. Só existe em desenvolvimento.
-    const atalho = r.link_debug
-      ? `<br><a href="${esc(r.link_debug)}" class="mono" style="font-size:11px;color:var(--acc-2)">abrir o link de redefinição</a>`
-      : '';
+    /* Sempre a etapa 2, com o mesmo texto, exista ou não a conta.
 
-    /* O e-mail pode ter falhado e a mensagem padrão não sabe disso — ela é a
-       mesma exista ou não a conta, para o endpoint não virar um oráculo de
-       endereços válidos. Sem este aviso, a tela dizia "enviamos um link"
-       mesmo quando nada saiu, e quem esperava o e-mail não tinha como saber
-       se o sistema falhou, se caiu no spam ou se só demorava.
-
-       E quando falha a tela fica na etapa 1: a etapa 2 manda abrir a caixa de
-       entrada e esperar, com um relógio de 30 minutos correndo. Avançar até
-       ela depois de o envio falhar é pedir para aguardar uma mensagem que não
-       foi despachada — contradiz, na mesma tela, o aviso logo acima. */
-    if(r.erro_envio){
-      authAlert('#recAlert', 'warn',
-        `<b>O e-mail não saiu.</b><br><span style="font-size:11.5px">${esc(r.erro_envio)}</span>` +
-        (atalho ? atalho.replace('abrir o link de redefinição', 'abrir o link mesmo assim') : ''));
-      return;
-    }
-
-    /* Instalação sem envio de e-mail configurado. Não é defeito, e alarmar
-       aqui manda procurar problema onde não há: o que falta é configuração, e
-       quem está na tela precisa do outro caminho, não do diagnóstico.
-
-       O motivo técnico só aparece junto do atalho de desenvolvimento — em
-       produção quem lê isto é operador, e "falta SMTP_PASSWORD" não é frase
-       que ajude alguém a entrar no sistema. */
-    if(r.aviso_envio){
-      authAlert('#recAlert', 'info',
-        '<b>Esta instalação ainda não envia e-mail.</b><br>' + (atalho
-          ? `<span style="font-size:11.5px">${esc(r.aviso_envio)}</span>${atalho}`
-          : '<span style="font-size:11.5px">Peça a um administrador que emita ' +
-            'seu link de redefinição.</span>'));
-      return;
-    }
-
+       A tela já parou na etapa 1 dizendo "não há conta", e já mostrou o link
+       direto como atalho. As duas coisas entregavam a quem estivesse na rede
+       quem tem cadastro — e o atalho, a própria conta. O servidor agora
+       responde igual nos dois casos, e a tela não tem o que distinguir. */
     REC.expira = Date.now() + (r.expira_em_segundos || 1800) * 1000;
     recStep(2);
     iniciarTimerOTP();
-    authAlert('#recAlert', 'info', esc(r.mensagem) + atalho);
+    authAlert('#recAlert', 'info', '');
   }catch(err){
     authAlert('#recAlert', 'err', esc(err.message));
   }finally{ btn.disabled = false; }
@@ -286,6 +253,32 @@ $('#btnRecBack1').onclick = mostrarLogin;
 $('#btnRecBack2').onclick = () => { clearInterval(REC.timer); recStep(1); };
 $('#btnRecSend').onclick = enviarCodigo;
 $('#recEmail').addEventListener('keydown', e => { if(e.key === 'Enter') enviarCodigo(); });
+/* Campos de senha sem gerenciador de senhas do navegador.
+
+   Com `type="password"` o Chrome oferece gerar uma senha forte, guardá-la na
+   conta Google de quem está na máquina e preenchê-la sozinho depois — num
+   posto compartilhado, isso deixa a senha de um operador ao alcance do
+   próximo. `autocomplete="off"` não impede: em campo de senha ele é ignorado.
+
+   O que impede é o campo deixar de ser de senha para o navegador. Vira texto,
+   mascarado por CSS com as mesmas bolinhas. Só onde o navegador sabe mascarar
+   (`-webkit-text-security`); nos outros fica `password`, porque mostrar a
+   senha em claro seria pior que o aviso. Copiar e recortar ficam bloqueados,
+   como num campo de senha comum. */
+function protegerCamposDeSenha(){
+  const sabeMascarar = window.CSS && CSS.supports &&
+    CSS.supports('-webkit-text-security', 'disc');
+  if(!sabeMascarar) return;
+  $$('input[data-senha]').forEach(el => {
+    el.type = 'text';
+    el.classList.add('senha-mascarada');
+    el.setAttribute('autocorrect', 'off');
+    ['copy', 'cut', 'dragstart'].forEach(ev =>
+      el.addEventListener(ev, e => e.preventDefault()));
+  });
+}
+protegerCamposDeSenha();
+
 $('#btnResend').onclick = enviarCodigo;
 $('#btnRecSave').onclick = salvarSenha;
 $('#recPass').addEventListener('input', atualizarMedidor);

@@ -67,19 +67,18 @@
     <canvas id="authCanvas"></canvas>
     <div class="auth-brand-in">
       <div class="auth-mark">
+        <!-- Escudo facetado com câmera de parede. O brasão anterior era um
+             alvo (círculo + mira), que lia como "tiro" num sistema que não
+             aponta arma nenhuma; este diz o que o sistema faz. -->
         <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
-          <path d="M21 1.8 3.5 8.2v14.2C3.5 34 11 42 21 46.2 31 42 38.5 34 38.5 22.4V8.2L21 1.8z"
-                fill="#0F1821" stroke="#35A7DE" stroke-width="1.6"/>
-          <circle cx="21" cy="21.4" r="8.6" stroke="#35A7DE" stroke-width="1.4"/>
-          <g stroke="#F0A02A" stroke-width="1.15" stroke-linecap="round">
-            <path d="M21 13.6v2.9M21 26.3v2.9M13.1 21.4h2.9M26 21.4h2.9"/>
-            <path d="m15.4 15.8 2.1 2.1M24.5 24.9l2.1 2.1M26.6 15.8l-2.1 2.1M17.5 24.9l-2.1 2.1"/>
-          </g>
-          <circle cx="21" cy="21.4" r="3.4" fill="#35A7DE"/>
-          <circle cx="21" cy="21.4" r="1.25" fill="#0F1821"/>
-        </svg>
+      <path d="M21 1.6 38.8 8.1V26.5L21 44.6 3.2 26.5V8.1L21 1.6z" fill="#0F1821" stroke="#35A7DE" stroke-width="2.4" stroke-linejoin="round"/>
+      <path d="M15 13.6v5.8M12.2 13.6h5.6" stroke="#35A7DE" stroke-width="2.2" stroke-linecap="round"/>
+      <rect x="11" y="19.4" width="13.4" height="6.6" rx="1.7" fill="#35A7DE"/>
+      <circle cx="26.2" cy="22.7" r="3.7" fill="#35A7DE"/>
+      <circle cx="26.2" cy="22.7" r="2.1" fill="#F0A02A"/>
+    </svg>
         <div class="auth-mark-txt">
-          <b>SEGURANÇA</b>
+          <b>SISTEMA DE SEGURANÇA</b>
           <span>Centro Integrado de Videomonitoramento</span>
         </div>
       </div>
@@ -117,7 +116,7 @@
       </div>
       <div class="field">
         <label for="loginPass">Senha</label>
-        <input class="inp" id="loginPass" type="password" autocomplete="new-password" placeholder="Sua senha de acesso" required value="">
+        <input class="inp" id="loginPass" type="password" data-senha autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Sua senha de acesso" required value="">
       </div>
       <div class="auth-row">
         <button class="link-q" id="goRecover">Esqueci minha senha</button>
@@ -130,7 +129,7 @@
       <div class="stepper" id="recStepper">
         <div class="step active" data-step="1"><span class="step-dot">1</span><span class="step-lbl">Identificação</span></div>
         <div class="step-bar"></div>
-        <div class="step" data-step="2"><span class="step-dot">2</span><span class="step-lbl">Código</span></div>
+        <div class="step" data-step="2"><span class="step-dot">2</span><span class="step-lbl">E-mail</span></div>
         <div class="step-bar"></div>
         <div class="step" data-step="3"><span class="step-dot">3</span><span class="step-lbl">Nova senha</span></div>
       </div>
@@ -139,32 +138,31 @@
 
       <div id="recStep1">
         <h2>Recuperar acesso</h2>
-        <p class="lede" style="margin:6px 0 16px">Informe o e-mail funcional cadastrado. Enviaremos um código de verificação válido por 10 minutos.</p>
+        <p class="lede" style="margin:6px 0 16px">Informe o e-mail funcional cadastrado. Enviaremos um link de redefinição válido por 30 minutos.</p>
         <div class="field">
           <label for="recEmail">E-mail funcional</label>
           <input class="inp" id="recEmail" type="email" autocomplete="email" placeholder="nome@pm.gov.br">
         </div>
-        <button class="btn btn-primary btn-block" id="btnRecSend" style="margin-top:16px"><svg width="16" height="16"><use href="#i-mail"/></svg> Enviar código</button>
+        <button class="btn btn-primary btn-block" id="btnRecSend" style="margin-top:16px"><svg width="16" height="16"><use href="#i-mail"/></svg> Enviar link</button>
         <button class="btn btn-ghost btn-block" id="btnRecBack1" style="margin-top:9px"><svg width="15" height="15"><use href="#i-lt"/></svg> Voltar ao login</button>
       </div>
 
       <div id="recStep2" hidden>
-        <h2>Código de verificação</h2>
-        <p class="lede" style="margin:6px 0 16px">Digite os 6 dígitos enviados para <b id="recMailEcho" style="color:var(--txt-1)"></b>.</p>
-        <div class="otp-row" id="otpRow">
-          <input class="otp" inputmode="numeric" maxlength="1" id="otp0" aria-label="Dígito 1">
-          <input class="otp" inputmode="numeric" maxlength="1" id="otp1" aria-label="Dígito 2">
-          <input class="otp" inputmode="numeric" maxlength="1" id="otp2" aria-label="Dígito 3">
-          <input class="otp" inputmode="numeric" maxlength="1" id="otp3" aria-label="Dígito 4">
-          <input class="otp" inputmode="numeric" maxlength="1" id="otp4" aria-label="Dígito 5">
-          <input class="otp" inputmode="numeric" maxlength="1" id="otp5" aria-label="Dígito 6">
-        </div>
+        <!-- Condicional de propósito: esta tela aparece igual exista ou não a
+             conta, para não contar a ninguém quem tem cadastro. Ver
+             `_resposta_neutra` em app/routers/auth.py. -->
+        <h2>Verifique seu e-mail</h2>
+        <p class="lede" style="margin:6px 0 16px">Se houver uma conta ativa com
+          <b id="recMailEcho" style="color:var(--txt-1)"></b>, enviamos um link de
+          redefinição para ele. Abra a mensagem e clique no link para definir a nova senha.</p>
         <div class="auth-row" style="margin-top:13px">
-          <span class="mono" style="font-size:11.5px;color:var(--txt-3)">Expira em <b id="otpTimer" style="color:var(--amber)">10:00</b></span>
-          <button class="link-q" id="btnResend">Reenviar código</button>
+          <span class="mono" style="font-size:11.5px;color:var(--txt-3)">O link expira em <b id="otpTimer" style="color:var(--amber)">30:00</b></span>
+          <button class="link-q" id="btnResend">Enviar de novo</button>
         </div>
-        <button class="btn btn-primary btn-block" id="btnRecVerify" style="margin-top:16px"><svg width="16" height="16"><use href="#i-check"/></svg> Verificar código</button>
-        <button class="btn btn-ghost btn-block" id="btnRecBack2" style="margin-top:9px"><svg width="15" height="15"><use href="#i-lt"/></svg> Corrigir e-mail</button>
+        <p class="lede" style="margin:14px 0 0;font-size:12px">Se não chegar em alguns
+          minutos, confira a caixa de spam e se o e-mail acima está escrito certo.
+          Persistindo, procure o administrador do sistema.</p>
+        <button class="btn btn-ghost btn-block" id="btnRecBack2" style="margin-top:16px"><svg width="15" height="15"><use href="#i-lt"/></svg> Corrigir e-mail</button>
       </div>
 
       <div id="recStep3" hidden>
@@ -172,7 +170,7 @@
         <p class="lede" style="margin:6px 0 16px">A senha expira em 90 dias e não pode repetir as 5 últimas utilizadas.</p>
         <div class="field">
           <label for="recPass">Nova senha</label>
-          <input class="inp" id="recPass" type="password" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
+          <input class="inp" id="recPass" type="password" data-senha autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Mínimo 10 caracteres">
           <div class="meter" id="pwMeter"><i></i><i></i><i></i><i></i></div>
           <div class="pw-rules" id="pwRules">
             <div class="pw-rule" data-rule="len"><i>&#10003;</i> Mínimo de 10 caracteres</div>
@@ -184,9 +182,9 @@
         </div>
         <div class="field" style="margin-top:13px">
           <label for="recPass2">Confirmar nova senha</label>
-          <input class="inp" id="recPass2" type="password" autocomplete="new-password" placeholder="Repita a senha">
+          <input class="inp" id="recPass2" type="password" data-senha autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Repita a senha">
         </div>
-        <button class="btn btn-primary btn-block" id="btnRecSave" style="margin-top:16px"><svg width="16" height="16"><use href="#i-key"/></svg> Salvar e entrar</button>
+        <button class="btn btn-primary btn-block" id="btnRecSave" style="margin-top:16px"><svg width="16" height="16"><use href="#i-key"/></svg> Redefinir</button>
       </div>
     </div>
   </div>
@@ -195,12 +193,15 @@
 <!-- ===================== APLICAÇÃO ===================== -->
 <div id="app" hidden>
   <div class="brand-cell">
+    <!-- 24x28 na tela: a bordadura interna e o anel da lente somem, que
+         nesse tamanho viram borrão. Silhueta e motivo são os mesmos. -->
     <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
-      <path d="M21 1.8 3.5 8.2v14.2C3.5 34 11 42 21 46.2 31 42 38.5 34 38.5 22.4V8.2L21 1.8z" fill="#0F1821" stroke="#35A7DE" stroke-width="2"/>
-      <circle cx="21" cy="21" r="7.6" fill="none" stroke="#35A7DE" stroke-width="2"/>
-      <circle cx="21" cy="21" r="3.2" fill="#F0A02A"/>
+      <path d="M21 1.6 38.8 8.1v14.6L21 46.4 3.2 22.7V8.1L21 1.6z" fill="#0F1821" stroke="#35A7DE" stroke-width="2.4" stroke-linejoin="round"/>
+      <path d="M15.6 12.8v5.4M12.4 12.8h6.4" stroke="#35A7DE" stroke-width="2" stroke-linecap="round"/>
+      <rect x="10.6" y="18.4" width="13.2" height="7.6" rx="1.8" fill="#35A7DE"/>
+      <circle cx="28.6" cy="22.2" r="3.3" fill="#F0A02A"/>
     </svg>
-    <div><b>SEGURANÇA</b></div>
+    <div class="brand-txt"><span>Sistema de</span><b>SEGURANÇA</b></div>
   </div>
 
   <header class="topbar">
@@ -229,10 +230,14 @@
     <button class="nav-item" data-view="cams"><svg width="17" height="17"><use href="#i-cam"/></svg> Câmeras <span class="cnt" id="navCams">0</span></button>
 
     <div class="nav-grp">Inteligência</div>
-    <button class="nav-item" data-view="facial"><svg width="17" height="17"><use href="#i-face"/></svg> Reconhecimento facial <span class="cnt" id="navFacial">0</span></button>
-    <button class="nav-item" data-view="objects"><svg width="17" height="17"><use href="#i-box"/></svg> Detecção de objetos <span class="cnt" id="navObj">0</span></button>
-    <button class="nav-item" data-view="actions"><svg width="17" height="17"><use href="#i-run"/></svg> Análise de ações <span class="cnt" id="navAct">0</span></button>
-    <button class="nav-item" data-view="biometrics"><svg width="17" height="17"><use href="#i-db"/></svg> Base biométrica <span class="cnt" id="navBio">0</span></button>
+    <!-- Os três contadores de detecção são das últimas 24 horas; a base
+         biométrica é o cadastro inteiro. Sem o `title` os números pareciam a
+         mesma coisa, e um zero em "Análise de ações" ao lado de "todo o
+         período registrado" na tela parecia defeito, não janela de tempo. -->
+    <button class="nav-item" data-view="facial"><svg width="17" height="17"><use href="#i-face"/></svg> Reconhecimento facial <span class="cnt" id="navFacial" title="Capturas nas últimas 24 horas">0</span></button>
+    <button class="nav-item" data-view="objects"><svg width="17" height="17"><use href="#i-box"/></svg> Detecção de objetos <span class="cnt" id="navObj" title="Detecções nas últimas 24 horas">0</span></button>
+    <button class="nav-item" data-view="actions"><svg width="17" height="17"><use href="#i-run"/></svg> Análise de ações <span class="cnt" id="navAct" title="Eventos nas últimas 24 horas">0</span></button>
+    <button class="nav-item" data-view="biometrics"><svg width="17" height="17"><use href="#i-db"/></svg> Base biométrica <span class="cnt" id="navBio" title="Pessoas cadastradas — total, não 24 horas">0</span></button>
 
     <div class="nav-grp">Controle</div>
     <button class="nav-item" data-view="alerts"><svg width="17" height="17"><use href="#i-bell"/></svg> Alertas <span class="cnt alert" id="navAlerts">0</span></button>
@@ -263,6 +268,11 @@
 
 <div class="modal-scrim" id="modalScrim" hidden><div class="modal" id="modalBox"></div></div>
 <div id="toasts"></div>
+
+<!-- Painel de alerta: fica acima de tudo, inclusive do modal, e exige que
+     alguém confirme a ciência. Num sistema integrado a presídio o alerta não
+     pode depender de a pessoa estar com a lista de alertas aberta. -->
+<div id="alertaFaixa" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="/static/js/three-auth.js"></script>

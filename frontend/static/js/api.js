@@ -53,7 +53,11 @@ const API = {
   },
 
   /* ---------- Requisição ---------- */
-  async _bruto(metodo, rota, {corpo, query, formData, texto} = {}){
+  // Generoso: envio de foto e busca 1:N passam por aqui e levam segundos
+  // legítimos. O que ele corta é a chamada que não volta nunca.
+  prazoMs: 45000,
+
+  async _bruto(metodo, rota, {corpo, query, formData, texto, arquivo} = {}){
     let url = this.base + rota;
     if(query){
       const qs = new URLSearchParams();
@@ -72,11 +76,53 @@ const API = {
       opts.body = JSON.stringify(corpo);
     }
 
-    const r = await fetch(url, opts);
+    // Sem prazo, uma requisição pendurada não falha nunca e a tela que a
+    // espera fica no "carregando" para sempre — foi assim que a ficha
+    // biométrica parecia "não abrir".
+    const relogio = new AbortController();
+    const prazo = setTimeout(() => relogio.abort(), this.prazoMs);
+    opts.signal = relogio.signal;
+
+    let r;
+    try{
+      r = await fetch(url, opts);
+    }catch(e){
+      if(e && e.name === 'AbortError'){
+        const estourou = new Error(
+          `O servidor não respondeu em ${Math.round(this.prazoMs / 1000)}s. `
+          + 'Nada foi gravado — tente de novo.');
+        estourou.status = 0;
+        estourou.rede = true;
+        throw estourou;
+      }
+      // `fetch` só rejeita quando a requisição não chegou a ter resposta:
+      // servidor reiniciando, rede caída, aba aberta há horas. O navegador
+      // chama isso de "Failed to fetch", que foi o que a tela mostrou a quem
+      // tentava salvar uma câmera — em inglês e sem dizer que nada foi
+      // gravado. A distinção importa: erro de validação quer um campo
+      // corrigido; este quer uma nova tentativa.
+      const falha = new Error(
+        'O servidor não respondeu. Nada foi gravado — verifique se o sistema '
+        + 'está no ar e tente de novo.');
+      falha.status = 0;
+      falha.rede = true;
+      throw falha;
+    }finally{
+      clearTimeout(prazo);
+    }
 
     if(r.status === 204) return null;
-    if(texto) return r.ok ? await r.text() : Promise.reject(await this._erro(r));
     if(!r.ok) throw await this._erro(r);
+    if(arquivo){
+      /* O nome vem do servidor, no Content-Disposition. Sem ele o navegador
+         batiza o arquivo com o nome da rota — "exportar" — e o auditor recebe
+         um arquivo sem extensão nem data. */
+      const cd = r.headers.get('content-disposition') || '';
+      const achou = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+      return {blob: await r.blob(),
+              nome: achou ? decodeURIComponent(achou[1]) : 'download'};
+    }
+    if(texto) return await r.text();
     const tipo = r.headers.get('content-type') || '';
     return tipo.includes('application/json') ? await r.json() : await r.text();
   },
@@ -85,9 +131,24 @@ const API = {
     let detalhe = `Erro ${r.status}`;
     try{
       const j = await r.json();
-      if(typeof j.detail === 'string') detalhe = j.detail;
-      else if(Array.isArray(j.problemas) && j.problemas.length){
+      // `problemas` vem primeiro de propósito. O servidor manda os dois: um
+      // `detail` genérico ("Dados inválidos na requisição.") e, ao lado, a
+      // lista campo a campo que ele monta justamente para a tela mostrar.
+      // Testando `detail` antes, a explicação era descartada sem ser lida, e
+      // quem configurava uma câmera via só que não deu — nunca o quê.
+      if(Array.isArray(j.problemas) && j.problemas.length){
         detalhe = j.problemas.map(p => `${p.campo}: ${p.problema}`).join(' · ');
+      }else if(typeof j.detail === 'string') detalhe = j.detail;
+      else if(Array.isArray(j.detail) && j.detail.length){
+        // 422 do Pydantic: uma lista de objetos com `loc` e `msg`. Jogado na
+        // tela como JSON cru, dizia `[{"type":"value_error","loc":["body",…`,
+        // e quem estava configurando a câmera não tinha como saber qual campo
+        // recusou. O nome do campo é a única parte que importa aqui.
+        detalhe = j.detail.map(p => {
+          const campo = Array.isArray(p.loc) ? p.loc.filter(x => x !== 'body').join('.') : '';
+          const msg = (p.msg || '').replace(/^Value error,\s*/i, '');
+          return campo ? `${campo}: ${msg}` : msg;
+        }).filter(Boolean).join(' · ') || JSON.stringify(j.detail);
       }else if(j.detail){ detalhe = JSON.stringify(j.detail); }
     }catch(e){}
     const erro = new Error(detalhe);
@@ -124,6 +185,31 @@ const API = {
     return this._renovando;
   },
 
+  /* Download de rota autenticada.
+
+     `window.open(url)` não serve aqui: a aba nova não leva o cabeçalho
+     `Authorization`, e a rota de exportação exige. O servidor respondia 401,
+     a aba mostrava o JSON do erro e a tela já tinha dito "o download começa
+     em instantes" — o arquivo nunca chegava e nada explicava por quê.
+
+     Passando por `req`, o download herda o que o resto da aplicação já tem:
+     renovação do token em 401, prazo máximo e a tradução dos erros. Em sessão
+     longa isso não é luxo — a exportação é justamente o que alguém faz depois
+     de uma hora lendo a trilha, quando o token já venceu. */
+  async baixar(rota, query){
+    const {blob, nome} = await this.req('GET', rota, {query, arquivo: true});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Sem revogar, o blob fica na memória da aba até ela fechar — e uma
+    // trilha inteira não é um arquivo pequeno.
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return nome;
+  },
+
   get(rota, query){ return this.req('GET', rota, {query}); },
   post(rota, corpo, query){ return this.req('POST', rota, {corpo, query}); },
   patch(rota, corpo){ return this.req('PATCH', rota, {corpo}); },
@@ -142,9 +228,11 @@ const API = {
   },
   eu(){ return this.get('/auth/eu'); },
   recuperar(email){ return this._bruto('POST', '/auth/recuperar', {corpo:{email}}); },
-  verificarCodigo(email, codigo){ return this._bruto('POST', '/auth/verificar-codigo', {corpo:{email, codigo}}); },
-  redefinirSenha(email, codigo, nova_senha){
-    return this._bruto('POST', '/auth/redefinir-senha', {corpo:{email, codigo, nova_senha}});
+  // O segredo do link identifica o token e, por ele, o usuário — não é preciso
+  // mandar o e-mail junto.
+  verificarLink(token){ return this._bruto('POST', '/auth/verificar-link', {corpo:{token}}); },
+  redefinirSenha(token, nova_senha){
+    return this._bruto('POST', '/auth/redefinir-senha', {corpo:{token, nova_senha}});
   },
 
   /* ---------- Câmeras ---------- */
@@ -153,7 +241,9 @@ const API = {
   criarCamera(dados){ return this.post('/cameras', dados); },
   salvarCamera(codigo, dados){ return this.patch('/cameras/' + codigo, dados); },
   removerCamera(codigo, motivo){ return this.del('/cameras/' + codigo, {motivo}); },
-  setores(){ return this.get('/cameras/setores'); },
+  // `lotacao` tira os lugares de passagem: serve ao cadastro de pessoa,
+  // não à ficha da câmera, que precisa poder apontar para qualquer um deles.
+  setores(lotacao){ return this.get('/cameras/setores' + (lotacao ? '?lotacao=true' : '')); },
   ptz(codigo, comando, velocidade){ return this.post(`/cameras/${codigo}/ptz`, {comando, velocidade:velocidade||0.5}); },
   saudeCamera(codigo){ return this.get(`/cameras/${codigo}/saude`); },
   streams(setor){ return this.get('/stream', {setor}); },
@@ -166,7 +256,22 @@ const API = {
   excluirPessoa(id, motivo){ return this.del('/pessoas/' + id, {motivo}); },
   esquemaIds(){ return this.get('/pessoas/esquema-ids'); },
   proximoId(sexo){ return this.get('/pessoas/proximo-id', {sexo}); },
-  capturasDaPessoa(id, limite){ return this.get(`/pessoas/${id}/capturas`, {limite:limite||30}); },
+  // Passagens, não capturas: quem fica diante da câmera gera uma captura por
+  // volta do worker, e lidas uma a uma não dizem por onde a pessoa andou.
+  trajetoriaDaPessoa(id, q){ return this.get(`/pessoas/${id}/trajetoria`, q || {}); },
+  // Os registros que a trajetória resume, um por linha. `tipo` separa os dois
+  // modos de reconhecer: 'rosto' identifica, 'corpo' prova presença.
+  registrosDaPessoa(id, tipo, limite){
+    return this.get(`/pessoas/${id}/capturas`, {tipo, limite: limite || 200});
+  },
+  filaConferencia(q){ return this.get('/pessoas/conferencia', q || {}); },
+  // A outra metade da triagem: rosto que não se parece com ninguém. A fila
+  // de conferência pergunta "é ela?"; esta, "quem é?".
+  filaDesconhecidos(q){ return this.get('/pessoas/desconhecidos', q || {}); },
+  abrirNaoIdentificado(codigos){ return this.post('/pessoas/nao-identificado', codigos); },
+  amostrasDeCapturas(id, codigos){
+    return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
+  },
   async enviarAmostra(id, arquivo){
     const fd = new FormData();
     fd.append('imagem', arquivo);
@@ -210,21 +315,32 @@ const API = {
   resumoAlertas(){ return this.get('/alertas/resumo'); },
   assumirAlerta(codigo){ return this.post(`/alertas/${codigo}/assumir`); },
   encerrarAlerta(codigo, resolucao){ return this.post(`/alertas/${codigo}/encerrar`, {resolucao}); },
+  // O motivo vai no contrato, não só na tela: o servidor recusa 422
+  // sem ele, então nenhuma chamada futura apaga sem justificar.
+  excluirAlerta(codigo, motivo){ return this.del(`/alertas/${codigo}`, {motivo}); },
 
   /* ---------- Usuários ---------- */
-  usuarios(q){ return this.get('/usuarios', {q}); },
+  usuarios(q, incluirExcluidos){
+    return this.get('/usuarios', {q, incluir_excluidos: incluirExcluidos ? 'true' : ''});
+  },
   perfis(){ return this.get('/usuarios/perfis'); },
   criarUsuario(dados){ return this.post('/usuarios', dados); },
   salvarUsuario(id, dados){ return this.patch('/usuarios/' + id, dados); },
-  forcarTrocaSenha(id){ return this.post(`/usuarios/${id}/forcar-troca-senha`); },
-  desativarUsuario(id, motivo){ return this.del('/usuarios/' + id, {motivo}); },
+  bloquearUsuario(id, motivo){ return this.post(`/usuarios/${id}/bloqueio`, undefined, {motivo}); },
+  linkRedefinicao(id, motivo){ return this.post(`/usuarios/${id}/link-redefinicao`, undefined, {motivo}); },
+  desbloquearUsuario(id){ return this.del(`/usuarios/${id}/bloqueio`); },
+  excluirUsuario(id, motivo){ return this.del('/usuarios/' + id, {motivo}); },
+
+  /* ---------- Configuração ---------- */
+  configuracao(){ return this.get('/configuracao'); },
+  salvarConfiguracao(valores){ return this.req('PUT', '/configuracao', {corpo:{valores}}); },
 
   /* ---------- Auditoria ---------- */
   auditoria(q){ return this.get('/auditoria', q); },
   acoesAuditoria(){ return this.get('/auditoria/acoes'); },
   verificarCadeia(){ return this.get('/auditoria/verificar'); },
-  urlExportarAuditoria(finalidade){
-    return `${this.base}/auditoria/exportar?finalidade=${encodeURIComponent(finalidade)}`;
+  exportarAuditoria(finalidade, filtro){
+    return this.baixar('/auditoria/exportar', {finalidade, ...(filtro || {})});
   },
 
   /* ---------- Sistema ---------- */

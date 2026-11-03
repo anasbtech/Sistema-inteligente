@@ -208,16 +208,24 @@ def sockets_do_laco_local(host: str, porta: int):
     navegador antes de a requisição sair. Os dois chegaram como "não abre" e
     "não salva", que não se parecem com um problema de rede.
 
-    Continua restrito ao laço local — nada é exposto na rede. Host diferente
-    de loopback devolve `None`, e aí quem resolve é o uvicorn, como antes.
+    Com host de laço local, continua restrito a ele — nada é exposto na rede.
+
+    Com `0.0.0.0` (aberto para a rede, para o link do e-mail abrir em outra
+    máquina) o mesmo atraso volta: `0.0.0.0` é só IPv4, e `localhost` nesta
+    máquina tenta `::1` primeiro. Por isso esse caso escuta também em `::`.
+    Outro host qualquer devolve `None`, e aí quem resolve é o uvicorn.
     """
     import socket
 
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    if host in ("127.0.0.1", "localhost", "::1"):
+        enderecos = ((socket.AF_INET6, "::1"), (socket.AF_INET, "127.0.0.1"))
+    elif host in ("0.0.0.0", "::"):
+        enderecos = ((socket.AF_INET6, "::"), (socket.AF_INET, "0.0.0.0"))
+    else:
         return None
 
     socks = []
-    for familia, endereco in ((socket.AF_INET6, "::1"), (socket.AF_INET, "127.0.0.1")):
+    for familia, endereco in enderecos:
         try:
             s = socket.socket(familia, socket.SOCK_STREAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -312,8 +320,15 @@ def main() -> None:
         description="SEGURANÇA — Centro Integrado de Videomonitoramento",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--porta", type=int, default=8000)
-    p.add_argument("--host", default="127.0.0.1")
+    # Sem valor padrão aqui, de propósito. Com `default="127.0.0.1"` não há
+    # como distinguir "a pessoa pediu o laço local" de "a pessoa não disse
+    # nada" — e o `setdefault` abaixo gravava esse palpite na variável de
+    # ambiente, que tem prioridade sobre o `.env`. Resultado: `HOST=0.0.0.0`
+    # escrito no `.env` era lido pela configuração e **ignorado na prática**,
+    # com o servidor escutando só em 127.0.0.1. Configuração morta que parece
+    # viva, e aqui ela custava o acesso pela rede.
+    p.add_argument("--porta", type=int, default=None)
+    p.add_argument("--host", default=None)
     p.add_argument("--reset", action="store_true", help="apaga o banco e recomeça")
     p.add_argument("--sem-simulador", action="store_true", help="não gera detecções automáticas")
     p.add_argument("--sem-navegador", action="store_true", help="não abre o navegador")
@@ -324,9 +339,13 @@ def main() -> None:
 
     checar_dependencias()
 
-    # As variáveis precisam existir antes de `app.config` ser importado.
-    os.environ.setdefault("HOST", args.host)
-    os.environ.setdefault("PORT", str(args.porta))
+    # As variáveis precisam existir antes de `app.config` ser importado. Só
+    # o que a linha de comando pediu de fato: o que ela não disse fica para
+    # o `.env` responder, que é a ordem de precedência esperada.
+    if args.host:
+        os.environ["HOST"] = args.host
+    if args.porta:
+        os.environ["PORT"] = str(args.porta)
     if args.sem_simulador:
         os.environ["SIMULADOR"] = "false"
     # Chave estável entre execuções, para a sessão do navegador sobreviver
@@ -360,6 +379,12 @@ def main() -> None:
     faixa()
     print(f"  Interface     {NEGRITO}{AZUL}{url}{FIM}")
     print(f"  API (docs)    {CINZA}{url}/docs{FIM}")
+    # O endereço que as *outras* máquinas usam, e que vai no link de
+    # redefinição de senha. Sai só quando difere do local: numa instalação
+    # de máquina única repetir a mesma linha duas vezes só confunde.
+    if settings.url_publica != url:
+        print(f"  Na rede       {NEGRITO}{settings.url_publica}{FIM}  "
+              f"{CINZA}(APP_URL — é este que vai no e-mail){FIM}")
     print()
     if semeou or settings.ENV == "development":
         # Filtrado pelo que existe: uma conta apagada não deve seguir aparecendo
@@ -388,7 +413,13 @@ def main() -> None:
 
     import uvicorn
 
-    socks = sockets_do_laco_local(args.host, args.porta) if not args.recarregar else None
+    # Resolvido pela configuração, não pelo argparse: a linha de comando tem
+    # precedência (ela já gravou a variável de ambiente acima), o `.env` vem
+    # em seguida, e o padrão do `Settings` fecha. Era este elo que faltava
+    # para `HOST=0.0.0.0` no `.env` valer de fato.
+    host, porta = settings.HOST, settings.PORT
+
+    socks = sockets_do_laco_local(host, porta) if not args.recarregar else None
     if socks:
         config = uvicorn.Config(
             "app.main:app",
@@ -399,7 +430,7 @@ def main() -> None:
     else:
         uvicorn.run(
             "app.main:app",
-            host=args.host, port=args.porta,
+            host=host, port=porta,
             reload=args.recarregar,
             log_level="warning",
             access_log=False,
