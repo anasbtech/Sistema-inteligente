@@ -15,6 +15,7 @@ os.chdir(RAIZ)
 sys.path.insert(0, str(RAIZ))
 LOG = RAIZ / "resultados_teste" / "ao_vivo" / "apresentar.log"
 LOG.parent.mkdir(parents=True, exist_ok=True)
+LOG.unlink(missing_ok=True)          # o log só descreve a última abertura
 
 try:
     from scripts import ver_acao_video
