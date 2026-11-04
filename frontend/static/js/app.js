@@ -531,8 +531,13 @@ const ALERTA = {
     const restam = this.fila.length;
     const img = a.deteccao_codigo ? {codigo: a.deteccao_codigo, fonte: 'deteccoes'}
               : a.tem_imagem      ? {codigo: a.codigo, fonte: 'alertas'} : null;
+    const podeAgir = API.pode('edit');
+    const podeVerCam = API.pode('live') && a.camera_codigo;
+    // "Alerta · gravidade média": a gravidade é feminina, o alerta não — o
+    // "Alerta média" que saía da junção direta lia como erro.
+    const nivel = critico ? 'Alerta crítico'
+                : `Alerta · gravidade ${(SEVERIDADE[a.severidade] || '').toLowerCase()}`;
 
-    const nivel = critico ? 'Alerta crítico' : `Alerta ${(SEVERIDADE[a.severidade] || '').toLowerCase()}`;
     faixa.hidden = false;
     faixa.innerHTML = `
       <div class="alerta-veu"></div>
@@ -540,7 +545,10 @@ const ALERTA = {
                aria-modal="true" aria-live="assertive" aria-labelledby="alertaTitulo">
         <header class="alerta-topo">
           <span class="alerta-sev"><span class="pulso"></span>${esc(nivel)}</span>
-          ${a.ocorrido_em ? `<span class="alerta-hora">${ico('clock', 13)}${fmtTime(a.ocorrido_em)}</span>` : ''}
+          <span class="alerta-topo-dir">
+            <span class="alerta-fila">${this.textoFila(restam)}</span>
+            ${a.ocorrido_em ? `<span class="alerta-hora">${ico('clock', 13)}${fmtTime(a.ocorrido_em)}</span>` : ''}
+          </span>
         </header>
         <div class="alerta-conteudo">
           ${img ? `<div class="alerta-foto"><canvas data-al-img></canvas>
@@ -552,14 +560,36 @@ const ALERTA = {
               ${a.camera_codigo ? `<span class="etiqueta mono">${esc(a.camera_codigo)}</span>` : ''}
             </div>
             ${a.detalhe ? `<p class="alerta-texto">${esc(a.detalhe)}</p>` : ''}
-            <dl class="alerta-ref"><dt>Registro</dt><dd>${esc(a.codigo)}</dd></dl>
+            <dl class="alerta-dados">
+              <div><dt>Registro</dt><dd class="mono">${esc(a.codigo)}</dd></div>
+              <div><dt>Ocorrido em</dt><dd class="mono">${a.ocorrido_em ? fmtDT(a.ocorrido_em) : '—'}</dd></div>
+              <div><dt>Setor</dt><dd data-al-setor>…</dd></div>
+              <div><dt>Situação</dt><dd data-al-status>…</dd></div>
+              <div class="largo" data-al-pessoa-bloco hidden><dt>Pessoa identificada</dt><dd data-al-pessoa></dd></div>
+            </dl>
           </div>
         </div>
+        ${podeAgir ? `
+        <div class="alerta-encerrar" data-al-painel hidden>
+          <span class="titulo-enc">Encerrar o alerta — qual foi o desfecho?</span>
+          <div class="motivos" role="radiogroup">
+            ${ALERTA.MOTIVOS.map((m, i) => `<button type="button" class="motivo" role="radio"
+                 aria-checked="false" data-motivo="${i}">${esc(m.rotulo)}</button>`).join('')}
+          </div>
+          <textarea class="inp" data-al-obs rows="2"
+            placeholder="Observação (obrigatória em “Outro”): o que foi feito, quem foi acionado…"></textarea>
+          <div class="acoes-enc">
+            <button class="btn btn-ghost btn-sm" data-al-enc-cancelar>Cancelar</button>
+            <button class="btn btn-primary btn-sm" data-al-enc-confirmar disabled>${ico('check', 13)} Confirmar encerramento</button>
+          </div>
+        </div>` : ''}
         <footer class="alerta-rodape">
-          <span class="alerta-fila">${this.textoFila(restam)}</span>
+          <button class="btn btn-ghost" data-al-ciente title="Dispensa o aviso; o alerta continua aberto na lista">Ciente</button>
           <div class="alerta-botoes">
-            <button class="btn btn-ghost" data-al-ciente>Ciente</button>
-            <button class="btn btn-primary" data-al-ver>Abrir alerta</button>
+            ${podeVerCam ? `<button class="btn btn-soft" data-al-cam>${ico('live', 14)} Ver câmera</button>` : ''}
+            ${podeAgir ? `<button class="btn btn-soft" data-al-assumir>${ico('users', 14)} Assumir</button>
+                          <button class="btn btn-soft" data-al-encerrar>${ico('check', 14)} Encerrar</button>` : ''}
+            <button class="btn btn-primary" data-al-ver>${ico('eye', 14)} Abrir alerta</button>
           </div>
         </footer>
       </section>`;
@@ -576,13 +606,113 @@ const ALERTA = {
     // O foco vai para a ação principal: Enter abre o alerta sem precisar do mouse.
     setTimeout(() => { const b = $('[data-al-ver]', faixa); if(b) b.focus(); }, 60);
 
+    /* O evento traz o essencial; setor, situação e pessoa vêm da ficha. A
+       busca é depois do desenho para o aviso não esperar a rede para aparecer,
+       e os campos mostram "…" até lá. */
+    const campo = sel => $(sel, faixa);
+    API.alerta(a.codigo).then(f => {
+      if(this.atual !== a) return;                    // já passou para o próximo
+      campo('[data-al-setor]').textContent = (f.camera && f.camera.setor) || '—';
+      const st = STATUS_ALERTA[f.status] || {};
+      campo('[data-al-status]').innerHTML =
+        `<span class="chip ${st.cls || ''}">${esc(st.lbl || f.status || '—')}</span>`
+        + (f.atribuido_nome ? ` <span class="resp">com ${esc(f.atribuido_nome)}</span>` : '');
+      if(f.pessoa){
+        campo('[data-al-pessoa-bloco]').hidden = false;
+        campo('[data-al-pessoa]').innerHTML =
+          `${esc(f.pessoa.nome)} <span class="mono">${esc(f.pessoa.id_biometrico)}</span>`;
+      }
+      const b = campo('[data-al-assumir]');
+      if(b && f.status !== 'ABERTO'){ b.disabled = true; b.innerHTML = `${ico('check', 14)} Assumido`; }
+    }).catch(() => {
+      if(this.atual !== a) return;
+      campo('[data-al-setor]').textContent = '—';
+      campo('[data-al-status]').textContent = '—';
+    });
+
     $('[data-al-ciente]', faixa).onclick = () => this.mostrar();
     $('[data-al-ver]', faixa).onclick = () => {
       const codigo = a.codigo;
       this.mostrar();
       if(API.pode('alerts')) abrirAlerta(codigo);
     };
-  }
+
+    const bCam = $('[data-al-cam]', faixa);
+    if(bCam) bCam.onclick = () => { this.mostrar(); abrirCamera(a.camera_codigo); };
+
+    /* Assumir fica no próprio aviso: é a resposta mais comum, e é ela que
+       impede duas pessoas de despacharem guarnição para a mesma coisa. O
+       aviso continua aberto — quem assume costuma querer ver a câmera em
+       seguida. */
+    const bAss = $('[data-al-assumir]', faixa);
+    if(bAss) bAss.onclick = async () => {
+      bAss.disabled = true;
+      try{
+        await API.assumirAlerta(a.codigo);
+        bAss.innerHTML = `${ico('check', 14)} Assumido`;
+        const st = STATUS_ALERTA.EM_ANDAMENTO;
+        campo('[data-al-status]').innerHTML =
+          `<span class="chip ${st.cls}">${esc(st.lbl)}</span> <span class="resp">com você</span>`;
+        toast('Alerta assumido', `${a.codigo} atribuído a ${API.usuario.nome}.`, 'ok');
+        atualizarContadoresDebounced();
+      }catch(err){ bAss.disabled = false; erroToast(err); }
+    };
+
+    /* Encerrar direto do aviso, com o desfecho escolhido entre os mais comuns.
+       O desfecho continua obrigatório — é o que vai para a trilha —, só que
+       sem abrir a ficha para os casos em que a resposta é óbvia. */
+    const painel = $('[data-al-painel]', faixa);
+    const bEnc = $('[data-al-encerrar]', faixa);
+    if(painel && bEnc){
+      let escolhido = null;
+      const obs = $('[data-al-obs]', painel);
+      const confirmarBtn = $('[data-al-enc-confirmar]', painel);
+      const validar = () => {
+        const m = ALERTA.MOTIVOS[escolhido];
+        confirmarBtn.disabled = !m || (m.exigeTexto && obs.value.trim().length < 8);
+      };
+      bEnc.onclick = () => {
+        painel.hidden = !painel.hidden;
+        bEnc.classList.toggle('ativo', !painel.hidden);
+        if(!painel.hidden) $('.motivo', painel).focus();
+      };
+      $$('.motivo', painel).forEach(b => b.onclick = () => {
+        escolhido = +b.dataset.motivo;
+        $$('.motivo', painel).forEach(x => x.setAttribute('aria-checked', String(x === b)));
+        validar();
+      });
+      obs.oninput = validar;
+      $('[data-al-enc-cancelar]', painel).onclick = () => {
+        painel.hidden = true; bEnc.classList.remove('ativo');
+      };
+      confirmarBtn.onclick = async () => {
+        const m = ALERTA.MOTIVOS[escolhido];
+        const nota = obs.value.trim();
+        const resolucao = m.exigeTexto ? nota : `${m.desfecho}${nota ? ` Observação: ${nota}` : ''}`;
+        confirmarBtn.disabled = true;
+        try{
+          await API.encerrarAlerta(a.codigo, resolucao);
+          toast('Alerta encerrado', `${a.codigo} — ${m.rotulo.toLowerCase()}. Desfecho na trilha de auditoria.`, 'ok');
+          atualizarContadoresDebounced();
+          if(APP.view === 'alerts') irPara('alerts');
+          this.mostrar();
+        }catch(err){ validar(); erroToast(err); }
+      };
+    }
+  },
+
+  /* Desfechos mais comuns, para encerrar sem abrir a ficha. O texto vai
+     inteiro para a trilha — por isso diz o que o operador concluiu, e não só
+     um rótulo. "Outro" exige que a pessoa escreva. */
+  MOTIVOS: [
+    {rotulo: 'Falso positivo',
+     desfecho: 'Falso positivo: o operador conferiu a imagem e não houve a ocorrência.'},
+    {rotulo: 'Pessoa autorizada',
+     desfecho: 'Pessoa autorizada no local: verificado pelo operador, sem providência.'},
+    {rotulo: 'Ocorrência atendida',
+     desfecho: 'Ocorrência confirmada e atendida pela equipe no local.'},
+    {rotulo: 'Outro', exigeTexto: true}
+  ]
 };
 
 /* ---------- Eventos ao vivo ---------- */

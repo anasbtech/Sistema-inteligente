@@ -1209,7 +1209,10 @@ class RastreioPorPosicao:
         dobro do tamanho, perto do ponto previsto, é outra pessoa mais perto da
         lente, não a mesma.
         """
-        if dt <= 0 or dt > self.seguir_s:
+        # Abaixo de 50 ms não há movimento para prever: dividir o passo por um
+        # intervalo quase nulo dava velocidades absurdas, e a previsão podia
+        # cair sobre a pessoa ao lado e trocar as duas.
+        if dt < 0.05 or dt > self.seguir_s:
             return None
         h_antes = max(caixa[3] - caixa[1], 1)
         h_agora = max(obj.bbox[3] - obj.bbox[1], 1)
@@ -1278,7 +1281,7 @@ class RastreioPorPosicao:
 
         for obj in objetos:
             anterior = self._conhecidos.get(obj.track_id)
-            if anterior is not None and 0 < t - anterior[2] <= self.seguir_s:
+            if anterior is not None and 0.05 <= t - anterior[2] <= self.seguir_s:
                 (x0, y0), (x1, y1) = (
                     ((anterior[1][0] + anterior[1][2]) / 2, (anterior[1][1] + anterior[1][3]) / 2),
                     obj.centro())

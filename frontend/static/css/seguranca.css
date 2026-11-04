@@ -526,7 +526,7 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 
 .alerta-cartao{
   --sev:var(--red);--sev-fundo:var(--red-ghost);
-  position:relative;width:min(640px,100%);max-height:calc(100vh - 32px);
+  position:relative;width:min(760px,100%);max-height:calc(100vh - 32px);
   display:flex;flex-direction:column;overflow:hidden;
   background:var(--ink-800);border:1px solid var(--line);border-radius:var(--r-l);
   box-shadow:0 30px 80px rgba(0,0,0,.7), 0 0 0 1px color-mix(in srgb, var(--sev) 35%, transparent);
@@ -548,7 +548,10 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
   animation:alertaPulsa 1.4s ease-in-out infinite}
 @keyframes alertaPulsa{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--sev) 60%, transparent)}
   70%{box-shadow:0 0 0 8px transparent}}
-.alerta-hora{margin-left:auto;display:flex;align-items:center;gap:6px;
+/* Do lado direito da faixa: quantos esperam atrás deste e a hora. A fila
+   fica aqui, e não no rodapé, para os botões caberem numa linha só. */
+.alerta-topo-dir{margin-left:auto;display:flex;align-items:center;gap:16px}
+.alerta-hora{display:flex;align-items:center;gap:6px;
   font-family:var(--f-mono);font-size:12px;color:var(--txt-2)}
 
 /* 2. Corpo: a captura numa moldura fixa e as informações ao lado. A moldura
@@ -575,12 +578,39 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
    quatro linhas aqui, o texto inteiro na ficha do alerta. */
 .alerta-texto{margin:0;font-size:14px;line-height:1.55;color:var(--txt-2);
   display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-.alerta-ref{margin:auto 0 0;display:flex;gap:8px;align-items:baseline;
-  font-size:11.5px;color:var(--txt-3)}
-.alerta-ref dt{text-transform:uppercase;letter-spacing:.1em;font-weight:600}
-.alerta-ref dd{margin:0;font-family:var(--f-mono);color:var(--txt-2)}
+/* Dados do alerta em grade de duas colunas: o que o operador consulta antes
+   de decidir, sem abrir a ficha. Setor, situação e pessoa chegam da ficha
+   logo depois do desenho. */
+.alerta-dados{margin:2px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:10px 18px}
+.alerta-dados > div{min-width:0}
+.alerta-dados .largo{grid-column:1 / -1}
+.alerta-dados dt{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--txt-3);margin-bottom:3px}
+.alerta-dados dd{margin:0;font-size:13px;color:var(--txt-1);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.alerta-dados dd.mono, .alerta-dados dd .mono{font-family:var(--f-mono);font-size:12px;color:var(--txt-2)}
+.alerta-dados .chip{font-size:11px}
+.alerta-dados .resp{font-size:12px;color:var(--txt-2)}
+
+/* Encerrar sem abrir a ficha: o desfecho é escolhido entre os mais comuns.
+   Abre entre o corpo e o rodapé, para os botões não mudarem de lugar. */
+.alerta-encerrar{display:flex;flex-direction:column;gap:10px;padding:14px 20px;
+  border-top:1px solid var(--line);background:var(--ink-850)}
+.alerta-encerrar[hidden]{display:none}
+.alerta-encerrar .titulo-enc{font-size:12px;font-weight:600;color:var(--txt-1)}
+.alerta-encerrar .motivos{display:flex;flex-wrap:wrap;gap:8px}
+.alerta-encerrar .motivo{padding:7px 12px;border-radius:999px;border:1px solid var(--line);
+  background:var(--ink-800);color:var(--txt-2);font:inherit;font-size:12.5px;cursor:pointer}
+.alerta-encerrar .motivo:hover{border-color:var(--acc);color:var(--txt-1)}
+.alerta-encerrar .motivo[aria-checked="true"]{border-color:var(--acc);background:rgba(53,167,222,.16);
+  color:var(--txt-1)}
+.alerta-encerrar textarea{min-height:0;resize:vertical;font-size:13px}
+.alerta-encerrar .acoes-enc{display:flex;justify-content:flex-end;gap:8px}
+.alerta-botoes .btn.ativo{border-color:var(--acc);color:var(--txt-1)}
 
 /* 3. Rodapé: a fila à esquerda, as decisões à direita. */
+/* Ciente à esquerda, separado: dispensa o aviso. As ações sobre o alerta
+   ficam juntas à direita, com a principal por último. */
 .alerta-rodape{display:flex;align-items:center;gap:12px;padding:14px 20px;
   border-top:1px solid var(--line);background:var(--ink-850)}
 /* Quantos esperam atrás deste. Sem o contador, uma rajada de alertas
@@ -590,7 +620,7 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 .alerta-fila b{display:inline-grid;place-items:center;min-width:22px;height:22px;
   padding:0 6px;border-radius:999px;background:var(--sev-fundo);color:var(--sev);
   font-family:var(--f-mono);font-size:12px}
-.alerta-botoes{margin-left:auto;display:flex;gap:10px}
+.alerta-botoes{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 
 /* Em tela estreita a captura sobe e ocupa a largura do cartão — espremida ao
    lado de um texto de 14px ela não se lê. */
@@ -599,7 +629,8 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
   .alerta-foto{width:100%;height:200px}
   .alerta-rodape{flex-wrap:wrap;padding:12px 16px}
   .alerta-botoes{margin-left:0;width:100%}
-  .alerta-botoes .btn{flex:1}
+  .alerta-botoes .btn{flex:1 1 40%}
+  .alerta-dados{grid-template-columns:1fr}
 }
 
 .toast{display:flex;gap:10px;align-items:flex-start;background:var(--ink-750);border:1px solid var(--line);border-left-width:3px;border-radius:var(--r-m);padding:11px 13px;box-shadow:var(--sh-2);animation:slideIn .22s ease-out;pointer-events:auto}
