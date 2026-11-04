@@ -61,11 +61,31 @@ def _faixa(img, y, texto, fundo, cor=BRANCO, escala=0.7):
                 cv2.LINE_AA)
 
 
-PAINEL_L = 520
+PAINEL_L = 440
 CINZA = (170, 170, 170)
 # Miniatura do print no painel, em 16:9, e quantas cabem de uma vez.
-MINI_L, MINI_A = 208, 117
+MINI_L, MINI_A = 176, 99
 MAX_CAPTURAS = 2
+# Quanto da tela a janela pode ocupar. Em notebook com escala de 125% a tela
+# tem 1536x864 pontos, e a janela antiga (1544 px) passava da largura.
+FRACAO_TELA_L, FRACAO_TELA_A = 0.80, 0.75
+
+
+def _tela() -> tuple:
+    """Tamanho da tela em pontos (o que a janela do OpenCV usa)."""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        return u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+    except Exception:  # noqa: BLE001 — fora do Windows: um tamanho comum
+        return 1366, 768
+
+
+def _zoom_para_tela(larg_video: int, alt_video: int, pedido) -> float:
+    """O zoom que faz vídeo + painel caberem na tela, sem passar do pedido."""
+    tl, ta = _tela()
+    cabe = min((tl * FRACAO_TELA_L - PAINEL_L) / larg_video, (ta * FRACAO_TELA_A) / alt_video)
+    return round(max(0.5, min(cabe, pedido) if pedido else cabe), 2)
 
 
 def _tempo(t: float) -> str:
@@ -95,7 +115,7 @@ def _fazer_print(img, bbox_janela, registro, pasta: Path) -> dict:
 
     O arquivo é o quadro inteiro da janela, com a caixa vermelha e o horário
     carimbado. A miniatura é um recorte em volta da pessoa: o quadro inteiro
-    reduzido a 208 px deixaria quem corre do tamanho de um ponto.
+    reduzido à miniatura deixaria quem corre do tamanho de um ponto.
     """
     rotulo = _a(registro["rotulo"]).upper()
     cheio = _carimbar(img.copy(), [
@@ -150,47 +170,42 @@ def _com_painel(img, capturas, caminho_json, estado):
     situacao = estado["situacao"]
     fundo = {"detectada": VERMELHO, "pausado": (90, 90, 90),
              "fim": (60, 60, 60)}.get(situacao, (55, 55, 55))
-    _bloco(painel, y, 44, fundo)
+    _bloco(painel, y, 38, fundo)
     titulo = {"detectada": f"{estado['rotulo'].upper()} DETECTADA",
               "pausado": "PAUSADO - espaco continua",
               "fim": "FIM DO VIDEO - tecla segue"}.get(situacao, f"IA analisando: {estado['rotulo']}")
-    _texto(painel, y + 29, titulo, BRANCO, 0.6, 2, 20)
-    y += 62
+    _texto(painel, y + 25, titulo, BRANCO, 0.55, 2, 20)
+    y += 56
 
-    # 2. Placar
-    _texto(painel, y, f"{estado['video']}   {estado['t']:.1f}s", BRANCO, 0.55, 1)
-    y += 24
-    _texto(painel, y, f"disparos da IA: {estado['disparos']}", CINZA, 0.5)
-    y += 22
+    # 2. Placar, numa linha só
+    _texto(painel, y, f"{estado['video']}   t = {_tempo(estado['t'])}", BRANCO, 0.5, 1)
+    y += 20
+    placar = f"disparos da IA: {estado['disparos']}"
     if estado["tem_gabarito"]:
-        _texto(painel, y, f"corridas no gabarito: {estado['no_gabarito']}", CINZA, 0.5)
-        y += 22
-        _texto(painel, y, f"IA detectou: {estado['detectou']}", CINZA, 0.5)
-        y += 14
-        # 3. O gabarito agora
-        if estado["gabarito_agora"]:
-            y += 6
-            _bloco(painel, y, 40, AMARELO)
-            _texto(painel, y + 16, "GABARITO: acontecendo agora", (0, 0, 0), 0.45, 1, 20)
-            _texto(painel, y + 33, estado["gabarito_agora"][:52], (0, 0, 0), 0.4, 1, 20)
-            y += 44
-    y += 18
-    _texto(painel, y, f"verde: pessoa (confianca)   vermelho: {estado['rotulo'].lower()}",
-           CINZA, 0.4)
-    y += 12
+        placar += f"    gabarito: {estado['detectou']} de {estado['no_gabarito']} detectadas"
+    _texto(painel, y, placar, CINZA, 0.42)
+    y += 10
+    # 3. O gabarito agora
+    if estado["tem_gabarito"] and estado["gabarito_agora"]:
+        y += 4
+        _bloco(painel, y, 34, AMARELO)
+        _texto(painel, y + 14, "GABARITO: acontecendo agora", (0, 0, 0), 0.4, 1, 20)
+        _texto(painel, y + 28, estado["gabarito_agora"][:52], (0, 0, 0), 0.36, 1, 20)
+        y += 36
+    y += 6
     cv2.line(painel, (10, y), (PAINEL_L - 10, y), (70, 70, 70), 1)
-    y += 24
+    y += 20
 
     # 4. Prints dos disparos, cada um com os dados alinhados ao lado
-    _texto(painel, y, f"CAPTURAS - {estado['rotulo'].upper()}", BRANCO, 0.55, 2)
+    _texto(painel, y, f"CAPTURAS - {estado['rotulo'].upper()}", BRANCO, 0.5, 2)
     if capturas:
-        _texto(painel, y, f"{len(capturas)} no total", CINZA, 0.42, 1, PAINEL_L - 100)
-    y += 14
+        _texto(painel, y, f"{len(capturas)} no total", CINZA, 0.4, 1, PAINEL_L - 86)
+    y += 10
     if not capturas:
-        y += 16
-        _texto(painel, y, "nenhuma deteccao ainda", (150, 150, 150), 0.45)
-    xd = 14 + MINI_L + 14
-    rodape = h - 42
+        y += 18
+        _texto(painel, y, "nenhuma deteccao ainda", (150, 150, 150), 0.42)
+    xd = 14 + MINI_L + 12
+    rodape = h - 36
     for n, cap in reversed(list(enumerate(capturas, 1))):
         if y + MINI_A > rodape or n <= len(capturas) - MAX_CAPTURAS:
             break
@@ -198,7 +213,7 @@ def _com_painel(img, capturas, caminho_json, estado):
         painel[y:y + MINI_A, 14:14 + MINI_L] = cap["mini"]
         g = r.get("gabarito", {})
         cor_g = VERDE if g.get("resultado") == "acerto" else VERMELHO if g else CINZA
-        _texto(painel, y + 14, f"#{n}   t = {_tempo(r['segundo'])}", BRANCO, 0.5, 2, xd)
+        _texto(painel, y + 13, f"#{n}   t = {_tempo(r['segundo'])}", BRANCO, 0.46, 2, xd)
         # Rótulo e valor em colunas fixas: a fonte não é monoespaçada, e
         # alinhar com espaços deixava cada valor num lugar.
         campos = [
@@ -210,17 +225,18 @@ def _com_painel(img, capturas, caminho_json, estado):
         ]
         if g:
             campos.append(("gabarito", g["resultado"], cor_g))
-        ly = y + 32
+        ly = y + 29
         for chave, valor, cor in campos:
-            _texto(painel, ly, chave, CINZA, 0.42, 1, xd)
-            _texto(painel, ly, valor, cor, 0.42, 1, xd + 90)
-            ly += 15
-        y += MINI_A + 12
+            _texto(painel, ly, chave, CINZA, 0.38, 1, xd)
+            _texto(painel, ly, valor, cor, 0.38, 1, xd + 78)
+            ly += 14
+        y += MINI_A + 8
 
-    # 5. Onde ficou gravado
+    # 5. Legenda e onde ficou gravado
     cv2.line(painel, (10, rodape), (PAINEL_L - 10, rodape), (70, 70, 70), 1)
-    _texto(painel, rodape + 16, f"JSON: resultados_teste/ao_vivo/{caminho_json.name}", CINZA, 0.38)
-    _texto(painel, rodape + 32, "prints: resultados_teste/ao_vivo/prints/", CINZA, 0.38)
+    _texto(painel, rodape + 14, f"verde: pessoa (confianca)   vermelho: {estado['rotulo'].lower()}",
+           CINZA, 0.36)
+    _texto(painel, rodape + 29, f"JSON e prints: resultados_teste/ao_vivo/", CINZA, 0.36)
     return np.hstack([img, painel])
 
 
@@ -260,6 +276,9 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
         print(f"Não abriu: {video}")
         return "proximo"
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    # Tamanho da janela pela tela de quem está assistindo, não fixo.
+    args.zoom = _zoom_para_tela(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640,
+                                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 360, args.zoom_pedido)
     pular = max(1, round(fps / args.amostras))
     an = preparar_analisador(acao, args)
     if args.sem_subita and acao == "corrida":
@@ -437,7 +456,8 @@ def main() -> int:
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--limiar", type=float, default=0.25)
     p.add_argument("--amostras", type=float, default=AMOSTRAS_POR_S)
-    p.add_argument("--zoom", type=float, default=1.6, help="tamanho da janela")
+    p.add_argument("--zoom", type=float, dest="zoom_pedido", default=None,
+                   help="tamanho do vídeo (padrão: o maior que cabe na tela)")
     p.add_argument("--direcao", default="direita")
     p.add_argument("--bytetrack", action="store_true",
                    help="comparação: rastreador do YOLO no lugar do rastreio do sistema")
