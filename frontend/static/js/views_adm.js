@@ -225,51 +225,99 @@ async function abrirAlerta(codigo){
 
   const st = STATUS_ALERTA[a.status] || {};
   const p = a.pessoa;
-  const podeFechar = a.status !== 'RESOLVIDO' && API.pode('edit');
+  const resolvido = a.status === 'RESOLVIDO';
+  const podeFechar = !resolvido && API.pode('edit');
+  const critico = a.severidade >= 4;
+  const img = imagemDoAlerta(a);
+  const cam = a.camera || {};
+  const nivel = critico ? 'Alerta crítico'
+              : `Alerta · gravidade ${(SEVERIDADE[a.severidade] || '').toLowerCase()}`;
+  // Quanto tempo ficou (ou está) aberto: é o número que a supervisão cobra.
+  const fimContagem = a.fechado_em ? new Date(a.fechado_em) : new Date();
+  const aberto_s = Math.max(0, (fimContagem - new Date(a.disparado_em)) / 1000);
 
-  box.className = 'modal wide';
+  /* Linha do tempo: o que já aconteceu com este alerta, na ordem. */
+  const etapas = [
+    {feito: true, titulo: 'Disparado', det: fmtDT(a.disparado_em)},
+    {feito: !!a.atribuido_nome || a.status !== 'ABERTO', titulo: 'Assumido',
+     det: a.atribuido_nome ? `por ${a.atribuido_nome}` : 'aguardando responsável'},
+    {feito: resolvido, titulo: 'Encerrado',
+     det: a.fechado_em ? fmtDT(a.fechado_em) : 'pendente'}
+  ];
+
+  box.className = 'modal wide ficha-alerta';
   box.innerHTML = `
-    <div class="modal-hd">
-      <span class="sev sev-${a.severidade}" style="height:26px;width:3px"></span>
-      <h3>${esc(a.titulo)}</h3><span class="chip ${st.cls}">${esc(st.lbl)}</span>
-      <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
-    <div class="modal-bd">
-      <p style="margin:0 0 15px;color:var(--txt-2);font-size:13.5px;line-height:1.55">${esc(a.detalhe)}</p>
-      ${imagemDoAlerta(a) ? `<div class="eyebrow" style="margin:0 0 7px">${
-          a.deteccao_codigo ? 'Captura que gerou o alerta' : 'A sala no momento do alerta'}</div>
-      <div id="alMold" style="margin-bottom:15px">
-        <canvas id="alSnap" style="border-radius:var(--r-m);display:block"></canvas>
-        <div class="td-ts" style="margin-top:6px">${esc(imagemDoAlerta(a).codigo)} · ${esc(a.camera?a.camera.nome:'')}</div>
+    <header class="ficha-topo ${critico ? '' : 'sev-media'}">
+      <span class="alerta-sev"><span class="pulso"></span>${esc(nivel)}</span>
+      <span class="ficha-cod">${esc(a.codigo)}</span>
+      <span class="chip ${st.cls}">${esc(st.lbl)}</span>
+      <button class="x" data-close aria-label="Fechar">${ico('x',17)}</button>
+    </header>
+
+    <div class="modal-bd ficha-corpo">
+      <div class="ficha-cabeca">
+        <h2>${esc(a.titulo)}</h2>
+        <div class="alerta-local">
+          ${cam.nome ? `<span class="etiqueta">${ico('cam', 13)}${esc(cam.nome)}</span>` : ''}
+          ${cam.codigo ? `<span class="etiqueta mono">${esc(cam.codigo)}</span>` : ''}
+          ${cam.setor && cam.setor !== cam.nome ? `<span class="etiqueta">${ico('pin', 13)}${esc(cam.setor)}</span>` : ''}
+          <span class="etiqueta">${esc(ROTULO_TIPO_ALERTA[a.tipo] || a.tipo)}</span>
+        </div>
+      </div>
+
+      <div class="ficha-colunas">
+        ${img ? `<figure class="ficha-foto">
+          <div class="moldura" id="alMold"><canvas id="alSnap"></canvas>
+            <span class="rotulo-foto">${a.deteccao_codigo ? 'Captura que gerou o alerta' : 'A sala no momento do alerta'}</span></div>
+          <figcaption>${esc(img.codigo)}${cam.nome ? ` · ${esc(cam.nome)}` : ''}</figcaption>
+        </figure>` : ''}
+
+        <div class="ficha-info">
+          ${a.detalhe ? `<p class="ficha-texto">${esc(a.detalhe)}</p>` : ''}
+
+          <dl class="alerta-dados">
+            <div><dt>Disparado em</dt><dd class="mono">${fmtDT(a.disparado_em)}</dd></div>
+            <div><dt>${resolvido ? 'Tempo até o encerramento' : 'Aberto há'}</dt><dd class="mono">${duracao(aberto_s)}</dd></div>
+            <div><dt>Gravidade</dt><dd><span class="chip ${CLS_SEV[a.severidade]}">${esc(SEVERIDADE[a.severidade])}</span></dd></div>
+            <div><dt>Responsável</dt><dd>${a.atribuido_nome ? esc(a.atribuido_nome) : '<span class="vazio-txt">ninguém assumiu</span>'}</dd></div>
+          </dl>
+
+          ${p ? `<div class="ficha-pessoa">
+            <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="44" height="44"></canvas>
+            <div><span class="eyebrow">Pessoa identificada</span><b>${esc(p.nome)}</b>
+              <span class="mono">${esc(p.id_biometrico)}</span></div>
+            <span class="chip ${(STATUS_PESSOA[p.status]||{}).cls}">${esc((STATUS_PESSOA[p.status]||{}).lbl)}</span>
+          </div>` : ''}
+
+          <ol class="ficha-tempo" aria-label="Andamento do alerta">
+            ${etapas.map(e => `<li class="${e.feito ? 'feito' : ''}">
+              <span class="marco"></span><b>${esc(e.titulo)}</b><span>${esc(e.det)}</span></li>`).join('')}
+          </ol>
+        </div>
+      </div>
+
+      ${resolvido ? `<div class="ficha-desfecho">
+        <span class="eyebrow">${ico('check', 13)} Desfecho registrado</span>
+        <p>${esc(a.resolucao || '—')}</p>
       </div>` : ''}
-      ${p ? `<div style="display:flex;gap:12px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--ink-800);margin-bottom:15px">
-        <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="48" height="48"></canvas>
-        <div style="flex:1;min-width:0"><b style="display:block">${esc(p.nome)}</b>
-        <span class="mono" style="font-size:12px;color:var(--acc-2)">${esc(p.id_biometrico)}</span></div>
-        <span class="chip ${(STATUS_PESSOA[p.status]||{}).cls}">${esc((STATUS_PESSOA[p.status]||{}).lbl)}</span>
-      </div>` : ''}
-      <dl class="kv">
-        <dt>Identificador</dt><dd class="mono">${esc(a.codigo)}</dd>
-        <dt>Câmera</dt><dd>${esc(a.camera?a.camera.nome:'')} <span class="mono" style="color:var(--txt-3)">(${esc(a.camera?a.camera.codigo:'')})</span></dd>
-        <dt>Setor</dt><dd>${esc(a.camera?a.camera.setor:'—')}</dd>
-        <dt>Severidade</dt><dd><span class="chip ${CLS_SEV[a.severidade]}">${esc(SEVERIDADE[a.severidade])}</span></dd>
-        <dt>Disparado em</dt><dd class="mono">${fmtDT(a.disparado_em)}</dd>
-        ${a.atribuido_nome ? `<dt>Responsável</dt><dd>${esc(a.atribuido_nome)}</dd>` : ''}
-        ${a.fechado_em ? `<dt>Encerrado em</dt><dd class="mono">${fmtDT(a.fechado_em)}</dd>
-        <dt>Desfecho</dt><dd>${esc(a.resolucao)}</dd>` : ''}
-      </dl>
-      ${podeFechar ? `<div class="field" style="margin-top:15px">
-        <label for="alRes">Registro do desfecho</label>
-        <textarea class="inp" id="alRes" placeholder="Descreva a providência adotada — despacho de guarnição, confirmação de falso positivo, encaminhamento…"></textarea>
-        <span class="hint">Obrigatório: um alerta sem registro do que foi feito não serve nem à operação nem à prestação de contas.</span>
+
+      ${podeFechar ? `<div class="ficha-encerrar">
+        <label for="alRes" class="titulo-enc">Registrar o desfecho</label>
+        <div class="motivos" role="group" aria-label="Desfechos comuns">
+          ${ALERTA.MOTIVOS.map((m, i) => `<button type="button" class="motivo" data-al-motivo="${i}">${esc(m.rotulo)}</button>`).join('')}
+        </div>
+        <textarea class="inp" id="alRes" rows="3" placeholder="Descreva a providência adotada — despacho de guarnição, confirmação de falso positivo, encaminhamento…"></textarea>
+        <span class="hint">Obrigatório para encerrar. Vai para a trilha de auditoria com o seu nome.</span>
       </div>` : ''}
     </div>
+
     <div class="modal-ft">
       <button class="btn btn-ghost" data-close>Fechar</button>
       ${API.pode('settings') ? `<button class="btn btn-danger" id="alDel">Excluir</button>` : ''}
       <span class="sp" style="flex:1"></span>
-      ${a.camera ? `<button class="btn btn-soft" id="alCam">${ico('live',14)} Ver câmera</button>` : ''}
+      ${a.camera && API.pode('live') ? `<button class="btn btn-soft" id="alCam">${ico('live',14)} Ver câmera</button>` : ''}
       ${podeFechar && a.status === 'ABERTO'
-        ? `<button class="btn btn-soft" id="alAssume">${ico('check',14)} Assumir</button>` : ''}
+        ? `<button class="btn btn-soft" id="alAssume">${ico('users',14)} Assumir</button>` : ''}
       ${podeFechar ? `<button class="btn btn-primary" id="alClose">${ico('check',14)} Encerrar alerta</button>` : ''}
     </div>`;
 
@@ -291,19 +339,28 @@ async function abrirAlerta(codigo){
   };
   pintarFaces(box);
 
-  // A moldura é medida no contêiner, não no canvas: o canvas ainda não tem
-  // largura própria, e `encaixarRecorte` a redefine conforme a proporção da
-  // captura — vertical não ganha tarja preta nem é esticada.
-  const snap = $('#alSnap'), fonteImg = imagemDoAlerta(a);
-  if(snap && fonteImg){
-    const w = Math.round($('#alMold').getBoundingClientRect().width);
-    molduraVazia(snap, w, Math.round(w * .6));
-    carregarRecorte(snap, fonteImg.codigo, w, fonteImg.fonte);
+  /* A moldura tem tamanho fixo e o recorte se encaixa dentro dela, inteiro e
+     sem esticar — em pé ou deitado. É o que dá à ficha a mesma forma em todo
+     alerta, em vez de a imagem empurrar o texto. */
+  const snap = $('#alSnap', box);
+  if(snap && img){
+    molduraVazia(snap, 300, 340);
+    carregarRecorte(snap, img.codigo, 300, img.fonte, 340);
   }
 
-  const bc = $('#alCam'); if(bc) bc.onclick = () => { fecharModal(); abrirCamera(a.camera.codigo); };
+  const bc = $('#alCam', box); if(bc) bc.onclick = () => { fecharModal(); abrirCamera(a.camera.codigo); };
 
-  const bd = $('#alDel');
+  /* Atalho de desfecho: preenche o texto, que continua editável. "Outro"
+     limpa o campo e põe o cursor nele. */
+  const res = $('#alRes', box);
+  $$('[data-al-motivo]', box).forEach(b => b.onclick = () => {
+    const m = ALERTA.MOTIVOS[+b.dataset.alMotivo];
+    $$('[data-al-motivo]', box).forEach(x => x.classList.toggle('on', x === b));
+    res.value = m.exigeTexto ? '' : m.desfecho;
+    res.focus();
+  });
+
+  const bd = $('#alDel', box);
   if(bd) bd.onclick = async () => {
     const motivo = await confirmar('Excluir alerta',
       `<b>${esc(a.codigo)}</b> — ${esc(a.titulo)}<br><br>
@@ -320,13 +377,15 @@ async function abrirAlerta(codigo){
     }catch(e){ erroToast(e); }
   };
 
-  if(podeFechar) $('#alClose').onclick = async () => {
-    const txt = $('#alRes').value.trim();
-    if(txt.length < 8){ toast('Desfecho obrigatório', 'Descreva a providência adotada antes de encerrar.', 'err'); return; }
+  const bClose = $('#alClose', box);
+  if(bClose) bClose.onclick = async () => {
+    const txt = res.value.trim();
+    if(txt.length < 8){ toast('Desfecho obrigatório', 'Descreva a providência adotada antes de encerrar.', 'err'); res.focus(); return; }
     try{
       await API.encerrarAlerta(a.codigo, txt);
       fecharModal();
       toast('Alerta encerrado', `${a.codigo} — desfecho registrado na trilha de auditoria.`, 'ok');
+      atualizarContadoresDebounced();
       irPara('alerts');
     }catch(e){ erroToast(e); }
   };
