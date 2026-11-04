@@ -26,8 +26,6 @@ async function renderAlertas(alvo){
   const f = FILTRO.alertas, hoje = diaISO(new Date());
   const porPagina = +f.por_pagina || POR_PAGINA;
   const podeAgir = API.pode('edit');
-  // Seleção da triagem em lote: códigos marcados nesta página.
-  const sel = new Set();
 
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Central de alertas</h2><span class="sp"></span>
@@ -57,80 +55,11 @@ async function renderAlertas(alvo){
       <div class="kpi-val" style="font-size:22px">${resumo.tempo_medio_resposta_s ? duracao(resumo.tempo_medio_resposta_s) : '—'}</div>
       <div class="kpi-delta nt">${resumo.criticos_pendentes||0} crítico(s) pendente(s)</div></div>
   </div>
-  ${podeAgir ? `
-  <div class="lote-barra" id="alLote" hidden>
-    <div class="lote-topo">
-      <b id="alLoteN">0 selecionados</b>
-      <span class="lote-dica">Encerrar todos com o mesmo desfecho — cada um ganha a sua linha na trilha de auditoria.</span>
-      <button class="btn btn-ghost btn-sm" id="alLoteLimpar">Limpar seleção</button>
-    </div>
-    <div class="lote-corpo">
-      <div class="motivos" role="radiogroup">
-        ${ALERTA.MOTIVOS.map((m, i) => `<button type="button" class="motivo" role="radio"
-             aria-checked="false" data-lote-motivo="${i}">${esc(m.rotulo)}</button>`).join('')}
-      </div>
-      <input class="inp" id="alLoteObs" placeholder="Observação (obrigatória em “Outro”)">
-      <button class="btn btn-primary btn-sm" id="alLoteOk" disabled>${ico('check',13)} Encerrar selecionados</button>
-    </div>
-  </div>` : ''}
   <div class="panel"><div class="panel-bd tight"><div id="alCorpo">${carregando()}</div></div></div>`;
-
-  /* ---------- Seleção e encerramento em lote ---------- */
-  let motivoLote = null;
-  const atualizarLote = () => {
-    const barra = $('#alLote');
-    if(!barra) return;
-    barra.hidden = sel.size === 0;
-    $('#alLoteN').textContent = `${sel.size} ${sel.size === 1 ? 'selecionado' : 'selecionados'}`;
-    const m = ALERTA.MOTIVOS[motivoLote];
-    $('#alLoteOk').disabled = !m || (m.exigeTexto && $('#alLoteObs').value.trim().length < 8);
-    const todos = $('#alTodos');
-    if(todos){
-      const marcaveis = $$('[data-sel]', $('#alCorpo'));
-      todos.checked = marcaveis.length > 0 && marcaveis.every(c => c.checked);
-      todos.indeterminate = !todos.checked && marcaveis.some(c => c.checked);
-    }
-  };
-  if(podeAgir){
-    $$('[data-lote-motivo]').forEach(b => b.onclick = () => {
-      motivoLote = +b.dataset.loteMotivo;
-      $$('[data-lote-motivo]').forEach(x => x.setAttribute('aria-checked', String(x === b)));
-      atualizarLote();
-    });
-    $('#alLoteObs').oninput = atualizarLote;
-    $('#alLoteLimpar').onclick = () => {
-      sel.clear();
-      $$('[data-sel]', $('#alCorpo')).forEach(c => { c.checked = false; });
-      atualizarLote();
-    };
-    $('#alLoteOk').onclick = async () => {
-      const m = ALERTA.MOTIVOS[motivoLote];
-      const nota = $('#alLoteObs').value.trim();
-      const resolucao = m.exigeTexto ? nota : `${m.desfecho}${nota ? ` Observação: ${nota}` : ''}`;
-      // Guardado antes da pergunta: `confirmar` esvazia a caixa do modal ao
-      // fechar, e o botão pode não existir mais quando ela responder.
-      const botaoOk = $('#alLoteOk');
-      const ok = await confirmar('Encerrar alertas em lote',
-        `<b>${sel.size}</b> alerta(s) serão encerrados como <b>${esc(m.rotulo.toLowerCase())}</b>.<br><br>
-         Cada um ganha a sua linha na trilha de auditoria, com o seu nome e este desfecho.`,
-        {rotulo: `Encerrar ${sel.size}`});
-      if(!ok) return;
-      if(botaoOk) botaoOk.disabled = true;
-      try{
-        const r = await API.encerrarAlertasLote([...sel], resolucao);
-        toast('Alertas encerrados',
-          `${r.encerrados} encerrado(s)${r.ja_encerrados.length ? ` · ${r.ja_encerrados.length} já estavam encerrados` : ''}.`, 'ok');
-        atualizarContadoresDebounced();
-        irPara('alerts');
-      }catch(err){ atualizarLote(); erroToast(err); }
-    };
-  }
 
   const carregar = async () => {
     const corpo = $('#alCorpo');
     corpo.innerHTML = carregando();
-    sel.clear();
-    atualizarLote();
     try{
       const r = await API.alertas({
         pagina: PAG.alertas, por_pagina: porPagina,
@@ -141,11 +70,8 @@ async function renderAlertas(alvo){
         ate: limiteDia(FILTRO.alertas.ate, true)
       });
       const itens = r.itens || [];
-      const algumMarcavel = podeAgir && itens.some(a => a.status !== 'RESOLVIDO');
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th style="width:8px"></th>
-          ${podeAgir ? `<th style="width:34px">${algumMarcavel
-            ? '<input type="checkbox" id="alTodos" class="sel-alerta" aria-label="Selecionar todos desta página">' : ''}</th>` : ''}
           <th style="width:64px">Captura</th>
           <th>Alerta</th><th>Tipo</th><th>Câmera</th>
           <th>Data / hora</th><th>Status</th><th style="width:96px"></th></tr></thead>
@@ -154,8 +80,6 @@ async function renderAlertas(alvo){
           const img = imagemDoAlerta(a);
           return `<tr class="clickable" data-a="${esc(a.codigo)}">
             <td style="padding:0"><div class="sev sev-${a.severidade}" style="height:100%;min-height:44px;width:3px"></div></td>
-            ${podeAgir ? `<td>${a.status !== 'RESOLVIDO'
-              ? `<input type="checkbox" class="sel-alerta" data-sel="${esc(a.codigo)}" aria-label="Selecionar ${esc(a.codigo)}">` : ''}</td>` : ''}
             <td>${img ? `<canvas data-snap="${snapAttr(img, img.fonte)}" width="54"></canvas>` : ''}</td>
             <td><b>${esc(a.titulo)}</b><br><span class="td-ts">${esc((a.detalhe||'').slice(0,54))}${(a.detalhe||'').length>54?'…':''}</span></td>
             <td><span class="chip ${COR_TIPO_ALERTA[a.tipo] || 'c-gray'}">${esc(ROTULO_TIPO_ALERTA[a.tipo] || a.tipo)}</span></td>
@@ -165,7 +89,7 @@ async function renderAlertas(alvo){
             <td style="text-align:right">${a.status==='ABERTO' && podeAgir
               ? `<button class="btn btn-soft btn-sm" data-assume="${esc(a.codigo)}">Assumir</button>` : ''}</td>
           </tr>`;
-        }).join('') || `<tr><td colspan="9">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
+        }).join('') || `<tr><td colspan="8">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
         </tbody></table></div>
         <div class="tbl-rodape">
           <label class="por-pagina">Por página
@@ -175,22 +99,7 @@ async function renderAlertas(alvo){
         </div>`;
 
       pintarSnaps(corpo);
-      $$('tr[data-a]', corpo).forEach(t => t.onclick = e => {
-        if(e.target.closest('.sel-alerta')) return;      // marcar não abre a ficha
-        abrirAlerta(t.dataset.a);
-      });
-      $$('[data-sel]', corpo).forEach(c => c.onchange = () => {
-        c.checked ? sel.add(c.dataset.sel) : sel.delete(c.dataset.sel);
-        atualizarLote();
-      });
-      const todos = $('#alTodos', corpo);
-      if(todos) todos.onchange = () => {
-        $$('[data-sel]', corpo).forEach(c => {
-          c.checked = todos.checked;
-          todos.checked ? sel.add(c.dataset.sel) : sel.delete(c.dataset.sel);
-        });
-        atualizarLote();
-      };
+      $$('tr[data-a]', corpo).forEach(t => t.onclick = () => abrirAlerta(t.dataset.a));
       $$('[data-assume]', corpo).forEach(b => b.onclick = async e => {
         e.stopPropagation();
         try{
