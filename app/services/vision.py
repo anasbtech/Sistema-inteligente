@@ -683,6 +683,55 @@ def _na_emenda(caixa: Tuple[int, int, int, int],
             or (y2 >= ly2 - folga and ly2 < altura))
 
 
+class _VezDoModelo:
+    """Uma inferência de cada vez no modelo, com fila de prioridade.
+
+    A volta completa e o laço curto da tela chamavam o mesmo YOLO ao mesmo
+    tempo, de threads diferentes. O Ultralytics não garante um modelo seguro
+    entre threads, e cada chamada tentava usar os oito núcleos: as duas
+    disputavam a CPU e ficavam mais lentas do que em fila — medido, com a CPU
+    em 100%, sete renovações da tela em 52 s para dezesseis tiles.
+
+    Em fila, quem pede com `urgente` (a tela que alguém está olhando) passa à
+    frente de quem espera sem urgência (a volta completa, a rajada). A
+    varredura em ladrilhos pede a vez a cada ladrilho, então uma renovação da
+    tela não espera a varredura inteira de outra câmera — só o ladrilho em
+    curso.
+    """
+
+    def __init__(self) -> None:
+        import threading
+        self._cond = threading.Condition()
+        self._ocupado = False
+        self._urgentes = 0
+
+    def usar(self, urgente: bool = False):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _vez():
+            with self._cond:
+                if urgente:
+                    self._urgentes += 1
+                try:
+                    while self._ocupado or (not urgente and self._urgentes):
+                        self._cond.wait()
+                finally:
+                    if urgente:
+                        self._urgentes -= 1
+                self._ocupado = True
+            try:
+                yield
+            finally:
+                with self._cond:
+                    self._ocupado = False
+                    self._cond.notify_all()
+        return _vez()
+
+
+VEZ_DO_MODELO = _VezDoModelo()
+
+
 def _varrer_ladrilhos(modelo, quadro: np.ndarray,
                       classes_fora: Optional[set]) -> List[ObjetoDetectado]:
     """Segunda passada, em pedaços ampliados do quadro.
@@ -707,10 +756,11 @@ def _varrer_ladrilhos(modelo, quadro: np.ndarray,
         # Sem rastreio, sempre: o ByteTrack guarda estado entre chamadas, e
         # cada ladrilho chega a ele como um corte de cena. A trilha de quem
         # também saiu na passada inteira é herdada na fusão.
-        resultados = modelo(pedaco, conf=settings.OBJECT_VARREDURA_LIMIAR,
-                            imgsz=settings.OBJECT_VARREDURA_IMGSZ,
-                            iou=settings.OBJECT_NMS_IOU,
-                            classes=indices, verbose=False)
+        with VEZ_DO_MODELO.usar():
+            resultados = modelo(pedaco, conf=settings.OBJECT_VARREDURA_LIMIAR,
+                                imgsz=settings.OBJECT_VARREDURA_IMGSZ,
+                                iou=settings.OBJECT_NMS_IOU,
+                                classes=indices, verbose=False)
         for obj in _colher(resultados, classes_fora, (x0, y0)):
             if _na_emenda(obj.bbox, ladrilho, largura, altura):
                 continue
@@ -723,7 +773,8 @@ def detectar_objetos(quadro: np.ndarray, limiar: Optional[float] = None,
                      rastrear: bool = True,
                      classes_fora: Optional[set] = None,
                      varredura: Optional[str] = None,
-                     imgsz: Optional[int] = None) -> List[ObjetoDetectado]:
+                     imgsz: Optional[int] = None,
+                     urgente: bool = False) -> List[ObjetoDetectado]:
     """Roda YOLO no quadro e devolve uma caixa por objeto.
 
     Com `rastrear=True` usa ByteTrack e mantém track_id estável entre quadros
@@ -749,13 +800,16 @@ def detectar_objetos(quadro: np.ndarray, limiar: Optional[float] = None,
     # rajada de quadros seguidos sairia a oito segundos por câmera no lado
     # cheio contra dois no reduzido.
     tam = settings.OBJECT_IMGSZ if imgsz is None else imgsz
-    if rastrear:
-        resultados = modelo.track(quadro, persist=True, conf=lim, imgsz=tam,
-                                  iou=settings.OBJECT_NMS_IOU,
-                                  verbose=False, tracker="bytetrack.yaml")
-    else:
-        resultados = modelo(quadro, conf=lim, imgsz=tam,
-                            iou=settings.OBJECT_NMS_IOU, verbose=False)
+    # `urgente` é a tela que alguém está olhando: passa à frente da volta
+    # completa na fila do modelo. Ver `_VezDoModelo`.
+    with VEZ_DO_MODELO.usar(urgente):
+        if rastrear:
+            resultados = modelo.track(quadro, persist=True, conf=lim, imgsz=tam,
+                                      iou=settings.OBJECT_NMS_IOU,
+                                      verbose=False, tracker="bytetrack.yaml")
+        else:
+            resultados = modelo(quadro, conf=lim, imgsz=tam,
+                                iou=settings.OBJECT_NMS_IOU, verbose=False)
 
     saida = _colher(resultados, classes_fora)
 

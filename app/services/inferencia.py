@@ -436,7 +436,7 @@ class Inferencia:
             # acha é reaproveitado da volta, logo abaixo.
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, False,
-                _classes_barradas(cam), "nunca",
+                _classes_barradas(cam), "nunca", urgente=True,
             )
             objetos = self._fora_das_zonas_ignoradas(objetos, cam, quadro)
             objetos = self._identidade_em_tela(cam.codigo, objetos)

@@ -133,15 +133,16 @@ function pintarCaixasReais(ctx,lista,W,H,k){
   const e=k||1;
   ctx.save();
   ctx.lineWidth=2.4*e;
-  ctx.font=`600 ${11*e}px "IBM Plex Sans",system-ui,sans-serif`;
-  ctx.textBaseline='middle';
-  /* Rótulo sem atropelo. Numa sala cheia cada pessoa ganhava a sua tarja
-     "PESSOA", e elas se empilhavam ("PES PESSOA", "OA SOA") até a cena virar
-     texto. A cor da caixa já diz o que é; a tarja fica para o que a cor não
-     diz: o nome de quem foi reconhecido (sempre), a classe de objeto, e
-     "pessoa"/"rosto" só em tile grande e sem cobrir outra tarja. */
+  /* Toda caixa leva a tarja com o que é e a confiança ("PESSOA 85%"), como no
+     visualizador de testes — sem ela o operador via um retângulo e não sabia
+     o que o sistema tinha concluído. Em tile pequeno a letra encolhe; quando
+     duas tarjas se atropelam, a segunda entra no canto de dentro da própria
+     caixa em vez de sumir. */
   const larguraTela=W/e;
   const tileGrande=larguraTela>=560;
+  const fonte=tileGrande?11:9;
+  ctx.font=`600 ${fonte*e}px "IBM Plex Sans",system-ui,sans-serif`;
+  ctx.textBaseline='middle';
   const ocupados=[];
   const colide=(x,y,w,h)=>ocupados.some(o=>x<o.x+o.w&&x+w>o.x&&y<o.y+o.h&&y+h>o.y);
   // Os reconhecidos primeiro: são os que nunca podem perder a tarja.
@@ -167,16 +168,16 @@ function pintarCaixasReais(ctx,lista,W,H,k){
     ctx.lineWidth=2.4*e;
     ctx.strokeRect(x,y,w,h);
 
-    const comum=!ident&&!c.placa&&(c.classe==='pessoa'||c.classe==='rosto'||!c.classe);
-    if(comum&&!tileGrande)return;          // mosaico pequeno: a cor basta
     const base=ident?c.pessoa_nome:(c.classe?(ROTULO_OBJ[c.classe]||c.classe):'Rosto');
+    const pct=c.confianca!=null?` ${Math.round(c.confianca*100)}%`:'';
     // A placa vale mais que a classe: "carro" o operador já vê na imagem.
-    const rot=(c.placa?`${base} · ${c.placa}`:base).toUpperCase();
+    const rot=(c.placa?`${base} · ${c.placa}`:`${base}${pct}`).toUpperCase();
     // Tarja também em pixel de tela: com `s` ela encolhia junto com o tile e
     // o texto saía do retângulo que deveria contê-lo.
-    const pad=4*e, alt=15*e, larg=ctx.measureText(rot).width+pad*2;
-    const ty=Math.max(0,y-alt);
-    if(!ident&&colide(x,ty,larg,alt))return;   // não cobre a tarja de outro
+    const pad=3.5*e, alt=(fonte+4)*e, larg=ctx.measureText(rot).width+pad*2;
+    let ty=Math.max(0,y-alt);
+    // Atropelou outra tarja: vai para dentro da própria caixa, no alto.
+    if(colide(x,ty,larg,alt))ty=y;
     ocupados.push({x,y:ty,w:larg,h:alt});
     ctx.fillStyle=cor;
     ctx.fillRect(x,ty,larg,alt);

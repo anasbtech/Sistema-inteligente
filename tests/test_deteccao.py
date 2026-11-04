@@ -1619,3 +1619,36 @@ def test_cena_parada_nao_roda_o_detector(monkeypatch):
     cena[300:800, 600:1100] = 200                     # alguém se mexeu
     aio.run(motor._renovar_sobreposicoes())
     assert len(chamadas) == 2, "com movimento, analisa de novo"
+
+
+def test_tela_passa_a_frente_da_volta_completa_na_fila_do_modelo():
+    """Com o modelo ocupado, quem a tela pede é atendido antes de quem a volta
+    completa já esperava — e nunca dois ao mesmo tempo."""
+    import threading
+    import time as _t
+
+    from app.services.vision import _VezDoModelo
+
+    vez = _VezDoModelo()
+    ordem, simultaneos, dentro = [], [], [0]
+
+    def trabalho(nome, urgente, atraso):
+        _t.sleep(atraso)
+        with vez.usar(urgente):
+            dentro[0] += 1
+            simultaneos.append(dentro[0])
+            ordem.append(nome)
+            _t.sleep(0.05)
+            dentro[0] -= 1
+
+    fios = [threading.Thread(target=trabalho, args=a) for a in (
+        ("ocupa", False, 0.0),       # pega o modelo primeiro
+        ("volta", False, 0.01),      # chega e espera
+        ("tela", True, 0.02),        # chega depois, mas é urgente
+    )]
+    for f in fios:
+        f.start()
+    for f in fios:
+        f.join()
+    assert ordem == ["ocupa", "tela", "volta"], ordem
+    assert max(simultaneos) == 1, "duas inferências no modelo ao mesmo tempo"
