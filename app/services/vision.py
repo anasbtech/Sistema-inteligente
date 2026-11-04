@@ -835,6 +835,9 @@ class Trilha:
     # Já foi medida abaixo do piso da corrida (andando). Decide se corrida
     # exige a aceleração ou se a pessoa entrou em cena já correndo.
     viu_devagar: bool = False
+    # Desde quando esta pessoa acelera junto com a multidão. Ver
+    # `AnalisadorAcoes._avaliar_corrida_coletiva`.
+    coletiva_desde: Optional[float] = None
     # Desde quando o corpo está na horizontal, tendo despencado para chegar
     # lá. Quem se abaixa levanta em seguida e zera isto; quem caiu, não.
     caido_desde: Optional[float] = None
@@ -1038,7 +1041,42 @@ class Trilha:
         # 0,8 corpo/s ao fundo trocaram de número, e o salto de um passo só
         # levou a média a 2,35 e disparou corrida. Quem corre de verdade tem
         # todos os passos rápidos, e a mediana não muda nada para ele.
-        return float(np.median(passos[-3:])), float(np.median(passos[-7:-3]))
+        agora = float(np.median(passos[-3:]))
+        # "Antes" é o ritmo mais lento da pessoa nos passos anteriores (até
+        # ~2,5 s para trás), não o instante logo antes. Quem acelera aos
+        # poucos — 0,9, 1,3, 1,8, 2,4 corpos/s, como a multidão do UMN — tem o
+        # instante anterior já subindo, e a diferença nunca alcançava o salto
+        # exigido. Comparada com o andar de antes, a aceleração aparece.
+        anteriores = passos[:-3][-10:]
+        if len(anteriores) < 3:
+            antes = float(np.median(anteriores)) if anteriores else agora
+        else:
+            antes = min(float(np.median(anteriores[i:i + 3]))
+                        for i in range(len(anteriores) - 2))
+        return agora, antes
+
+    def ritmo_curto(self, salto_max_s: float = 1.0) -> float:
+        """Ritmo com os poucos passos que houver (a partir de dois).
+
+        Só para quando a cena já está em pânico confirmado: quem acaba de
+        ganhar caixa no meio da multidão correndo não pode esperar os quatro
+        passos de `arranque` — sai do quadro antes. Basta um passo: o pânico
+        já foi confirmado pelo grupo.
+        """
+        escala = self.escala()
+        if escala <= 1e-3:
+            return 0.0
+        passos: List[float] = []
+        pts = list(self.pontos)
+        for (x0, y0, t0), (x1, y1, t1) in zip(pts, pts[1:]):
+            dt = t1 - t0
+            if dt > salto_max_s:
+                passos.clear()
+                continue
+            if dt <= 1e-3:
+                continue
+            passos.append(float(np.hypot((x1 - x0) * self.aspecto, y1 - y0) / dt / escala))
+        return float(np.median(passos[-3:])) if passos else 0.0
 
     def despencou(self, salto_max_s: float = 1.0) -> float:
         """Quanto o corpo desceu, em alturas de corpo por segundo.
@@ -1293,6 +1331,21 @@ class AnalisadorAcoes:
         self.duracao_briga = settings.ACAO_BRIGA_DURACAO_S
         # Desde quando cada par está colado e agitado.
         self._briga_desde: Dict[Tuple[int, int], float] = {}
+        # Corrida coletiva: o ritmo típico da cena ao longo do tempo, para
+        # saber quando a multidão inteira acelerou. Ver `_avaliar_corrida_coletiva`.
+        self.coletiva_n = settings.ACAO_CORRIDA_COLETIVA_N
+        self.coletiva_fator = settings.ACAO_CORRIDA_COLETIVA_FATOR
+        self.coletiva_min = settings.ACAO_CORRIDA_COLETIVA_MIN
+        self._ritmo_cena: Deque[Tuple[float, float]] = deque(maxlen=60)
+        # Pânico confirmado: até quando vale e com que piso (congelado no
+        # disparo — depois, a base da cena já inclui a corrida e subiria).
+        self._coletiva_ate = 0.0
+        self._piso_coletivo = settings.ACAO_CORRIDA_RITMO
+        self._base_coletiva = 0.25
+        # O piso de corrida que valeu no último quadro: o individual, ou o
+        # coletivo quando a multidão acelerou junta. A tela de teste usa para
+        # manter vermelho quem segue correndo.
+        self.piso_corrida_atual = settings.ACAO_CORRIDA_RITMO
         # Roubo: contato, fuga logo depois e quem ficou para trás.
         self.proximidade_roubo = settings.ACAO_ROUBO_PROXIMIDADE
         self.janela_roubo = settings.ACAO_ROUBO_JANELA_S
@@ -1812,6 +1865,9 @@ class AnalisadorAcoes:
         if self.ativa("aglomeracao"):
             self._avaliar_aglomeracao(pessoas_xy, t, eventos)
 
+        if self.ativa("corrida"):
+            eventos += self._avaliar_corrida_coletiva(objetos, t, camera_moveu)
+
         if self.ativa("briga"):
             eventos += self._avaliar_briga(objetos, largura, altura, t,
                                            camera_moveu)
@@ -1828,6 +1884,113 @@ class AnalisadorAcoes:
                 eventos += roubos
 
         self._limpar(t)
+        return eventos
+
+    def _avaliar_corrida_coletiva(self, objetos, t: float,
+                                  camera_moveu: bool = False) -> List[EventoAcao]:
+        """Várias pessoas acelerando juntas: a multidão saiu correndo.
+
+        A regra individual mede velocidade na imagem, e na imagem quem corre
+        para longe da câmera — ou na direção dela — quase não se desloca. No
+        corredor do UMN a multidão em pânico corre a 0,8–1,0 corpo/s na
+        imagem, abaixo do piso de 1,6, e só se via 0% das caixas vermelhas.
+
+        O que se mede aqui é a mudança em relação à própria cena: o ritmo
+        típico de quem está em movimento nos ~6 s anteriores (deixando de fora
+        o último 1,5 s, que já pode ser o arranque). Quando ao menos
+        `coletiva_n` pessoas passam juntas de `coletiva_fator` vezes esse
+        ritmo — e do piso absoluto `coletiva_min` —, cada uma delas vira
+        corrida. A perspectiva comprime o andar e o correr do mesmo jeito, e é
+        por isso que a comparação com a cena funciona onde a régua absoluta
+        não funciona.
+
+        Custo assumido: um grupo parado que sai andando todo de uma vez (fim de
+        reunião, ônibus que chega) pode passar. O piso absoluto e a exigência
+        de direção seguram a maior parte.
+        """
+        self.piso_corrida_atual = self.ritmo_corrida
+        pessoas = [o for o in objetos
+                   if o.classe == "pessoa" and o.track_id is not None]
+        medidas = []
+        for o in pessoas:
+            tr = self.trilhas.get(o.track_id)
+            if tr is None:
+                continue
+            rit = tr.arranque()[0]
+            # Quem está parado de verdade mede 0 e conta como parte da cena —
+            # sem isso, três andando entre oito parados eram "a cena inteira".
+            # Fica de fora só quem acabou de ganhar caixa e ainda não foi
+            # medido.
+            if rit > 0 or len(tr.pontos) >= 5:
+                medidas.append((o, tr, rit))
+        if medidas:
+            self._ritmo_cena.append((t, float(np.median([m[2] for m in medidas]))))
+
+        if camera_moveu:
+            return []
+        em_panico = t <= self._coletiva_ate
+        if em_panico:
+            # Dentro do pânico confirmado, basta o dobro do ritmo de antes da
+            # cena: no gramado do UMN, quem corria a 0,6 corpo/s (duas vezes o
+            # 0,3 de antes) ficava verde por estar logo abaixo do 0,7.
+            piso = max(0.5, 2.0 * self._base_coletiva)
+            # Com o pânico confirmado, quem acabou de ganhar caixa é medido
+            # com os passos que tiver.
+            medidas = [(o, tr, rit) for o, tr, rit in medidas]
+            for o in pessoas:
+                tr = self.trilhas.get(o.track_id)
+                if tr is not None and tr.arranque()[0] == 0.0:
+                    curto = tr.ritmo_curto()
+                    if curto > 0:
+                        medidas.append((o, tr, curto))
+        else:
+            base = [r for quando, r in self._ritmo_cena if t - 6.0 <= quando <= t - 1.5]
+            if len(base) < 4:
+                return []
+            # Piso de 0,25 na base: cena quase parada não pode fazer qualquer
+            # passo parecer arranque.
+            base_cena = max(float(np.median(base)), 0.25)
+            piso = max(self.coletiva_min, self.coletiva_fator * base_cena)
+        aceleraram = [(o, tr, rit) for o, tr, rit in medidas
+                      if rit >= piso and tr.agitacao() <= self.agitacao_corrida]
+        # Fora do pânico, a cena inteira tem de acelerar: ao menos metade de
+        # quem está em movimento acima do piso. Só "três acima do piso" não
+        # basta — no Avenue (vídeo 04) muita gente parada puxava a base para
+        # baixo, e três pedestres andando viravam multidão em pânico.
+        metade = len(aceleraram) * 2 >= len(medidas)
+        if not em_panico and (len(aceleraram) < self.coletiva_n or not metade):
+            for _, tr, _ in medidas:
+                tr.coletiva_desde = None
+            return []
+
+        if not em_panico:
+            # A multidão acelerou junta: a cena fica em pânico por 4 s. Dentro
+            # disso não se exige mais o grupo — quando a cena se esvazia,
+            # sobram menos de três e a regra desligava com gente ainda
+            # correndo.
+            self._piso_coletivo = piso
+            self._base_coletiva = base_cena
+            self._coletiva_ate = t + 4.0
+        elif len(aceleraram) >= self.coletiva_n:
+            # O grupo segue acelerando junto: o pânico continua.
+            self._coletiva_ate = t + 4.0
+        self.piso_corrida_atual = min(self.ritmo_corrida, piso)
+        eventos: List[EventoAcao] = []
+        for o, tr, rit in aceleraram:
+            # Fora do pânico confirmado, duas medidas seguidas, como a
+            # individual: um quadro só é o rastreio, não a pessoa.
+            tr.coletiva_desde = tr.coletiva_desde or t
+            if not em_panico and t - tr.coletiva_desde < self.duracao_corrida:
+                continue
+            if not self._pode_alertar(tr, "corrida", t):
+                continue
+            eventos.append(EventoAcao(
+                "corrida", ROTULO_ACAO["corrida"],
+                confianca=float(np.clip(0.55 + (rit / piso - 1.0) / 2.0, 0.55, 0.95)),
+                severidade=SEVERIDADE_ACAO["corrida"],
+                duracao_s=max(1, int(t - tr.coletiva_desde)),
+                envolvidos=len(aceleraram), bbox=o.bbox, track_id=o.track_id,
+            ))
         return eventos
 
     def _avaliar_roubo(self, objetos, t: float,

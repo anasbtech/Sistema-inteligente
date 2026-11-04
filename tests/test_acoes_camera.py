@@ -1403,3 +1403,45 @@ def test_roubo_desligado_nao_emite():
     analisador = AnalisadorAcoes()
     analisador.acoes_ativas = {"briga"}
     assert "roubo" not in [e.classe for e in _alimentar(analisador, _roubo_classico())]
+
+
+# ----------------------------------------------------------------------
+# Corrida coletiva — acrescentada em 2026-11-03 (UMN)
+# ----------------------------------------------------------------------
+def _multidao(n_aceleram, n_parados, ritmo_antes, ritmo_depois, quadros_antes=30,
+              quadros_depois=12, passo=0.23):
+    """Pessoas de 40 px num quadro de 320x240; parte acelera, parte fica parada."""
+    an = AnalisadorAcoes()
+    an.acoes_ativas = {"corrida"}
+    eventos, t = [], 5000.0
+    xs = {i: 20.0 + i * 18 for i in range(n_aceleram)}
+    for k in range(quadros_antes + quadros_depois):
+        ritmo = ritmo_antes if k < quadros_antes else ritmo_depois
+        objs = []
+        for i in range(n_aceleram):
+            # Cada um anda para um lado — não é a câmera se mexendo.
+            sentido = 1 if i % 2 == 0 else -1
+            xs[i] += sentido * ritmo * 40 * passo
+            y = 60 + i * 12
+            objs.append(ObjetoDetectado("pessoa", 0.9, (int(xs[i]), y, int(xs[i]) + 14, y + 40),
+                                        i + 1))
+        for j in range(n_parados):
+            x = 200 + j * 10
+            objs.append(ObjetoDetectado("pessoa", 0.9, (x, 150, x + 14, 190), 100 + j))
+        eventos += an.atualizar(objs, 320, 240, agora=t)
+        t += passo
+    return {e.track_id for e in eventos if e.classe == "corrida"}
+
+
+def test_multidao_que_acelera_junta_vira_corrida_mesmo_abaixo_do_piso():
+    """O corredor do UMN: na imagem a multidão corre a ~0,9 corpo/s, abaixo
+    do piso individual de 1,6, mas três vezes o ritmo de antes."""
+    alertados = _multidao(6, 0, ritmo_antes=0.3, ritmo_depois=0.95)
+    assert len(alertados) >= 5, alertados
+
+
+def test_tres_andando_entre_muitos_parados_nao_e_multidao_em_panico():
+    """O Avenue: gente parada puxa a base da cena para baixo, e três
+    pedestres andando não podem virar pânico."""
+    alertados = _multidao(3, 8, ritmo_antes=0.3, ritmo_depois=0.95)
+    assert alertados == set(), alertados

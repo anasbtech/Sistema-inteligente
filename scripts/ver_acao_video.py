@@ -54,55 +54,121 @@ def _faixa(img, y, texto, fundo, cor=BRANCO, escala=0.7):
                 cv2.LINE_AA)
 
 
-PAINEL_L = 430
+PAINEL_L = 440
+CINZA = (170, 170, 170)
 
 
-def _com_painel(img, registros, caminho_json):
-    """Painel ao lado do vídeo com o JSON das últimas detecções."""
+def _texto(painel, y, texto, cor=BRANCO, escala=0.5, grosso=1, x=14):
+    cv2.putText(painel, _a(texto), (x, y), cv2.FONT_HERSHEY_SIMPLEX, escala, cor, grosso,
+                cv2.LINE_AA)
+
+
+def _bloco(painel, y, altura, fundo):
+    cv2.rectangle(painel, (10, y), (PAINEL_L - 10, y + altura), fundo, -1)
+
+
+def _com_painel(img, registros, caminho_json, estado):
+    """Painel ao lado do vídeo com tudo que não é caixa.
+
+    O vídeo fica livre: nada de faixa, placar ou legenda por cima da cena —
+    numa câmera de baixa resolução, como a do UMN, essas faixas cobriam
+    justamente as pessoas que se queria ver.
+    """
     h = img.shape[0]
     painel = np.full((h, PAINEL_L, 3), (24, 24, 24), np.uint8)
-    cv2.putText(painel, "REGISTRO (JSON)", (14, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
-                BRANCO, 2, cv2.LINE_AA)
-    cv2.putText(painel, _a(caminho_json.name), (14, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
-                (170, 170, 170), 1, cv2.LINE_AA)
-    y = 78
+    y = 12
+
+    # 1. Estado da IA
+    situacao = estado["situacao"]
+    fundo = {"detectada": VERMELHO, "pausado": (90, 90, 90),
+             "fim": (60, 60, 60)}.get(situacao, (55, 55, 55))
+    _bloco(painel, y, 44, fundo)
+    titulo = {"detectada": f"{estado['rotulo'].upper()} DETECTADA",
+              "pausado": "PAUSADO - espaco continua",
+              "fim": "FIM DO VIDEO - tecla segue"}.get(situacao, f"IA analisando: {estado['rotulo']}")
+    _texto(painel, y + 29, titulo, BRANCO, 0.6, 2, 20)
+    y += 62
+
+    # 2. Placar
+    _texto(painel, y, f"{estado['video']}   {estado['t']:.1f}s", BRANCO, 0.55, 1)
+    y += 24
+    _texto(painel, y, f"disparos da IA: {estado['disparos']}", CINZA, 0.5)
+    y += 22
+    if estado["tem_gabarito"]:
+        _texto(painel, y, f"corridas no gabarito: {estado['no_gabarito']}", CINZA, 0.5)
+        y += 22
+        _texto(painel, y, f"IA detectou: {estado['detectou']}", CINZA, 0.5)
+        y += 14
+        # 3. O gabarito agora
+        if estado["gabarito_agora"]:
+            y += 6
+            _bloco(painel, y, 40, AMARELO)
+            _texto(painel, y + 16, "GABARITO: acontecendo agora", (0, 0, 0), 0.45, 1, 20)
+            _texto(painel, y + 33, estado["gabarito_agora"][:52], (0, 0, 0), 0.4, 1, 20)
+            y += 44
+    y += 18
+    _texto(painel, y, f"verde: pessoa (confianca)   vermelho: {estado['rotulo'].lower()}",
+           CINZA, 0.4)
+    y += 12
+    cv2.line(painel, (10, y), (PAINEL_L - 10, y), (70, 70, 70), 1)
+    y += 24
+
+    # 4. Registro JSON
+    _texto(painel, y, "REGISTRO (JSON)", BRANCO, 0.55, 2)
+    y += 18
+    _texto(painel, y, caminho_json.name, CINZA, 0.38)
+    y += 22
     if not registros:
-        cv2.putText(painel, "nenhuma deteccao ainda", (14, y), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.48, (150, 150, 150), 1, cv2.LINE_AA)
-    else:
-        # Destaque da última detecção: a ação e a confiança, grandes.
-        r = registros[-1]
-        cv2.rectangle(painel, (10, y - 8), (PAINEL_L - 10, y + 62), VERMELHO, -1)
-        cv2.putText(painel, _a(r["rotulo"].upper()), (20, y + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, BRANCO, 2, cv2.LINE_AA)
-        cv2.putText(painel, f"confianca {r['confianca']:.0%}   em {r['segundo']:.1f}s",
-                    (20, y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.55, BRANCO, 1, cv2.LINE_AA)
-        y += 86
+        _texto(painel, y, "nenhuma deteccao ainda", (150, 150, 150), 0.45)
     for r in reversed(registros[-3:]):
         g = r.get("gabarito", {})
-        cor = (VERDE if g.get("resultado") == "acerto"
-               else VERMELHO if g else AMARELO)
-        linhas = [
-            "{",
-            f'  "segundo": {r["segundo"]},',
-            f'  "acao": "{r["acao"]}",',
-            f'  "rotulo": "{_a(r["rotulo"])}",',
-            f'  "confianca": {r["confianca"]},',
-            f'  "pessoa_id": {r["pessoa_id"]},',
-            f'  "bbox": {r["bbox"]},',
-            f'  "velocidade_corpos_s": {r["velocidade_corpos_s"]},',
-        ]
+        cor = VERDE if g.get("resultado") == "acerto" else VERMELHO if g else AMARELO
+        linhas = ["{",
+                  f'  "segundo": {r["segundo"]},',
+                  f'  "rotulo": "{_a(r["rotulo"])}",',
+                  f'  "confianca": {r["confianca"]},',
+                  f'  "pessoa_id": {r["pessoa_id"]},',
+                  f'  "bbox": {r["bbox"]},',
+                  f'  "velocidade_corpos_s": {r["velocidade_corpos_s"]},']
         if g:
             linhas.append(f'  "gabarito": "{_a(g["resultado"])}"')
         linhas.append("}")
-        for i, l in enumerate(linhas):
-            if y > h - 10:
+        for i, linha in enumerate(linhas):
+            if y > h - 8:
                 break
-            cv2.putText(painel, l, (14, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                        cor if i in (0, len(linhas) - 1) else BRANCO, 1, cv2.LINE_AA)
-            y += 19
-        y += 10
+            _texto(painel, y, linha, cor if i in (0, len(linhas) - 1) else BRANCO, 0.42)
+            y += 18
+        y += 8
     return np.hstack([img, painel])
+
+
+def _desenhar_caixas(quadro, objs, zoom, vermelhos, confianca_acao, t, rotulo):
+    """Só as caixas, desenhadas já na escala da janela.
+
+    Desenhar no quadro original e ampliar depois engordava as letras junto
+    com a imagem — num vídeo de 320x240 a tarja de cada pessoa cobria a
+    pessoa ao lado.
+    """
+    img = cv2.resize(quadro, None, fx=zoom, fy=zoom)
+    for o in objs:
+        if o.classe != "pessoa":
+            continue
+        disparou = vermelhos.get(o.track_id, -1) >= t
+        cor = VERMELHO if disparou else VERDE
+        x1, y1, x2, y2 = (int(v * zoom) for v in o.bbox)
+        cv2.rectangle(img, (x1, y1), (x2, y2), cor, 2 if disparou else 1)
+        if disparou:
+            texto = f"{_a(rotulo.upper())} {confianca_acao.get(o.track_id, 0):.0%}"
+            escala, cor_txt = 0.45, BRANCO
+        else:
+            texto = f"{o.confianca:.0%}"
+            escala, cor_txt = 0.36, (0, 0, 0)
+        (tw, th), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, escala, 1)
+        ty = max(0, y1 - th - 4)
+        cv2.rectangle(img, (x1, ty), (x1 + tw + 4, ty + th + 4), cor, -1)
+        cv2.putText(img, texto, (x1 + 2, ty + th + 1), cv2.FONT_HERSHEY_SIMPLEX, escala,
+                    cor_txt, 1, cv2.LINE_AA)
+    return img
 
 
 def tocar(video: Path, acao: str, janelas, args) -> str:
@@ -142,7 +208,8 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
     alvos = [j for j in (janelas or []) if j.tipo == acao]
     pausado = False
     indice = 0
-    ultimo = None
+    ultimo = ultimo_img = None
+    estado: dict = {}
     while True:
         if not pausado:
             ok = cap.grab()
@@ -204,58 +271,34 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                 gravar_json()
                 print(f"  {video.name} {t:6.1f}s  IA disparou: {rotulo} ({e.confianca:.0%})")
 
-            img = quadro.copy()
-            # caixas
-            for o in objs:
-                if o.classe != "pessoa":
-                    continue
-                disparou = vermelhos.get(o.track_id, -1) >= t
-                cor = VERMELHO if disparou else VERDE
-                x1, y1, x2, y2 = map(int, o.bbox)
-                cv2.rectangle(img, (x1, y1), (x2, y2), cor, 3 if disparou else 2)
-                # Só a caixa e a confiança. Na corrida, o rótulo da ação com a
-                # confiança dela, numa tarja sobre a caixa da pessoa.
-                if disparou:
-                    texto = f"{_a(rotulo.upper())} {confianca_acao.get(o.track_id, 0):.0%}"
-                    escala, espessura = 0.5, 1
-                else:
-                    texto = f"pessoa {o.confianca:.0%}"
-                    escala, espessura = 0.42, 1
-                (tw, th), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, escala, espessura)
-                ty = max(0, y1 - th - 8)
-                cv2.rectangle(img, (x1, ty), (x1 + tw + 8, ty + th + 8), cor, -1)
-                cv2.putText(img, texto, (x1 + 4, ty + th + 4), cv2.FONT_HERSHEY_SIMPLEX,
-                            escala, BRANCO if disparou else (0, 0, 0), espessura, cv2.LINE_AA)
-
-            # faixas
-            vivo = [d for d in disparos if t - d[0] <= 2.5]
-            if vivo:
-                _faixa(img, 0, f"IA: {rotulo.upper()} DETECTADA", VERMELHO)
-            else:
-                _faixa(img, 0, f"IA analisando: {rotulo}", (40, 40, 40), escala=0.6)
+            # Quem já foi reconhecido correndo segue vermelho enquanto continuar
+            # rápido — antes a caixa voltava a verde 2,5 s depois do alerta,
+            # com a pessoa ainda correndo.
+            if acao == "corrida":
+                for o in objs:
+                    tr = an.trilhas.get(o.track_id)
+                    if (o.track_id in confianca_acao and tr is not None
+                            and tr.arranque()[0] >= an.piso_corrida_atual):
+                        vermelhos[o.track_id] = max(vermelhos.get(o.track_id, -1), t + 0.5)
+            img = _desenhar_caixas(quadro, objs, args.zoom, vermelhos, confianca_acao,
+                                   t, rotulo)
             agora = next((j for j in alvos if j.inicio_s <= t <= j.fim_s), None)
-            if agora is not None:
-                _faixa(img, altura - 34, f"GABARITO: {acao} acontecendo - {agora.descricao}",
-                       AMARELO, (0, 0, 0), 0.55)
-            achou = sum(j.detectado_em is not None for j in alvos)
-            info = (f"{video.name}  {t:5.1f}s   disparos: {len(disparos)}"
-                    + (f"   corridas no gabarito: {sum(j.inicio_s <= t for j in alvos)}"
-                       f"   IA detectou: {achou}" if alvos else ""))
-            # Fundo escuro sob o placar e a legenda: sem ele, as linhas da
-            # imagem atravessavam as letras.
-            cv2.rectangle(img, (0, 36), (largura, 84), (30, 30, 30), -1)
-            cv2.putText(img, _a(info), (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, BRANCO, 2,
-                        cv2.LINE_AA)
-            cv2.putText(img, _a(f"verde: pessoa detectada   vermelho: {rotulo.lower()}"),
-                        (12, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.42, BRANCO, 1, cv2.LINE_AA)
-            ultimo = _com_painel(cv2.resize(img, None, fx=args.zoom, fy=args.zoom),
-                                 registros, saida_json)
+            estado = {
+                "situacao": "detectada" if any(t - d[0] <= 2.5 for d in disparos) else "analisando",
+                "rotulo": rotulo, "video": video.name, "t": t,
+                "disparos": len(disparos),
+                "tem_gabarito": bool(alvos),
+                "no_gabarito": sum(j.inicio_s <= t for j in alvos),
+                "detectou": sum(j.detectado_em is not None for j in alvos),
+                "gabarito_agora": agora.descricao if agora else None,
+            }
+            ultimo = _com_painel(img, registros, saida_json, estado)
+            ultimo_img = img
 
         if ultimo is not None:
             if pausado:
-                p = ultimo.copy()
-                _faixa(p, p.shape[0] // 2 - 17, "PAUSADO - espaco continua", (90, 90, 90))
-                cv2.imshow(JANELA, p)
+                cv2.imshow(JANELA, _com_painel(ultimo_img, registros, saida_json,
+                                               dict(estado, situacao="pausado")))
             else:
                 cv2.imshow(JANELA, ultimo)
         tecla = cv2.waitKey(1 if not pausado else 100) & 0xFF
@@ -279,11 +322,8 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
               f"de {len(alvos)} do gabarito; {len(disparos)} disparo(s) no total")
         # Tela final do vídeo, para dar tempo de ler o placar.
         if ultimo is not None:
-            fim = ultimo.copy()
-            _faixa(fim, fim.shape[0] // 2 - 17,
-                   f"FIM {video.name}: {sum(j.detectado_em is not None for j in alvos)} de "
-                   f"{len(alvos)} detectadas - qualquer tecla segue", (60, 60, 60))
-            cv2.imshow(JANELA, fim)
+            cv2.imshow(JANELA, _com_painel(ultimo_img, registros, saida_json,
+                                           dict(estado, situacao="fim")))
             if (cv2.waitKey(0) & 0xFF) in (ord("q"), 27):
                 return "sair"
     return "proximo"

@@ -704,11 +704,26 @@ class Settings(BaseSettings):
     ACAO_CORRIDA_SALTO: float = 0.9
     # 0 é seguir reto, 1 é inverter o sentido a cada passo. Correr é dirigido;
     # oscilar no mesmo lugar é briga, ou é a caixa trocando de dono entre duas
-    # pessoas próximas.
-    ACAO_CORRIDA_AGITACAO: float = 0.35
-    # Quanto as condições precisam durar juntas. Derruba o salto de posição de
-    # um quadro só, que é quase sempre o rastreador reatribuindo a trilha.
-    ACAO_CORRIDA_DURACAO_S: float = 0.4
+    # pessoas próximas. 0,45 é onde a briga começa: abaixo disso é dirigido.
+    # Em 0,35, quem corria no meio da multidão do UMN (trajetória com algum
+    # zigue-zague ao cruzar os outros) ficava de fora correndo a 2,5 corpos/s.
+    ACAO_CORRIDA_AGITACAO: float = 0.45
+    # Quanto as condições precisam durar juntas — na prática, duas medidas
+    # seguidas. Com 0,4 s, quem já ia saindo do quadro saía antes de
+    # confirmar. O salto de um quadro só, que é o rastreador reatribuindo a
+    # trilha, já não passa: a velocidade é a mediana dos últimos passos.
+    ACAO_CORRIDA_DURACAO_S: float = 0.2
+    # Corrida coletiva: várias pessoas acelerando juntas em relação ao ritmo
+    # que a cena vinha tendo. Existe porque a régua individual não enxerga
+    # quem corre em profundidade — para longe ou na direção da câmera. No
+    # corredor do UMN a multidão em pânico corre a 0,8–1,0 corpo/s *na
+    # imagem*, abaixo do piso individual de 1,6, mas três vezes o 0,3 de
+    # antes. A comparação é com a própria cena, e a perspectiva comprime o
+    # andar e o correr do mesmo jeito.
+    ACAO_CORRIDA_COLETIVA_N: int = 3          # pessoas acelerando juntas
+    ACAO_CORRIDA_COLETIVA_FATOR: float = 2.5  # vezes o ritmo de antes da cena
+    ACAO_CORRIDA_COLETIVA_MIN: float = 0.7    # piso absoluto, corpos/s
+
     # Quando a imagem inteira anda — tremor, vento, reposicionamento da PTZ —
     # toda trilha arranca junta e todas pareceriam correr. Mede-se a coerência
     # dos passos: o tamanho da soma dos vetores sobre a soma dos tamanhos, de

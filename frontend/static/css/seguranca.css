@@ -491,10 +491,10 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
    com a barra do navegador e com o cabeçalho do sistema; no centro, o olho
    vai nele mesmo quem estiver lendo outra parte da tela.
 
-   O contêiner cobre a janela inteira só para poder centralizar, mas é
-   transparente a cliques (`pointer-events:none`) — só o cartão recebe. Quem
-   recebe o alerta pode precisar agir no sistema antes de encerrá-lo, e um
-   bloqueio total atrapalharia justamente aí. */
+   Um véu escurece o que fica atrás enquanto o alerta espera ciência. Antes
+   o contêiner era transparente a cliques e o cartão abria solto sobre o que
+   estivesse na tela — inclusive sobre a ficha de outro alerta, e as duas
+   coisas se misturavam. Dar ciência é um clique: o bloqueio dura só isso. */
 /* Janela de horário, dentro da linha da ação que ela configura.
    Recuada à esquerda para ler como detalhe daquela ação, e não como mais um
    campo solto do formulário. */
@@ -513,76 +513,93 @@ table.tbl td b{color:var(--txt-1);font-weight:600}
 #alertaFaixa{
   position:fixed;inset:0;z-index:400;
   display:flex;align-items:center;justify-content:center;
-  padding:16px;pointer-events:none;
+  padding:16px;
 }
 #alertaFaixa[hidden]{display:none}
+/* Véu atrás do cartão. Sem ele o aviso abria solto por cima do que estivesse
+   na tela — inclusive da ficha de outro alerta — e as duas coisas se liam
+   como uma só. Clicar no véu não dispensa: o alerta exige ciência. */
+.alerta-veu{position:absolute;inset:0;background:rgba(4,7,11,.68);
+  backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  animation:alertaVeu .2s ease-out}
+@keyframes alertaVeu{from{opacity:0}to{opacity:1}}
+
 .alerta-cartao{
-  pointer-events:auto;width:min(680px,100%);display:flex;gap:19px;
-  background:var(--ink-800);border:1px solid var(--red);border-top-width:4px;
-  border-radius:var(--r-l);padding:22px 24px;
-  box-shadow:0 26px 70px rgba(0,0,0,.78), 0 0 0 1px rgba(232,71,77,.2);
-  animation:alertaEntra .26s cubic-bezier(.2,.9,.3,1.3);
+  --sev:var(--red);--sev-fundo:var(--red-ghost);
+  position:relative;width:min(640px,100%);max-height:calc(100vh - 32px);
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--ink-800);border:1px solid var(--line);border-radius:var(--r-l);
+  box-shadow:0 30px 80px rgba(0,0,0,.7), 0 0 0 1px color-mix(in srgb, var(--sev) 35%, transparent);
+  animation:alertaEntra .26s cubic-bezier(.2,.9,.3,1.2);
 }
-.alerta-cartao.sev-media{border-color:var(--amber);box-shadow:0 26px 70px rgba(0,0,0,.78), 0 0 0 1px rgba(240,160,42,.2)}
+.alerta-cartao.sev-media{--sev:var(--amber);--sev-fundo:var(--amber-ghost)}
 /* Cresce no lugar, não desliza de cima: centralizado, a entrada vinda do
    topo fazia o cartão atravessar meia tela antes de parar. */
-@keyframes alertaEntra{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+@keyframes alertaEntra{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:none}}
 
-/* O ícone pulsa porque o cartão pode nascer enquanto a pessoa olha para
+/* 1. Faixa da gravidade: é a primeira coisa que o operador precisa ler. */
+.alerta-topo{display:flex;align-items:center;gap:12px;padding:12px 20px;
+  background:var(--sev-fundo);border-bottom:1px solid color-mix(in srgb, var(--sev) 40%, transparent)}
+.alerta-sev{display:flex;align-items:center;gap:8px;color:var(--sev);
+  font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+/* O ponto pulsa porque o cartão pode nascer enquanto a pessoa olha para
    outro canto da tela — o movimento é o que traz o olho de volta. */
-.alerta-cartao .sino{flex:none;width:54px;height:54px;border-radius:50%;
-  display:grid;place-items:center;color:var(--red);
-  background:var(--red-ghost);animation:alertaPulsa 1.4s ease-in-out infinite}
-.alerta-cartao.sev-media .sino{color:var(--amber);background:var(--amber-ghost)}
-@keyframes alertaPulsa{0%,100%{box-shadow:0 0 0 0 rgba(232,71,77,.45)}
-  70%{box-shadow:0 0 0 14px rgba(232,71,77,0)}}
+.alerta-sev .pulso{width:9px;height:9px;border-radius:50%;background:var(--sev);
+  animation:alertaPulsa 1.4s ease-in-out infinite}
+@keyframes alertaPulsa{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--sev) 60%, transparent)}
+  70%{box-shadow:0 0 0 8px transparent}}
+.alerta-hora{margin-left:auto;display:flex;align-items:center;gap:6px;
+  font-family:var(--f-mono);font-size:12px;color:var(--txt-2)}
 
-.alerta-cartao .corpo{flex:1;min-width:0}
-/* A tarja de severidade entra acima do título, não ao lado: ela é a
-   primeira coisa que o operador precisa ler, antes mesmo de onde foi. */
-.alerta-cartao .faixa-sev{display:block;font-size:10px;font-weight:700;
-  letter-spacing:.16em;text-transform:uppercase;color:var(--red);margin-bottom:5px}
-.alerta-cartao.sev-media .faixa-sev{color:var(--amber)}
-.alerta-cartao .corpo b{display:block;font-family:var(--f-disp);font-size:24px;
-  font-weight:600;letter-spacing:.01em;line-height:1.1;color:var(--txt-1)}
-.alerta-cartao .corpo p{margin:7px 0 0;font-size:14px;color:var(--txt-2);line-height:1.55}
-.alerta-cartao .meta{margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
-  font-family:var(--f-mono);font-size:11.5px;color:var(--txt-3)}
-/* `align-self:center` porque a altura do cartão vem da coluna de texto, não da
-   captura: alinhada ao topo, ela deixava um vão morto embaixo que fazia o
-   cartão parecer grande por acidente. E 4:3 sem esticar — imagem de câmera
-   deformada é evidência deformada. */
-/* Largura e altura aqui valem só até o recorte chegar: `encaixarRecorte` então
-   redefine as duas no `style` do elemento, assumindo a proporção da imagem. Os
-   110x150 são a forma mediana das capturas deste parque, para a moldura não
-   dar um pulo visível quando a foto carrega. */
-.alerta-cartao canvas{flex:none;align-self:center;width:110px;height:150px;border-radius:var(--r-m);
-  border:1px solid var(--line);background:var(--ink-850)}
-.alerta-cartao .acoes{margin-top:17px;display:flex;gap:10px;align-items:center}
+/* 2. Corpo: a captura numa moldura fixa e as informações ao lado. A moldura
+   tem tamanho fixo e a imagem se encaixa dentro dela, centrada — assim o
+   cartão tem sempre a mesma forma, qualquer que seja o recorte (em pé,
+   deitado ou ausente). Imagem de câmera nunca é esticada. */
+.alerta-conteudo{display:flex;gap:20px;padding:20px;overflow:auto}
+.alerta-foto{flex:none;width:196px;height:216px;display:grid;place-items:center;
+  border-radius:var(--r-m);border:1px solid var(--line);background:var(--ink-850);
+  overflow:hidden;position:relative}
+.alerta-foto canvas{display:block;max-width:100%;max-height:100%}
+.alerta-foto .rotulo-foto{position:absolute;left:8px;bottom:8px;padding:3px 7px;
+  border-radius:var(--r-s);background:rgba(4,7,11,.72);font-size:10px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--txt-2)}
+.alerta-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+.alerta-info h2{margin:0;font-family:var(--f-disp);font-size:23px;font-weight:600;
+  line-height:1.15;color:var(--txt-1)}
+.alerta-local{display:flex;flex-wrap:wrap;gap:6px}
+.alerta-local .etiqueta{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;
+  border-radius:999px;background:var(--ink-750);border:1px solid var(--line);
+  font-size:12px;color:var(--txt-2)}
+.alerta-local .etiqueta.mono{font-family:var(--f-mono);font-size:11.5px}
+/* A descrição pode ser longa (alerta de sala explica a regra da câmera):
+   quatro linhas aqui, o texto inteiro na ficha do alerta. */
+.alerta-texto{margin:0;font-size:14px;line-height:1.55;color:var(--txt-2);
+  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.alerta-ref{margin:auto 0 0;display:flex;gap:8px;align-items:baseline;
+  font-size:11.5px;color:var(--txt-3)}
+.alerta-ref dt{text-transform:uppercase;letter-spacing:.1em;font-weight:600}
+.alerta-ref dd{margin:0;font-family:var(--f-mono);color:var(--txt-2)}
+
+/* 3. Rodapé: a fila à esquerda, as decisões à direita. */
+.alerta-rodape{display:flex;align-items:center;gap:12px;padding:14px 20px;
+  border-top:1px solid var(--line);background:var(--ink-850)}
 /* Quantos esperam atrás deste. Sem o contador, uma rajada de alertas
    pareceria um alerta só. */
-.alerta-fila{margin-left:auto;font-family:var(--f-mono);font-size:12px;
+.alerta-fila{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;
   font-weight:600;color:var(--txt-2);white-space:nowrap}
+.alerta-fila b{display:inline-grid;place-items:center;min-width:22px;height:22px;
+  padding:0 6px;border-radius:999px;background:var(--sev-fundo);color:var(--sev);
+  font-family:var(--f-mono);font-size:12px}
+.alerta-botoes{margin-left:auto;display:flex;gap:10px}
 
-/* Em tela estreita a miniatura sai da linha e o cartão vira coluna — a
-   imagem espremida ao lado de um texto de 14px não se lê. */
+/* Em tela estreita a captura sobe e ocupa a largura do cartão — espremida ao
+   lado de um texto de 14px ela não se lê. */
 @media (max-width:620px){
-  .alerta-cartao{flex-wrap:wrap;padding:18px;gap:14px}
-  /* A captura desce para a própria linha, centrada e no tamanho real. A versão
-     anterior esticava ela para a largura do cartão (2,3:1 numa imagem 4:3) — e
-     ainda assim não pegava, porque `molduraVazia` fixa o tamanho no `style` do
-     elemento, que vence a folha. */
-  .alerta-cartao canvas{order:3;margin:0 auto}
-  /* Quebra de linha forçada antes da captura. `order:3` sozinho não a descia:
-     a coluna de texto tem `flex:1` (base 0), então sino + captura cabiam na
-     mesma linha e ela só espremia o texto. Este item de altura zero e base
-     cheia ocupa o resto da primeira linha e empurra a captura para a segunda —
-     sem esticá-la, que é o que `flex-basis:100%` nela faria. */
-  .alerta-cartao::before{content:'';order:2;flex:0 0 100%;height:0}
-  /* Os botões não quebram linha: juntos firmavam uma largura mínima maior que a
-     tela e o cartão vazava pela direita no telefone. */
-  .alerta-cartao .acoes{flex-wrap:wrap;row-gap:10px}
-  .alerta-fila{margin-left:0}
+  .alerta-conteudo{flex-direction:column;padding:16px;gap:14px}
+  .alerta-foto{width:100%;height:200px}
+  .alerta-rodape{flex-wrap:wrap;padding:12px 16px}
+  .alerta-botoes{margin-left:0;width:100%}
+  .alerta-botoes .btn{flex:1}
 }
 
 .toast{display:flex;gap:10px;align-items:flex-start;background:var(--ink-750);border:1px solid var(--line);border-left-width:3px;border-radius:var(--r-m);padding:11px 13px;box-shadow:var(--sh-2);animation:slideIn .22s ease-out;pointer-events:auto}

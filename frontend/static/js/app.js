@@ -511,17 +511,15 @@ const ALERTA = {
     if(this.atual) this.atualizarFila(); else this.mostrar();
   },
 
+  /* "2 alertas aguardando", com o número em destaque. Vazio quando não há
+     ninguém atrás deste — o espaço continua lá, para os botões não pularem. */
+  textoFila(n){
+    return n ? `<b>${n}</b> ${n === 1 ? 'alerta aguardando' : 'alertas aguardando'}` : '';
+  },
+
   atualizarFila(){
-    const acoes = $('#alertaFaixa .acoes');
-    if(!acoes) return;
-    let marca = $('.alerta-fila', acoes);
-    if(!this.fila.length){ if(marca) marca.remove(); return; }
-    if(!marca){
-      marca = document.createElement('span');
-      marca.className = 'alerta-fila';
-      acoes.appendChild(marca);
-    }
-    marca.textContent = `+${this.fila.length} na fila`;
+    const marca = $('#alertaFaixa .alerta-fila');
+    if(marca) marca.innerHTML = this.textoFila(this.fila.length);
   },
 
   mostrar(){
@@ -534,42 +532,49 @@ const ALERTA = {
     const img = a.deteccao_codigo ? {codigo: a.deteccao_codigo, fonte: 'deteccoes'}
               : a.tem_imagem      ? {codigo: a.codigo, fonte: 'alertas'} : null;
 
+    const nivel = critico ? 'Alerta crítico' : `Alerta ${(SEVERIDADE[a.severidade] || '').toLowerCase()}`;
     faixa.hidden = false;
     faixa.innerHTML = `
-      <div class="alerta-cartao ${critico ? '' : 'sev-media'}" role="alertdialog"
-           aria-live="assertive" aria-label="${esc(a.titulo)}">
-        <div class="sino">${ico('alert', 28)}</div>
-        <div class="corpo">
-          <span class="faixa-sev">Alerta · ${esc(SEVERIDADE[a.severidade] || '')}</span>
-          <b>${esc(a.titulo)}</b>
-          <p>${esc(a.detalhe || '')}</p>
-          <div class="meta">
-            <span>${esc(a.codigo)}</span><span>·</span>
-            <span>${esc(a.camera_codigo || '')} ${esc(a.camera_nome || '')}</span>
-            ${a.ocorrido_em ? `<span>·</span><span>${fmtTime(a.ocorrido_em)}</span>` : ''}
-          </div>
-          <div class="acoes">
-            <button class="btn btn-primary" data-al-ver>Abrir alerta</button>
-            <button class="btn btn-ghost" data-al-ciente>Ciente</button>
-            ${restam ? `<span class="alerta-fila">+${restam} na fila</span>` : ''}
+      <div class="alerta-veu"></div>
+      <section class="alerta-cartao ${critico ? '' : 'sev-media'}" role="alertdialog"
+               aria-modal="true" aria-live="assertive" aria-labelledby="alertaTitulo">
+        <header class="alerta-topo">
+          <span class="alerta-sev"><span class="pulso"></span>${esc(nivel)}</span>
+          ${a.ocorrido_em ? `<span class="alerta-hora">${ico('clock', 13)}${fmtTime(a.ocorrido_em)}</span>` : ''}
+        </header>
+        <div class="alerta-conteudo">
+          ${img ? `<div class="alerta-foto"><canvas data-al-img></canvas>
+                     <span class="rotulo-foto">Captura</span></div>` : ''}
+          <div class="alerta-info">
+            <h2 id="alertaTitulo">${esc(a.titulo)}</h2>
+            <div class="alerta-local">
+              ${a.camera_nome ? `<span class="etiqueta">${ico('cam', 13)}${esc(a.camera_nome)}</span>` : ''}
+              ${a.camera_codigo ? `<span class="etiqueta mono">${esc(a.camera_codigo)}</span>` : ''}
+            </div>
+            ${a.detalhe ? `<p class="alerta-texto">${esc(a.detalhe)}</p>` : ''}
+            <dl class="alerta-ref"><dt>Registro</dt><dd>${esc(a.codigo)}</dd></dl>
           </div>
         </div>
-        ${img ? '<canvas data-al-img width="110" height="150"></canvas>' : ''}
-      </div>`;
+        <footer class="alerta-rodape">
+          <span class="alerta-fila">${this.textoFila(restam)}</span>
+          <div class="alerta-botoes">
+            <button class="btn btn-ghost" data-al-ciente>Ciente</button>
+            <button class="btn btn-primary" data-al-ver>Abrir alerta</button>
+          </div>
+        </footer>
+      </section>`;
 
     const cv = $('[data-al-img]', faixa);
-    /* A moldura assume a proporção do recorte, em vez de o recorte se encaixar
-       numa moldura fixa. Numa caixa 4:3 sobrava preto dos dois lados: medido
-       nos 40 recortes mais recentes, 37 são mais altos que largos (mediana
-       0,73 contra 1,33 da caixa). Preencher cortando seria pior — no recorte
-       de 201x570 só caberia 26% da pessoa, sem cabeça nem pés.
-
-       O teto de 150px é o do cartão, não o da janela: aqui a imagem acompanha
-       o alerta, e não pode crescer até empurrar os botões para fora. */
+    /* A moldura do cartão tem tamanho fixo e o recorte se encaixa dentro dela,
+       inteiro e sem esticar — em pé ou deitado. Cortar para preencher seria
+       pior: no recorte de 201x570 só caberia 26% da pessoa, sem cabeça nem
+       pés. A moldura fixa é o que dá ao cartão a mesma forma em todo alerta. */
     if(cv && img){
-      molduraVazia(cv, 110, 150);
-      carregarRecorte(cv, img.codigo, 176, img.fonte, 150);
+      molduraVazia(cv, 196, 216);
+      carregarRecorte(cv, img.codigo, 196, img.fonte, 216);
     }
+    // O foco vai para a ação principal: Enter abre o alerta sem precisar do mouse.
+    setTimeout(() => { const b = $('[data-al-ver]', faixa); if(b) b.focus(); }, 60);
 
     $('[data-al-ciente]', faixa).onclick = () => this.mostrar();
     $('[data-al-ver]', faixa).onclick = () => {
