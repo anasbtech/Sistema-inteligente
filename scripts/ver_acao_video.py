@@ -5,14 +5,20 @@ rastreio, rastro e a velocidade que o analisador está medindo. Quando a ação
 dispara, aparece uma faixa vermelha; quando o gabarito diz que a ação está
 acontecendo, uma faixa amarela embaixo — é a comparação que importa.
 
-    py -3.13 -m scripts.ver_acao_video "videos_teste/Avenue Dataset/testing_videos/02.avi" --acao corrida --gabarito "videos_teste/Avenue Dataset/gabarito_corrida.csv"
+    py -3.13 -m scripts.ver_acao_video "videos_teste/Avenue Dataset/testing_videos/04.avi" --acao corrida --gabarito "videos_teste/Avenue Dataset/gabarito_corrida.csv"
 
 Uma pasta inteira (um vídeo atrás do outro):
 
     py -3.13 -m scripts.ver_acao_video "videos_teste/Avenue Dataset/testing_videos" --acao corrida --gabarito ...
 
+Cada disparo vira um print: o quadro do momento, com a caixa vermelha e a
+faixa de horário (tempo no vídeo e hora do registro). O print aparece no
+painel ao lado, com os dados do disparo alinhados à direita dele, e é gravado
+em `resultados_teste/ao_vivo/prints/` — o caminho vai no JSON (`print`).
+
 Teclas na janela:
     espaço   pausa / continua
+    p        grava um print da janela inteira (vídeo + painel)
     n        próximo vídeo
     q / Esc  sai
 
@@ -26,6 +32,7 @@ import json
 import sys
 import time
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -54,8 +61,69 @@ def _faixa(img, y, texto, fundo, cor=BRANCO, escala=0.7):
                 cv2.LINE_AA)
 
 
-PAINEL_L = 440
+PAINEL_L = 520
 CINZA = (170, 170, 170)
+# Miniatura do print no painel, em 16:9, e quantas cabem de uma vez.
+MINI_L, MINI_A = 208, 117
+MAX_CAPTURAS = 2
+
+
+def _tempo(t: float) -> str:
+    """Tempo no vídeo como 00:11.2 — o que se lê de relance na apresentação."""
+    return f"{int(t // 60):02d}:{t % 60:04.1f}"
+
+
+def _carimbar(img, linhas, escala=0.55):
+    """Faixa escura embaixo da imagem com o horário do disparo."""
+    passo = int(26 * escala / 0.55)
+    alt = 12 + passo * len(linhas)
+    h, w = img.shape[:2]
+    faixa = img[h - alt:h].copy()
+    cv2.rectangle(faixa, (0, 0), (w, alt), (20, 20, 20), -1)
+    img[h - alt:h] = cv2.addWeighted(faixa, 0.82, img[h - alt:h], 0.18, 0)
+    cv2.rectangle(img, (0, h - alt), (5, h), VERMELHO, -1)
+    y = h - alt + int(22 * escala / 0.55)
+    for i, linha in enumerate(linhas):
+        cv2.putText(img, _a(linha), (14, y), cv2.FONT_HERSHEY_SIMPLEX, escala,
+                    BRANCO, 2 if i == 0 else 1, cv2.LINE_AA)
+        y += passo
+    return img
+
+
+def _fazer_print(img, bbox_janela, registro, pasta: Path) -> dict:
+    """Grava o print do disparo e devolve a miniatura para o painel.
+
+    O arquivo é o quadro inteiro da janela, com a caixa vermelha e o horário
+    carimbado. A miniatura é um recorte em volta da pessoa: o quadro inteiro
+    reduzido a 208 px deixaria quem corre do tamanho de um ponto.
+    """
+    rotulo = _a(registro["rotulo"]).upper()
+    cheio = _carimbar(img.copy(), [
+        f"{rotulo}  {registro['confianca']:.0%}   |   {registro['video']}   "
+        f"t = {_tempo(registro['segundo'])}   |   quadro {registro['quadro']}",
+        f"registrado em {registro['horario_registro']}   -   pessoa {registro['pessoa_id']}",
+    ], 0.5)
+    pasta.mkdir(parents=True, exist_ok=True)
+    arquivo = pasta / (f"{registro['acao']}_{Path(registro['video']).stem}_"
+                       f"{registro['segundo']:06.2f}s.jpg")
+    cv2.imwrite(str(arquivo), cheio, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = bbox_janela
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    # Aproxima até o corpo ocupar ~60% da altura, e desce o recorte um pouco:
+    # a faixa do horário cobre o terço de baixo da miniatura, e é ali que
+    # ficariam as pernas de quem corre.
+    alt = min(h, max(MINI_A * 1.2, (y2 - y1) * 1.7))
+    larg = min(w, alt * MINI_L / MINI_A)
+    alt = larg * MINI_A / MINI_L
+    rx = int(min(max(0, cx - larg / 2), w - larg))
+    ry = int(min(max(0, cy - alt * 0.42), h - alt))
+    mini = cv2.resize(img[ry:ry + int(alt), rx:rx + int(larg)], (MINI_L, MINI_A),
+                      interpolation=cv2.INTER_AREA)
+    mini = _carimbar(mini, [_tempo(registro["segundo"])], 0.45)
+    cv2.rectangle(mini, (0, 0), (MINI_L - 1, MINI_A - 1), VERMELHO, 2)
+    return {"registro": registro, "mini": mini, "arquivo": arquivo}
 
 
 def _texto(painel, y, texto, cor=BRANCO, escala=0.5, grosso=1, x=14):
@@ -67,7 +135,7 @@ def _bloco(painel, y, altura, fundo):
     cv2.rectangle(painel, (10, y), (PAINEL_L - 10, y + altura), fundo, -1)
 
 
-def _com_painel(img, registros, caminho_json, estado):
+def _com_painel(img, capturas, caminho_json, estado):
     """Painel ao lado do vídeo com tudo que não é caixa.
 
     O vídeo fica livre: nada de faixa, placar ou legenda por cima da cena —
@@ -113,32 +181,46 @@ def _com_painel(img, registros, caminho_json, estado):
     cv2.line(painel, (10, y), (PAINEL_L - 10, y), (70, 70, 70), 1)
     y += 24
 
-    # 4. Registro JSON
-    _texto(painel, y, "REGISTRO (JSON)", BRANCO, 0.55, 2)
-    y += 18
-    _texto(painel, y, caminho_json.name, CINZA, 0.38)
-    y += 22
-    if not registros:
+    # 4. Prints dos disparos, cada um com os dados alinhados ao lado
+    _texto(painel, y, f"CAPTURAS - {estado['rotulo'].upper()}", BRANCO, 0.55, 2)
+    if capturas:
+        _texto(painel, y, f"{len(capturas)} no total", CINZA, 0.42, 1, PAINEL_L - 100)
+    y += 14
+    if not capturas:
+        y += 16
         _texto(painel, y, "nenhuma deteccao ainda", (150, 150, 150), 0.45)
-    for r in reversed(registros[-3:]):
+    xd = 14 + MINI_L + 14
+    rodape = h - 42
+    for n, cap in reversed(list(enumerate(capturas, 1))):
+        if y + MINI_A > rodape or n <= len(capturas) - MAX_CAPTURAS:
+            break
+        r = cap["registro"]
+        painel[y:y + MINI_A, 14:14 + MINI_L] = cap["mini"]
         g = r.get("gabarito", {})
-        cor = VERDE if g.get("resultado") == "acerto" else VERMELHO if g else AMARELO
-        linhas = ["{",
-                  f'  "segundo": {r["segundo"]},',
-                  f'  "rotulo": "{_a(r["rotulo"])}",',
-                  f'  "confianca": {r["confianca"]},',
-                  f'  "pessoa_id": {r["pessoa_id"]},',
-                  f'  "bbox": {r["bbox"]},',
-                  f'  "velocidade_corpos_s": {r["velocidade_corpos_s"]},']
+        cor_g = VERDE if g.get("resultado") == "acerto" else VERMELHO if g else CINZA
+        _texto(painel, y + 14, f"#{n}   t = {_tempo(r['segundo'])}", BRANCO, 0.5, 2, xd)
+        # Rótulo e valor em colunas fixas: a fonte não é monoespaçada, e
+        # alinhar com espaços deixava cada valor num lugar.
+        campos = [
+            ("confianca", f"{r['confianca']:.0%}", BRANCO),
+            ("pessoa_id", str(r["pessoa_id"]), BRANCO),
+            ("velocidade", f"{r['velocidade_corpos_s']} corpos/s", BRANCO),
+            ("quadro", str(r["quadro"]), BRANCO),
+            ("registro", r["horario_registro"][-8:], BRANCO),
+        ]
         if g:
-            linhas.append(f'  "gabarito": "{_a(g["resultado"])}"')
-        linhas.append("}")
-        for i, linha in enumerate(linhas):
-            if y > h - 8:
-                break
-            _texto(painel, y, linha, cor if i in (0, len(linhas) - 1) else BRANCO, 0.42)
-            y += 18
-        y += 8
+            campos.append(("gabarito", g["resultado"], cor_g))
+        ly = y + 32
+        for chave, valor, cor in campos:
+            _texto(painel, ly, chave, CINZA, 0.42, 1, xd)
+            _texto(painel, ly, valor, cor, 0.42, 1, xd + 90)
+            ly += 15
+        y += MINI_A + 12
+
+    # 5. Onde ficou gravado
+    cv2.line(painel, (10, rodape), (PAINEL_L - 10, rodape), (70, 70, 70), 1)
+    _texto(painel, rodape + 16, f"JSON: resultados_teste/ao_vivo/{caminho_json.name}", CINZA, 0.38)
+    _texto(painel, rodape + 32, "prints: resultados_teste/ao_vivo/prints/", CINZA, 0.38)
     return np.hstack([img, painel])
 
 
@@ -194,6 +276,8 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
     # Registro do que a IA detectou, gravado a cada disparo — dá para abrir o
     # arquivo no VS Code enquanto o vídeo toca.
     registros: list = []
+    capturas: list = []      # prints dos disparos, para o painel
+    pasta_prints = args.saida / "prints"
     saida_json = args.saida / f"deteccoes_{acao}_{video.stem}.json"
     saida_json.parent.mkdir(parents=True, exist_ok=True)
 
@@ -234,6 +318,7 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                                             args.imgsz), agora=T0 + t)
             eventos = [e for e in an.atualizar(objs, largura, altura, zonas, agora=T0 + t)
                        if e.classe == acao]
+            novos = []
             for e in eventos:
                 disparos.append((t, e.bbox))
                 if e.track_id is not None:
@@ -260,6 +345,8 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                                          round(x2 / largura, 4), round(y2 / altura, 4)],
                     "velocidade_corpos_s": round(tr.arranque()[0], 2) if tr else None,
                     "duracao_s": e.duracao_s,
+                    "tempo_video": _tempo(t),
+                    "horario_registro": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 }
                 if janelas is not None:
                     registro["gabarito"] = (
@@ -268,7 +355,7 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                         {"resultado": "alarme falso",
                          "descricao": outro.descricao if outro else "cena normal"})
                 registros.append(registro)
-                gravar_json()
+                novos.append(registro)
                 print(f"  {video.name} {t:6.1f}s  IA disparou: {rotulo} ({e.confianca:.0%})")
 
             # Quem já foi reconhecido correndo segue vermelho enquanto continuar
@@ -282,6 +369,14 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                         vermelhos[o.track_id] = max(vermelhos.get(o.track_id, -1), t + 0.5)
             img = _desenhar_caixas(quadro, objs, args.zoom, vermelhos, confianca_acao,
                                    t, rotulo)
+            # O print sai do quadro já desenhado: com a caixa vermelha do
+            # disparo, que é o que se quer mostrar.
+            for r in novos:
+                cap_ = _fazer_print(img, [int(v * args.zoom) for v in r["bbox"]], r, pasta_prints)
+                r["print"] = cap_["arquivo"].relative_to(RAIZ).as_posix()
+                capturas.append(cap_)
+            if novos:
+                gravar_json()
             agora = next((j for j in alvos if j.inicio_s <= t <= j.fim_s), None)
             estado = {
                 "situacao": "detectada" if any(t - d[0] <= 2.5 for d in disparos) else "analisando",
@@ -292,12 +387,12 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                 "detectou": sum(j.detectado_em is not None for j in alvos),
                 "gabarito_agora": agora.descricao if agora else None,
             }
-            ultimo = _com_painel(img, registros, saida_json, estado)
+            ultimo = _com_painel(img, capturas, saida_json, estado)
             ultimo_img = img
 
         if ultimo is not None:
             if pausado:
-                cv2.imshow(JANELA, _com_painel(ultimo_img, registros, saida_json,
+                cv2.imshow(JANELA, _com_painel(ultimo_img, capturas, saida_json,
                                                dict(estado, situacao="pausado")))
             else:
                 cv2.imshow(JANELA, ultimo)
@@ -309,6 +404,11 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
             break
         if tecla == ord(" "):
             pausado = not pausado
+        if tecla == ord("p") and ultimo is not None:
+            pasta_prints.mkdir(parents=True, exist_ok=True)
+            arq = pasta_prints / f"janela_{video.stem}_{datetime.now():%H%M%S}.png"
+            cv2.imwrite(str(arq), ultimo)
+            print(f"  print da janela: {arq.relative_to(RAIZ)}")
         try:
             if cv2.getWindowProperty(JANELA, cv2.WND_PROP_VISIBLE) < 1:
                 cap.release()
@@ -322,7 +422,7 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
               f"de {len(alvos)} do gabarito; {len(disparos)} disparo(s) no total")
         # Tela final do vídeo, para dar tempo de ler o placar.
         if ultimo is not None:
-            cv2.imshow(JANELA, _com_painel(ultimo_img, registros, saida_json,
+            cv2.imshow(JANELA, _com_painel(ultimo_img, capturas, saida_json,
                                            dict(estado, situacao="fim")))
             if (cv2.waitKey(0) & 0xFF) in (ord("q"), 27):
                 return "sair"
