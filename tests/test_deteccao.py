@@ -362,15 +362,14 @@ def test_toda_classe_do_filtro_tem_origem_declarada():
     da própria detecção — e este teste é o que impede uma opção órfã de voltar
     à tela.
     """
-    from app.services.vision import MAPA_CLASSES, SEVERIDADE_OBJETO
+    from app.services.vision import CLASSES_HISTORICAS, MAPA_CLASSES, SEVERIDADE_OBJETO
 
     do_modelo = set(MAPA_CLASSES.values())
     de_detector_extra = {"capacete", "arma"}
     de_campo = {"placa"}                       # lida sobre o veículo detectado
 
-    # 'veiculo' e 'animal' são históricos: registros de antes da separação
-    # por tipo e por espécie, que o detector não emite mais.
-    oferecidas = set(SEVERIDADE_OBJETO) - {"veiculo", "animal"}
+    # Históricas: em registros antigos, mas fora do detector e do filtro.
+    oferecidas = set(SEVERIDADE_OBJETO) - CLASSES_HISTORICAS
     orfas = oferecidas - do_modelo - de_detector_extra - de_campo
     assert not orfas, f"classe sem origem: {sorted(orfas)}"
 
@@ -1663,7 +1662,12 @@ def test_tela_passa_a_frente_da_volta_completa_na_fila_do_modelo():
 def test_animal_sai_pela_especie_e_o_impossivel_nao_entra():
     from app.services.vision import CLASSES_ANIMAL, MAPA_CLASSES
     assert MAPA_CLASSES["dog"] == "cachorro" and MAPA_CLASSES["cat"] == "gato"
-    assert MAPA_CLASSES["horse"] == "cavalo" and MAPA_CLASSES["bird"] == "passaro"
+    # Retiradas a pedido da usuária (2026-11-04), junto com tesoura e bastão.
+    for retirado in ("horse", "bird", "cow", "sheep", "scissors", "baseball bat"):
+        assert retirado not in MAPA_CLASSES
+    # A mala continua visível para o abandono, agora como mochila.
+    assert MAPA_CLASSES["suitcase"] == "mochila"
+    assert "volume" not in MAPA_CLASSES.values()
     for exotico in ("elephant", "zebra", "giraffe", "bear"):
         assert exotico not in MAPA_CLASSES, f"{exotico} aqui é sempre erro do modelo"
     # As espécies continuam opcionais por câmera, como "animal" era.

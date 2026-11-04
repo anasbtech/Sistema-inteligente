@@ -155,8 +155,11 @@ async function renderObjetos(alvo){
   // à separação por tipo e da cena sintética, e carro, caminhão, ônibus e
   // motocicleta já cobrem o caso. Continua em ROTULO_OBJ porque a tabela ainda
   // precisa saber traduzi-lo onde ele já foi gravado.
-  // `veiculo` e `animal` são históricos: o detector não os emite mais.
-  const classes = Object.entries(ROTULO_OBJ).filter(([k]) => k !== 'veiculo' && k !== 'animal');
+  // Históricas: o detector não as emite mais, mas registros antigos ainda
+  // as têm — o rótulo fica em ROTULO_OBJ, a opção sai do filtro.
+  const FORA_DO_FILTRO = ['veiculo', 'animal', 'passaro', 'cavalo', 'boi', 'ovelha',
+                          'tesoura', 'bastao', 'volume'];
+  const classes = Object.entries(ROTULO_OBJ).filter(([k]) => !FORA_DO_FILTRO.includes(k));
   /* Capacete e arma de fogo não existem no modelo do parque: dependem de um
      detector próprio, que pode não estar instalado. A opção continua na lista
      — tirá-la mandaria quem a procura vasculhar a tela — mas diz ali mesmo

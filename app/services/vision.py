@@ -46,8 +46,8 @@ MAPA_CLASSES: Dict[str, str] = {
     # existe neste modelo e vem do detector dedicado (`extras.py`), com o
     # código `arma`. Agora cada um tem o seu.
     "knife": "faca",
-    "scissors": "tesoura",
-    "baseball bat": "bastao",
+    # Tesoura e bastão saíram em 2026-11-04, a pedido da usuária: no parque,
+    # bastão era vassoura e cabo de rodo, e nenhum dos dois gerava alerta.
     # --- opcionais, desligadas por padrão (veja CLASSES_OPCIONAIS) ---
     #
     # `backpack`, `handbag` e `suitcase` descrevem bagagem fotografada de
@@ -57,7 +57,9 @@ MAPA_CLASSES: Dict[str, str] = {
     # entrada, a mesma classe é justamente o que se quer ver.
     "backpack": "mochila",
     "handbag": "mochila",
-    "suitcase": "volume",
+    # Mala entra como mochila: "volume" saiu da lista a pedido da usuária,
+    # mas o abandono de objeto continua precisando ver a mala.
+    "suitcase": "mochila",
     # O COCO não tem rótulo para pessoa agachada, de costas ou parcialmente
     # enquadrada, e o YOLO resolve a dúvida escolhendo o animal mais próximo
     # em silhueta. Das 10 detecções de animal que chegaram ao registro deste
@@ -69,8 +71,10 @@ MAPA_CLASSES: Dict[str, str] = {
     # zebra e girafa saíram do mapa — nesta instalação, quando o modelo diz
     # "elefante", é sempre erro, e a classe que não pode estar certa não pode
     # chegar ao registro.
-    "dog": "cachorro", "cat": "gato", "bird": "passaro",
-    "horse": "cavalo", "cow": "boi", "sheep": "ovelha",
+    #
+    # Pássaro, cavalo, boi e ovelha saíram em 2026-11-04, a pedido da
+    # usuária: ficam cachorro e gato, os que de fato andam pelo parque.
+    "dog": "cachorro", "cat": "gato",
     # Celular: ocorrência numa revista de entrada, numa cela ou numa área onde
     # é proibido; numa sala de trabalho, todo mundo tem um na mão. Opcional
     # por câmera, como animal e bagagem.
@@ -93,6 +97,11 @@ CLASSES_OPCIONAIS: set[str] = CLASSES_ANIMAL | CLASSES_BAGAGEM | CLASSES_CELULAR
 # Tesoura e bastão ficam no registro sem alerta — vassoura e cabo de rodo têm
 # a mesma silhueta de bastão.
 CLASSES_ARMA: set[str] = {"arma", "faca"}
+# Classes que o detector não emite mais e o filtro não oferece, mas que estão
+# em registros gravados antes: a ficha antiga ainda precisa do peso e do
+# rótulo delas.
+CLASSES_HISTORICAS: set[str] = {"veiculo", "animal", "passaro", "cavalo", "boi",
+                                "ovelha", "tesoura", "bastao", "volume"}
 
 # Classes que o modelo troca entre si conforme o ângulo contam como uma
 # família só para decidir se um objeto já passou por ali — senão cada
