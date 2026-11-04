@@ -1569,3 +1569,53 @@ def test_correr_na_horizontal_e_na_vertical_mede_igual():
     assert abs(horizontal - vertical) < 0.01, (horizontal, vertical)
     # 60 px a cada 0,22 s com um corpo de 120 px: 2,27 corpos por segundo.
     assert abs(horizontal - 60 / 0.22 / 120) < 0.01
+
+
+# ----------------------------------------------------------------------
+# Sobreposição ao vivo: só o confiável, uma caixa por pessoa, e cena parada
+# não gasta detector (2026-11-04)
+# ----------------------------------------------------------------------
+def test_caixa_pouco_confiavel_nao_vai_para_a_tela(monkeypatch):
+    """Cadeira e monitor saíam como "pessoa 0,48" — o sistema só registra
+    detecção a partir de 0,70, e a tela mostrava a partir de 0,25."""
+    boa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    duvidosa = ObjetoDetectado("pessoa", 0.42, (200, 300, 260, 420), track_id=2)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [boa, duvidosa])
+    aio.run(motor._renovar_sobreposicoes())
+    confs = [c["confianca"] for c in publicados[0]["caixas"]]
+    assert confs == [0.9], confs
+
+
+def test_duas_caixas_no_mesmo_corpo_viram_uma(monkeypatch):
+    """As "PESSOA PESSOA" empilhadas do mosaico."""
+    a = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    b = ObjetoDetectado("pessoa", 0.7, (805, 310, 898, 750), track_id=2)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [a, b])
+    aio.run(motor._renovar_sobreposicoes())
+    assert len(publicados[0]["caixas"]) == 1
+    assert publicados[0]["caixas"][0]["confianca"] == 0.9, "fica a mais confiante"
+
+
+def test_cena_parada_nao_roda_o_detector(monkeypatch):
+    """Quem está sentado trabalhando não precisa ser redescoberto a cada
+    volta: a vez vai para a câmera onde alguém se mexe."""
+    import numpy as np
+
+    from app.services import inferencia as mod
+
+    pessoa = ObjetoDetectado("pessoa", 0.9, (800, 300, 900, 760), track_id=1)
+    motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa])
+    cena = np.zeros((1080, 1920, 3), np.uint8)
+    monkeypatch.setattr(mod.video, "quadro_bgr", lambda *a, **k: cena)
+    chamadas = []
+    monkeypatch.setattr(mod.vision, "detectar_objetos",
+                        lambda *a, **k: chamadas.append(1) or [pessoa])
+
+    aio.run(motor._renovar_sobreposicoes())           # analisa
+    aio.run(motor._renovar_sobreposicoes())           # cena igual: republica
+    assert len(chamadas) == 1, "a segunda volta não podia rodar o detector"
+    assert len(publicados) == 2 and publicados[1]["caixas"] == publicados[0]["caixas"]
+
+    cena[300:800, 600:1100] = 200                     # alguém se mexeu
+    aio.run(motor._renovar_sobreposicoes())
+    assert len(chamadas) == 2, "com movimento, analisa de novo"

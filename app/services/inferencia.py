@@ -124,6 +124,9 @@ class Inferencia:
         # cheia de gente. Guardar o último quadro permite semear a tela na
         # abertura, em vez de esperar.
         self._ultimas_caixas: Dict[str, dict] = {}
+        # Última cena analisada pelo laço curto, por câmera: (miniatura em
+        # cinza, quando). É o que permite pular a análise de quem não se mexeu.
+        self._cena_tela: Dict[str, tuple] = {}
         # As câmeras on-line da última volta. O laço de sobreposição lê daqui
         # em vez de consultar o banco: ele roda a cada poucos segundos, e uma
         # consulta por iteração disputaria o escritor único do SQLite com a
@@ -329,7 +332,7 @@ class Inferencia:
             self._medir_intervalo(codigo, agora - anterior["em"])
         carga = {
             "camera_codigo": codigo,
-            "caixas": caixas,
+            "caixas": self._para_a_tela(caixas),
             "validade_s": self._validade_de(codigo),
             "em": agora,
         }
@@ -414,7 +417,13 @@ class Inferencia:
             quadro = await asyncio.to_thread(
                 video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
             if quadro is None:
+                self._cena_tela.pop(cam.codigo, None)
                 await self._publicar_caixas(cam.codigo, [])
+                continue
+            # Cena parada: republica o que já estava, sem rodar o detector.
+            if await self._cena_parada(cam.codigo, quadro):
+                anterior = self._ultimas_caixas.get(cam.codigo)
+                await self._publicar_caixas(cam.codigo, anterior["caixas"] if anterior else [])
                 continue
             altura, largura = quadro.shape[:2]
             # Sem varredura em ladrilhos, que é a razão de este laço existir.
@@ -440,6 +449,69 @@ class Inferencia:
             caixas += self._distantes_de(cam.codigo, caixas)
             caixas += self._rostos_ancorados(cam.codigo, caixas)
             await self._publicar_caixas(cam.codigo, caixas)
+
+    async def _cena_parada(self, codigo: str, quadro) -> bool:
+        """A cena desta câmera continua igual à da última análise curta?
+
+        Uma subtração de miniaturas — milissegundos — contra 1,3 a 2,4 s de
+        detector. Quem está sentado trabalhando não precisa ser redescoberto a
+        cada volta; quem anda precisa, e é para ele que a vez vai.
+
+        Diz "não" (analisar) sem miniatura anterior, quando a análise passou do
+        teto de idade, e quando a cena mudou. Guarda a miniatura nova toda vez
+        que manda analisar, para a próxima comparação partir da cena analisada.
+        """
+        import numpy as np
+
+        agora = time.monotonic()
+        try:
+            mini = await asyncio.to_thread(
+                lambda: quadro[::8, ::8].astype(np.int16).max(axis=2))
+        except Exception:                                    # noqa: BLE001
+            return False
+        anterior = self._cena_tela.get(codigo)
+        parada = False
+        if (anterior is not None and anterior[0].shape == mini.shape
+                and agora - anterior[1] < settings.INFERENCIA_SOBREPOSICAO_PARADA_MAX_S
+                and codigo in self._ultimas_caixas):
+            dif = np.abs(mini - anterior[0])
+            fracao = float(np.count_nonzero(dif > settings.MOVIMENTO_DELTA)) / dif.size
+            parada = fracao < settings.MOVIMENTO_FRACAO_MIN
+        if not parada:
+            self._cena_tela[codigo] = (mini, agora)
+        return parada
+
+    @staticmethod
+    def _para_a_tela(caixas: list) -> list:
+        """O que pode ir à tela: confiável, e uma caixa por pessoa.
+
+        Duas regras, aplicadas na única porta por onde toda sobreposição sai —
+        a volta completa e o laço curto publicam por aqui:
+
+        * confiança mínima (`INFERENCIA_SOBREPOSICAO_CONF_MIN`) para o que a
+          passada inteira achou — cadeira e monitor saíam como "pessoa 0,48".
+          Rosto e quem só a varredura achou ficam de fora do piso: a pessoa
+          distante vem com confiança baixa e é real (alguém ao fundo da sala),
+          e o falso positivo da varredura — a letra da legenda — tem a zona
+          `ignorar` da câmera como remédio;
+        * da mesma classe, caixas sobre o mesmo corpo viram uma — a mais
+          confiante. As "PESSOA PESSOA" empilhadas vinham da passada curta
+          somada à pessoa distante lembrada da volta, cada uma com a sua caixa.
+        """
+        piso = settings.INFERENCIA_SOBREPOSICAO_CONF_MIN
+        boas = [c for c in caixas
+                if c.get("classe") == "rosto" or c.get("pessoa_nome") or c.get("varredura")
+                or float(c.get("confianca") or 0) >= piso]
+        boas.sort(key=lambda c: -float(c.get("confianca") or 0))
+        saida: list = []
+        for c in boas:
+            if c.get("classe") != "rosto" and c.get("bbox") and any(
+                    o.get("classe") == c.get("classe") and o.get("bbox")
+                    and vision.mesma_pessoa(_pixels(c["bbox"]), _pixels(o["bbox"]))
+                    for o in saida):
+                continue
+            saida.append(c)
+        return saida
 
     def _identidade_em_tela(self, codigo: str, objetos: list) -> list:
         """Um número que sobrevive de uma renovação à seguinte.
@@ -489,6 +561,7 @@ class Inferencia:
             "confianca": round(float(o.confianca), 4),
             "bbox": o.bbox_normalizado(largura, altura),
             "track_id": None,
+            "varredura": True,
         } for o in objetos if o.de_varredura]
         if caixas:
             self._distantes[codigo] = (time.monotonic(), caixas)
@@ -1327,6 +1400,8 @@ class Inferencia:
                     "bbox": obj.bbox_normalizado(largura, altura),
                     "track_id": obj.track_id,
                 }
+                if getattr(obj, "de_varredura", False):
+                    caixa_obj["varredura"] = True
                 caixas_do_quadro.append(caixa_obj)
                 corpo = None
                 if obj.classe == "pessoa":

@@ -38,11 +38,14 @@ const SEXOS={
   N:{lbl:'Não informado', pfx:'BIO-N', cor:'#5F7589'}
 };
 
+/* Pessoa em verde e rosto em rosa — o padrão do visualizador de testes, onde
+   a usuária validou a leitura. Veículo passou a azul para não disputar o
+   verde com a pessoa; mochila saiu do rosa pelo mesmo motivo. */
 const COR_CLASSE={
-  pessoa:'#35A7DE', carro:'#2FB67C', caminhao:'#E8712C', onibus:'#D9C13A',
+  pessoa:'#2FC27A', carro:'#35A7DE', caminhao:'#E8712C', onibus:'#D9C13A',
   motocicleta:'#F0A02A', bicicleta:'#8C6FE0', animal:'#4ED1C5',
-  mochila:'#E05F9E', volume:'#E8474D', capacete:'#5FC4F0', placa:'#2FB67C', arma:'#E8474D',
-  veiculo:'#2FB67C',   // vocabulário da cena sintética, que não distingue o tipo
+  mochila:'#C79A5B', volume:'#E8474D', capacete:'#5FC4F0', placa:'#D9C13A', arma:'#E8474D',
+  veiculo:'#35A7DE',   // vocabulário da cena sintética, que não distingue o tipo
   rosto:'#E05F9E',     // rosto e corpo saem de modelos diferentes sobre a mesma
                        // pessoa: cores distintas deixam ver as duas caixas
   FACIAL:'#E05F9E'
@@ -132,6 +135,17 @@ function pintarCaixasReais(ctx,lista,W,H,k){
   ctx.lineWidth=2.4*e;
   ctx.font=`600 ${11*e}px "IBM Plex Sans",system-ui,sans-serif`;
   ctx.textBaseline='middle';
+  /* Rótulo sem atropelo. Numa sala cheia cada pessoa ganhava a sua tarja
+     "PESSOA", e elas se empilhavam ("PES PESSOA", "OA SOA") até a cena virar
+     texto. A cor da caixa já diz o que é; a tarja fica para o que a cor não
+     diz: o nome de quem foi reconhecido (sempre), a classe de objeto, e
+     "pessoa"/"rosto" só em tile grande e sem cobrir outra tarja. */
+  const larguraTela=W/e;
+  const tileGrande=larguraTela>=560;
+  const ocupados=[];
+  const colide=(x,y,w,h)=>ocupados.some(o=>x<o.x+o.w&&x+w>o.x&&y<o.y+o.h&&y+h>o.y);
+  // Os reconhecidos primeiro: são os que nunca podem perder a tarja.
+  lista=[...lista].sort((a,b)=>(b.pessoa_nome?1:0)-(a.pessoa_nome?1:0));
   lista.forEach(c=>{
     const b=c.bbox;
     if(!b||b.length<4)return;
@@ -153,16 +167,21 @@ function pintarCaixasReais(ctx,lista,W,H,k){
     ctx.lineWidth=2.4*e;
     ctx.strokeRect(x,y,w,h);
 
+    const comum=!ident&&!c.placa&&(c.classe==='pessoa'||c.classe==='rosto'||!c.classe);
+    if(comum&&!tileGrande)return;          // mosaico pequeno: a cor basta
     const base=ident?c.pessoa_nome:(c.classe?(ROTULO_OBJ[c.classe]||c.classe):'Rosto');
     // A placa vale mais que a classe: "carro" o operador já vê na imagem.
     const rot=(c.placa?`${base} · ${c.placa}`:base).toUpperCase();
     // Tarja também em pixel de tela: com `s` ela encolhia junto com o tile e
     // o texto saía do retângulo que deveria contê-lo.
     const pad=4*e, alt=15*e, larg=ctx.measureText(rot).width+pad*2;
+    const ty=Math.max(0,y-alt);
+    if(!ident&&colide(x,ty,larg,alt))return;   // não cobre a tarja de outro
+    ocupados.push({x,y:ty,w:larg,h:alt});
     ctx.fillStyle=cor;
-    ctx.fillRect(x,Math.max(0,y-alt),larg,alt);
+    ctx.fillRect(x,ty,larg,alt);
     ctx.fillStyle='#08121A';
-    ctx.fillText(rot,x+pad,Math.max(0,y-alt)+alt/2);
+    ctx.fillText(rot,x+pad,ty+alt/2);
   });
   ctx.restore();
 }
@@ -426,8 +445,9 @@ const FEED={
         ctx.fillStyle='#0A0E15';
         ctx.fillRect(0,0,W,H);
       }
-      // Detecções (caixas e nomes) são sempre mostradas, independente do vídeo
-      if(t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H,t.escala);
+      // Caixas só sobre imagem: num tile preto, a caixa de "carro" flutuando
+      // no vazio descrevia uma cena que ninguém estava vendo.
+      if(vivo&&t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H,t.escala);
     });
   },
   start(){if(this.running)return;this.running=true;this.last=performance.now();requestAnimationFrame(this.loop)},

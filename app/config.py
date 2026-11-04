@@ -566,6 +566,19 @@ class Settings(BaseSettings):
     # 24 câmeras em série. Abaixar isto não resolveria: só faria duas pessoas
     # encostadas trocarem de identidade.
     INFERENCIA_SOBREPOSICAO_IOU: float = 0.35
+    # Confiança mínima para uma caixa ir à tela. O detector entrega a partir
+    # do limiar da câmera (0,25 no parque), e a tela mostrava tudo: cadeira,
+    # monitor e reflexo viravam "pessoa" com 0,48 — quando o próprio sistema só
+    # registra detecção a partir de INFERENCIA_CONFIANCA_MIN (0,70). Rosto
+    # não passa por aqui: vem de outro modelo, com o seu próprio piso.
+    INFERENCIA_SOBREPOSICAO_CONF_MIN: float = 0.50
+    # Câmera parada não precisa de análise nova para saber que ninguém se
+    # mexeu: se a cena mudou menos que MOVIMENTO_FRACAO_MIN desde a última
+    # análise, as caixas são republicadas sem rodar o detector, e a vez vai
+    # para quem tem movimento. Com nove tiles a renovação era de ~12 s por
+    # câmera; o que se mexe passa a ser reanalisado bem mais vezes.
+    # Teto de idade: mesmo sem movimento, reanalisa ao menos a cada tanto.
+    INFERENCIA_SOBREPOSICAO_PARADA_MAX_S: float = 15.0
 
     # --- Alerta por presença ----------------------------------------------
     # Severidade do alerta que uma câmera com `alerta_presenca` gera.
