@@ -18,9 +18,16 @@ function imagemDoAlerta(a){
   return null;
 }
 
+const ROTULO_TIPO_ALERTA = {FACIAL: 'Facial', OBJETO: 'Objeto', ACAO: 'Ação'};
+const COR_TIPO_ALERTA = {FACIAL: 'c-blue', OBJETO: 'c-green', ACAO: 'c-violet'};
+
 async function renderAlertas(alvo){
   const resumo = await API.resumoAlertas();
   const f = FILTRO.alertas, hoje = diaISO(new Date());
+  const porPagina = +f.por_pagina || POR_PAGINA;
+  const podeAgir = API.pode('edit');
+  // Seleção da triagem em lote: códigos marcados nesta página.
+  const sel = new Set();
 
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Central de alertas</h2><span class="sp"></span>
@@ -33,6 +40,7 @@ async function renderAlertas(alvo){
       </div>
       <select class="inp" id="alSev"><option value="">Qualquer severidade</option>
         ${[4,3,2].map(s => `<option value="${s}" ${f.severidade==String(s)?'selected':''}>${SEVERIDADE[s]}</option>`).join('')}</select>
+      <select class="inp" id="alCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, f.cam)}</select>
       <div class="periodo">
         <label for="alDe">Período</label>
         <input class="inp" id="alDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || hoje)}">
@@ -49,44 +57,140 @@ async function renderAlertas(alvo){
       <div class="kpi-val" style="font-size:22px">${resumo.tempo_medio_resposta_s ? duracao(resumo.tempo_medio_resposta_s) : '—'}</div>
       <div class="kpi-delta nt">${resumo.criticos_pendentes||0} crítico(s) pendente(s)</div></div>
   </div>
+  ${podeAgir ? `
+  <div class="lote-barra" id="alLote" hidden>
+    <div class="lote-topo">
+      <b id="alLoteN">0 selecionados</b>
+      <span class="lote-dica">Encerrar todos com o mesmo desfecho — cada um ganha a sua linha na trilha de auditoria.</span>
+      <button class="btn btn-ghost btn-sm" id="alLoteLimpar">Limpar seleção</button>
+    </div>
+    <div class="lote-corpo">
+      <div class="motivos" role="radiogroup">
+        ${ALERTA.MOTIVOS.map((m, i) => `<button type="button" class="motivo" role="radio"
+             aria-checked="false" data-lote-motivo="${i}">${esc(m.rotulo)}</button>`).join('')}
+      </div>
+      <input class="inp" id="alLoteObs" placeholder="Observação (obrigatória em “Outro”)">
+      <button class="btn btn-primary btn-sm" id="alLoteOk" disabled>${ico('check',13)} Encerrar selecionados</button>
+    </div>
+  </div>` : ''}
   <div class="panel"><div class="panel-bd tight"><div id="alCorpo">${carregando()}</div></div></div>`;
+
+  /* ---------- Seleção e encerramento em lote ---------- */
+  let motivoLote = null;
+  const atualizarLote = () => {
+    const barra = $('#alLote');
+    if(!barra) return;
+    barra.hidden = sel.size === 0;
+    $('#alLoteN').textContent = `${sel.size} ${sel.size === 1 ? 'selecionado' : 'selecionados'}`;
+    const m = ALERTA.MOTIVOS[motivoLote];
+    $('#alLoteOk').disabled = !m || (m.exigeTexto && $('#alLoteObs').value.trim().length < 8);
+    const todos = $('#alTodos');
+    if(todos){
+      const marcaveis = $$('[data-sel]', $('#alCorpo'));
+      todos.checked = marcaveis.length > 0 && marcaveis.every(c => c.checked);
+      todos.indeterminate = !todos.checked && marcaveis.some(c => c.checked);
+    }
+  };
+  if(podeAgir){
+    $$('[data-lote-motivo]').forEach(b => b.onclick = () => {
+      motivoLote = +b.dataset.loteMotivo;
+      $$('[data-lote-motivo]').forEach(x => x.setAttribute('aria-checked', String(x === b)));
+      atualizarLote();
+    });
+    $('#alLoteObs').oninput = atualizarLote;
+    $('#alLoteLimpar').onclick = () => {
+      sel.clear();
+      $$('[data-sel]', $('#alCorpo')).forEach(c => { c.checked = false; });
+      atualizarLote();
+    };
+    $('#alLoteOk').onclick = async () => {
+      const m = ALERTA.MOTIVOS[motivoLote];
+      const nota = $('#alLoteObs').value.trim();
+      const resolucao = m.exigeTexto ? nota : `${m.desfecho}${nota ? ` Observação: ${nota}` : ''}`;
+      // Guardado antes da pergunta: `confirmar` esvazia a caixa do modal ao
+      // fechar, e o botão pode não existir mais quando ela responder.
+      const botaoOk = $('#alLoteOk');
+      const ok = await confirmar('Encerrar alertas em lote',
+        `<b>${sel.size}</b> alerta(s) serão encerrados como <b>${esc(m.rotulo.toLowerCase())}</b>.<br><br>
+         Cada um ganha a sua linha na trilha de auditoria, com o seu nome e este desfecho.`,
+        {rotulo: `Encerrar ${sel.size}`});
+      if(!ok) return;
+      if(botaoOk) botaoOk.disabled = true;
+      try{
+        const r = await API.encerrarAlertasLote([...sel], resolucao);
+        toast('Alertas encerrados',
+          `${r.encerrados} encerrado(s)${r.ja_encerrados.length ? ` · ${r.ja_encerrados.length} já estavam encerrados` : ''}.`, 'ok');
+        atualizarContadoresDebounced();
+        irPara('alerts');
+      }catch(err){ atualizarLote(); erroToast(err); }
+    };
+  }
 
   const carregar = async () => {
     const corpo = $('#alCorpo');
     corpo.innerHTML = carregando();
+    sel.clear();
+    atualizarLote();
     try{
       const r = await API.alertas({
-        pagina: PAG.alertas, por_pagina: POR_PAGINA,
+        pagina: PAG.alertas, por_pagina: porPagina,
         status: FILTRO.alertas.status || undefined,
         severidade: FILTRO.alertas.severidade || undefined,
+        camera: FILTRO.alertas.cam || undefined,
         desde: limiteDia(FILTRO.alertas.de),
         ate: limiteDia(FILTRO.alertas.ate, true)
       });
+      const itens = r.itens || [];
+      const algumMarcavel = podeAgir && itens.some(a => a.status !== 'RESOLVIDO');
       corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th style="width:8px"></th><th style="width:64px">Captura</th>
+        <thead><tr><th style="width:8px"></th>
+          ${podeAgir ? `<th style="width:34px">${algumMarcavel
+            ? '<input type="checkbox" id="alTodos" class="sel-alerta" aria-label="Selecionar todos desta página">' : ''}</th>` : ''}
+          <th style="width:64px">Captura</th>
           <th>Alerta</th><th>Tipo</th><th>Câmera</th>
-          <th>Data / hora</th><th>Status</th><th style="width:110px"></th></tr></thead>
-        <tbody>${(r.itens||[]).map(a => {
+          <th>Data / hora</th><th>Status</th><th style="width:96px"></th></tr></thead>
+        <tbody>${itens.map(a => {
           const st = STATUS_ALERTA[a.status] || {};
+          const img = imagemDoAlerta(a);
           return `<tr class="clickable" data-a="${esc(a.codigo)}">
             <td style="padding:0"><div class="sev sev-${a.severidade}" style="height:100%;min-height:44px;width:3px"></div></td>
-            <td>${imagemDoAlerta(a)
-              ? `<canvas data-snap="${snapAttr(imagemDoAlerta(a), imagemDoAlerta(a).fonte)}" width="54"></canvas>`
-              : ''}</td>
-            <td><b>${esc(a.titulo)}</b><br><span class="td-ts">${esc((a.detalhe||'').slice(0,72))}${(a.detalhe||'').length>72?'…':''}</span></td>
-            <td><span class="chip ${a.tipo==='FACIAL'?'c-blue':a.tipo==='OBJETO'?'c-green':'c-violet'}">${esc(a.tipo)}</span></td>
+            ${podeAgir ? `<td>${a.status !== 'RESOLVIDO'
+              ? `<input type="checkbox" class="sel-alerta" data-sel="${esc(a.codigo)}" aria-label="Selecionar ${esc(a.codigo)}">` : ''}</td>` : ''}
+            <td>${img ? `<canvas data-snap="${snapAttr(img, img.fonte)}" width="54"></canvas>` : ''}</td>
+            <td><b>${esc(a.titulo)}</b><br><span class="td-ts">${esc((a.detalhe||'').slice(0,54))}${(a.detalhe||'').length>54?'…':''}</span></td>
+            <td><span class="chip ${COR_TIPO_ALERTA[a.tipo] || 'c-gray'}">${esc(ROTULO_TIPO_ALERTA[a.tipo] || a.tipo)}</span></td>
             <td><b>${esc(a.camera?a.camera.codigo:'')}</b><br><span class="td-ts">${esc((a.camera?a.camera.nome:'').slice(0,24))}</span></td>
             <td class="td-ts">${fmtDT(a.disparado_em)}<br><span style="color:var(--txt-4)">${relTime(a.disparado_em)}</span></td>
-            <td><span class="chip ${st.cls}">${esc(st.lbl)}</span></td>
-            <td style="text-align:right">${a.status!=='RESOLVIDO' && API.pode('edit')
+            <td><span class="chip ${st.cls}">${esc(st.lbl)}</span>${a.atribuido_nome ? `<br><span class="td-ts">${esc(a.atribuido_nome)}</span>` : ''}</td>
+            <td style="text-align:right">${a.status==='ABERTO' && podeAgir
               ? `<button class="btn btn-soft btn-sm" data-assume="${esc(a.codigo)}">Assumir</button>` : ''}</td>
           </tr>`;
-        }).join('') || `<tr><td colspan="8">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
+        }).join('') || `<tr><td colspan="9">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
         </tbody></table></div>
-        ${pagerHTML(r.total, r.pagina, r.por_pagina, 'alertas')}`;
+        <div class="tbl-rodape">
+          <label class="por-pagina">Por página
+            <select class="inp" id="alPorPagina">${[POR_PAGINA, 50, 100, 200].map(n =>
+              `<option value="${n}" ${n === porPagina ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+          ${pagerHTML(r.total, r.pagina, r.por_pagina, 'alertas')}
+        </div>`;
 
       pintarSnaps(corpo);
-      $$('tr[data-a]', corpo).forEach(t => t.onclick = () => abrirAlerta(t.dataset.a));
+      $$('tr[data-a]', corpo).forEach(t => t.onclick = e => {
+        if(e.target.closest('.sel-alerta')) return;      // marcar não abre a ficha
+        abrirAlerta(t.dataset.a);
+      });
+      $$('[data-sel]', corpo).forEach(c => c.onchange = () => {
+        c.checked ? sel.add(c.dataset.sel) : sel.delete(c.dataset.sel);
+        atualizarLote();
+      });
+      const todos = $('#alTodos', corpo);
+      if(todos) todos.onchange = () => {
+        $$('[data-sel]', corpo).forEach(c => {
+          c.checked = todos.checked;
+          todos.checked ? sel.add(c.dataset.sel) : sel.delete(c.dataset.sel);
+        });
+        atualizarLote();
+      };
       $$('[data-assume]', corpo).forEach(b => b.onclick = async e => {
         e.stopPropagation();
         try{
@@ -95,6 +199,9 @@ async function renderAlertas(alvo){
           irPara('alerts');
         }catch(err){ erroToast(err); }
       });
+      $('#alPorPagina', corpo).onchange = e => {
+        FILTRO.alertas.por_pagina = +e.target.value; PAG.alertas = 1; irPara('alerts');
+      };
       ligarPager(corpo, 'alertas', carregar);
     }catch(e){ corpo.innerHTML = erroBloco(e); }
   };
@@ -104,6 +211,7 @@ async function renderAlertas(alvo){
     FILTRO.alertas.status = b.dataset.s; PAG.alertas = 1; irPara('alerts');
   });
   $('#alSev').onchange = e => { FILTRO.alertas.severidade = e.target.value; PAG.alertas = 1; carregar(); };
+  $('#alCam').onchange = e => { FILTRO.alertas.cam = e.target.value; PAG.alertas = 1; carregar(); };
   ['alDe','alAte'].forEach(id => $('#'+id).onchange = aplicar);
   $('#alLimpar').onclick = () => { $('#alDe').value = ''; $('#alAte').value = ''; aplicar(); };
   await carregar();
@@ -227,9 +335,33 @@ async function abrirAlerta(codigo){
 /* ==========================================================
    USUÁRIOS
    ========================================================== */
-const PERMS_COLUNAS = ['live','cams','facial','biometrics','alerts','users','audit','settings','export','edit'];
-const PERMS_ROTULO = {live:'Ao vivo', cams:'Câmeras', facial:'Registros', biometrics:'Base bio.',
-  alerts:'Alertas', users:'Usuários', audit:'Auditoria', settings:'Config.', export:'Exportar', edit:'Editar'};
+const PERMS_COLUNAS = ['live','cams','facial','objects','actions','biometrics','alerts','users','audit','settings','export','edit'];
+// "objects" e "actions" apareciam crus, em inglês, no meio dos rótulos em
+// português: faltavam aqui desde que as duas permissões foram separadas.
+const PERMS_ROTULO = {live:'Ao vivo', cams:'Câmeras', facial:'Reconhecimento facial',
+  objects:'Detecção de objetos', actions:'Análise de ações', biometrics:'Base biométrica',
+  alerts:'Alertas', users:'Usuários', audit:'Auditoria', settings:'Configurações',
+  export:'Exportar', edit:'Editar e tratar'};
+
+/* Nome legível de cada ação da trilha. O código continua no filtro e na
+   exportação — é ele que a perícia procura —, mas a tabela fala português. */
+const ROTULO_AUDITORIA = {
+  LOGIN:'Entrada no sistema', LOGIN_FALHA:'Tentativa de entrada recusada',
+  LOGIN_BLOQUEADO:'Conta bloqueada por tentativas', LOGOUT:'Saída do sistema',
+  SENHA_RESET:'Redefinição de senha', SENHA_RESET_SEM_CONTA:'Redefinição para e-mail sem conta',
+  SENHA_RESET_FALHA_ENVIO:'Falha ao enviar e-mail de redefinição',
+  USR_ADD:'Usuário criado', USR_EDIT:'Usuário alterado', USR_DEL:'Usuário desativado',
+  USR_EXCLUSAO:'Usuário excluído', USR_BLOCK:'Usuário bloqueado', USR_UNBLOCK:'Usuário desbloqueado',
+  CAM_ADD:'Câmera cadastrada', CAM_EDIT:'Câmera alterada', CAM_DEL:'Câmera removida', PTZ:'Comando PTZ',
+  PESSOA_ADD:'Pessoa cadastrada', PESSOA_EDIT:'Pessoa alterada', PESSOA_DEL:'Pessoa removida',
+  BIO_AMOSTRA:'Amostra biométrica', BIO_FUSAO:'Fusão de registros biométricos',
+  BIO_RENUMERA:'Identificador biométrico renumerado', CONSULTA_BIO:'Consulta à base biométrica',
+  DET_REVISAO:'Detecção revisada', DET_EXCLUSAO:'Detecção excluída',
+  ALERTA_ASSUME:'Alerta assumido', ALERTA_FECHA:'Alerta encerrado', ALERTA_EXCLUSAO:'Alerta excluído',
+  CONFIG_EDIT:'Configuração alterada', LIMIAR_EDIT:'Limiar alterado',
+  EXPORTACAO:'Exportação de dados', EXPURGO:'Expurgo de capturas vencidas'
+};
+const rotuloAuditoria = c => ROTULO_AUDITORIA[c] || c;
 
 /* Três estados, não dois: bloqueado volta, excluído não. */
 const statusUsuario = u => u.excluido_em ? '<span class="chip c-gray">Excluído</span>'
@@ -554,7 +686,7 @@ async function renderAuditoria(alvo){
     <div class="toolbar">
       <div class="search">${ico('search',14)}<input class="inp" id="auQ" value="${esc(FILTRO.audit.q)}" placeholder="Usuário, ação, alvo, IP…"></div>
       <select class="inp" id="auAcao"><option value="">Todas as ações</option>
-        ${acoes.map(a => `<option value="${esc(a.acao)}" ${FILTRO.audit.acao===a.acao?'selected':''}>${esc(a.acao)} (${a.total})</option>`).join('')}</select>
+        ${acoes.map(a => `<option value="${esc(a.acao)}" ${FILTRO.audit.acao===a.acao?'selected':''}>${esc(rotuloAuditoria(a.acao))} (${a.total})</option>`).join('')}</select>
       <button class="btn btn-ghost btn-sm" id="auVerificar">${ico('shield',14)} Verificar cadeia</button>
       ${API.pode('export') ? `<button class="btn btn-ghost btn-sm" id="auExp">${ico('dl',14)} Exportar</button>` : ''}
     </div></div>
@@ -605,7 +737,7 @@ async function renderAuditoria(alvo){
             a.severidade === '2' ? 'var(--green)' : 'var(--acc)'
           }"></div></td>
           <td class="mono" style="font-size:12px;white-space:nowrap"><b>${fmtDT(a.ocorrido_em).split(' ')[0]}</b><br><span style="color:var(--txt-4)">${fmtDT(a.ocorrido_em).split(' ')[1]}</span></td>
-          <td><div style="display:flex;align-items:center;gap:7px"><span style="width:20px;text-align:center">${ico(iconoPorAcao(a.acao),14)}</span><b style="white-space:nowrap">${esc(a.acao)}</b></div></td>
+          <td><div style="display:flex;align-items:center;gap:7px"><span style="width:20px;text-align:center">${ico(iconoPorAcao(a.acao),14)}</span><div><b style="white-space:nowrap">${esc(rotuloAuditoria(a.acao))}</b><br><span class="td-id">${esc(a.acao)}</span></div></div></td>
           <td style="max-width:280px"><span style="color:var(--txt-2);font-size:13px">${esc(a.descricao || '—')}</span></td>
           <td><b style="display:block">${esc(a.usuario_nome||'—')}</b><span class="mono" style="font-size:11px;color:var(--txt-3)">${esc((a.usuario_email||'').split('@')[0]||'')}</span></td>
           <td class="mono" style="font-size:12px;color:var(--txt-3);max-width:120px;overflow:hidden;text-overflow:ellipsis" title="${esc(a.alvo||'')}">${esc(a.alvo||'—')}</td>
@@ -650,7 +782,7 @@ async function renderAuditoria(alvo){
        que levou tudo e ter levado um recorte. */
     const filtro = {q: FILTRO.audit.q || undefined, acao: FILTRO.audit.acao || undefined};
     const recorte = [
-      filtro.acao ? `ação <b>${esc(filtro.acao)}</b>` : '',
+      filtro.acao ? `ação <b>${esc(rotuloAuditoria(filtro.acao))}</b>` : '',
       filtro.q ? `busca por <b>${esc(filtro.q)}</b>` : '',
     ].filter(Boolean).join(' e ');
     const quantas = ultimoTotal == null ? '' : ` <b>${fmtNum(ultimoTotal)}</b> registro(s)`;

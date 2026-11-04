@@ -592,6 +592,18 @@ class AlertaFechaIn(BaseModel):
     resolucao: str = Field(..., min_length=8, description="Providência adotada")
 
 
+class AlertaLoteIn(BaseModel):
+    """Vários alertas encerrados de uma vez, com o mesmo desfecho.
+
+    Existe porque a triagem de um em um não dá conta de uma fila de centenas —
+    e quase sempre o desfecho é o mesmo (falso positivo na mesma câmera). O
+    teto de 200 é o de uma página cheia: encerrar mais que isso de uma vez
+    pede revisão, não um clique.
+    """
+    codigos: List[str] = Field(..., min_length=1, max_length=200)
+    resolucao: str = Field(..., min_length=8, description="Providência adotada")
+
+
 # ======================================================================
 # Auditoria e paginação
 # ======================================================================

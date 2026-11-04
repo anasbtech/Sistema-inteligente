@@ -315,6 +315,7 @@ const API = {
   resumoAlertas(){ return this.get('/alertas/resumo'); },
   assumirAlerta(codigo){ return this.post(`/alertas/${codigo}/assumir`); },
   encerrarAlerta(codigo, resolucao){ return this.post(`/alertas/${codigo}/encerrar`, {resolucao}); },
+  encerrarAlertasLote(codigos, resolucao){ return this.post('/alertas/encerrar-lote', {codigos, resolucao}); },
   // O motivo vai no contrato, não só na tela: o servidor recusa 422
   // sem ele, então nenhuma chamada futura apaga sem justificar.
   excluirAlerta(codigo, motivo){ return this.del(`/alertas/${codigo}`, {motivo}); },

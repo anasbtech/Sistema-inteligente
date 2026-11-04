@@ -1068,3 +1068,25 @@ table.tbl .face-meta span{display:block;font-size:11.5px;color:var(--txt-3);marg
 /* Senha mascarada sem ser `type="password"` — ver protegerCamposDeSenha em
    app.js. Assim o navegador não oferece gerar nem guardar a senha. */
 .senha-mascarada { -webkit-text-security: disc; text-security: disc; }
+
+/* ---------- Triagem em lote (Central de alertas) ----------
+   Aparece quando há alerta marcado. Usa os mesmos desfechos do aviso de
+   alerta, para a palavra na trilha ser a mesma venha de onde vier. */
+.lote-barra{margin-bottom:14px;padding:14px 16px;border:1px solid var(--acc);
+  border-radius:var(--r-l);background:rgba(53,167,222,.07);display:flex;flex-direction:column;gap:12px}
+.lote-barra[hidden]{display:none}
+.lote-topo{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.lote-topo b{font-size:14px;color:var(--txt-1)}
+.lote-dica{font-size:12.5px;color:var(--txt-2);flex:1;min-width:220px}
+.lote-corpo{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lote-corpo .inp{flex:1;min-width:220px}
+.lote-barra .motivos{display:flex;flex-wrap:wrap;gap:8px}
+.lote-barra .motivo{padding:7px 12px;border-radius:999px;border:1px solid var(--line);
+  background:var(--ink-800);color:var(--txt-2);font:inherit;font-size:12.5px;cursor:pointer}
+.lote-barra .motivo:hover{border-color:var(--acc);color:var(--txt-1)}
+.lote-barra .motivo[aria-checked="true"]{border-color:var(--acc);background:rgba(53,167,222,.16);color:var(--txt-1)}
+.sel-alerta{width:16px;height:16px;accent-color:var(--acc);cursor:pointer}
+.tbl-rodape{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:0 14px}
+.tbl-rodape .pager, .tbl-rodape > div:last-child{margin-left:auto}
+.por-pagina{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-2);padding:12px 0}
+.por-pagina .inp{width:auto;padding:5px 8px;font-size:12.5px}

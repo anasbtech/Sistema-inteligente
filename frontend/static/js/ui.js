@@ -42,10 +42,16 @@ function relTime(v){
   if(s < 86400) return `há ${Math.floor(s/3600)}h`;
   return `há ${Math.floor(s/86400)}d`;
 }
+/* Duração legível em qualquer escala. Só em minutos, o tempo médio de
+   resposta da Central de alertas saía "11713min 2s" — oito dias que ninguém
+   lê como oito dias. As duas maiores unidades bastam. */
 function duracao(s){
   s = Math.max(0, Math.round(s || 0));
   if(s < 60) return `${s}s`;
-  const m = Math.floor(s/60), r = s % 60;
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+  const m = Math.floor(s % 3600 / 60), r = s % 60;
+  if(d) return h ? `${d} d ${h} h` : `${d} d`;
+  if(h) return m ? `${h} h ${m} min` : `${h} h`;
   return r ? `${m}min ${r}s` : `${m}min`;
 }
 
@@ -257,13 +263,16 @@ function barrasH(items, opts){
   const iw = o.w - o.rotulo - o.pad.r;
   const max = Math.max(1, ...items.map(i => i.v));
   const alt = Math.min(o.linha - 7, 13);
+  // Quantas letras do nome cabem antes da reticência. O padrão serve à coluna
+  // estreita do dashboard; quem tem coluna de rótulo mais larga passa a sua.
+  const maxNome = o.maxNome || 19;
 
   const out = items.map((it, i) => {
     const y = o.pad.t + i * o.linha;
     const larg = Math.max(2, (it.v / max) * iw);
     const nome = String(it.k);
     return `<text x="${o.rotulo - 8}" y="${y + alt / 2 + 4}" text-anchor="end" font-size="10.5"
-                  fill="var(--txt-2)">${esc(nome.length > 19 ? nome.slice(0, 18) + '…' : nome)}</text>
+                  fill="var(--txt-2)">${esc(nome.length > maxNome ? nome.slice(0, maxNome - 1) + '…' : nome)}</text>
       <rect x="${o.rotulo}" y="${y}" width="${iw}" height="${alt}" rx="2" fill="var(--ink-700)" opacity=".5"/>
       <rect x="${o.rotulo}" y="${y}" width="${larg.toFixed(1)}" height="${alt}" rx="2"
             fill="${it.cor || 'var(--acc)'}" opacity=".9"/>

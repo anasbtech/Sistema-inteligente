@@ -2390,3 +2390,56 @@ def test_e_mail_de_redefinicao_sai_em_texto_e_html(monkeypatch):
     # Nome vindo do cadastro não pode virar marcação.
     assert "<b>Teste</b>" not in pagina
     assert "Ana &lt;b&gt;Teste&lt;/b&gt;" in pagina
+
+
+# ----------------------------------------------------------------------
+# Central de alertas: período e triagem em lote (2026-11-04)
+# ----------------------------------------------------------------------
+def _alerta_novo(cliente, camera):
+    r = cliente.post("/deteccoes/ingest", json={
+        "tipo": "OBJETO", "camera_codigo": camera,
+        "ocorrido_em": datetime.now(timezone.utc).isoformat(),
+        "classe": "arma", "confianca": 0.93,
+    })
+    assert r.status_code == 201, r.text
+    return r.json()["alerta"]["codigo"] if isinstance(r.json()["alerta"], dict) else r.json()["alerta"]
+
+
+def test_filtro_de_periodo_da_central_de_alertas_filtra(cliente, camera):
+    """A tela mandava o período desde sempre, e a rota não o lia."""
+    _alerta_novo(cliente, camera)
+    futuro = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    r = cliente.get("/alertas", params={"desde": futuro})
+    assert r.status_code == 200
+    assert r.json()["total"] == 0, "alerta de hoje não pode entrar num período futuro"
+
+    passado = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    assert cliente.get("/alertas", params={"desde": passado}).json()["total"] >= 1
+
+
+def test_encerrar_em_lote_fecha_todos_e_audita_cada_um(cliente, camera):
+    """Mesmas regras do individual: desfecho obrigatório e uma linha de
+    trilha por alerta — o lote não apaga quem encerrou o quê."""
+    codigos = [_alerta_novo(cliente, camera) for _ in range(3)]
+
+    curto = cliente.post("/alertas/encerrar-lote", json={"codigos": codigos, "resolucao": "curto"})
+    assert curto.status_code == 422, "desfecho curto demais deve ser recusado"
+
+    antes = cliente.get("/auditoria", params={"acao": "ALERTA_FECHA"}).json()["total"]
+    r = cliente.post("/alertas/encerrar-lote", json={
+        "codigos": codigos + ["ALR-NAO-EXISTE"],
+        "resolucao": "Falso positivo: o operador conferiu a imagem e não houve a ocorrência."})
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["encerrados"] == 3
+    assert corpo["nao_encontrados"] == ["ALR-NAO-EXISTE"]
+    for c in codigos:
+        assert cliente.get(f"/alertas/{c}").json()["status"] == "RESOLVIDO"
+    depois = cliente.get("/auditoria", params={"acao": "ALERTA_FECHA"}).json()["total"]
+    assert depois - antes == 3, "cada alerta do lote precisa da sua linha na trilha"
+
+    # De novo: os três já estão encerrados — o lote não falha, só informa.
+    r2 = cliente.post("/alertas/encerrar-lote", json={
+        "codigos": codigos, "resolucao": "Segunda tentativa sobre os mesmos alertas."})
+    assert r2.json()["encerrados"] == 0
+    assert sorted(r2.json()["ja_encerrados"]) == sorted(codigos)

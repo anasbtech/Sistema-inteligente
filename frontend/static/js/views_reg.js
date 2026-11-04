@@ -9,7 +9,7 @@ const FILTRO = {
   objetos: {q:'', classe:'', cam:'', de:'', ate:''},
   acoes:   {q:'', classe:'', cam:'', de:'', ate:''},
   bio:     {q:'', sexo:'', status:''},
-  alertas: {status:'', severidade:'', de:'', ate:''},
+  alertas: {status:'', severidade:'', cam:'', de:'', ate:'', por_pagina:0},
   audit:   {q:'', acao:''}
 };
 const POR_PAGINA = 14;
@@ -152,7 +152,9 @@ async function renderObjetos(alvo){
      o operador achar que não houve ocorrência. */
   const semDetector = Object.entries(((APP.cfg || {}).detectores_extras) || {})
     .filter(([, pronto]) => !pronto).map(([k]) => k);
-  const rotuloClasse = (k, v) => semDetector.includes(k) ? `${v} — sem detector` : v;
+  // Nome próprio, e não `rotuloClasse`: com o mesmo nome esta função escondia
+  // a global de ui.js, e a coluna Classe da tabela saía vazia em toda linha.
+  const rotuloOpcao = (k, v) => semDetector.includes(k) ? `${v} — sem detector` : v;
 
   const o = FILTRO.objetos, hoje = diaISO(new Date());
   alvo.innerHTML = `
@@ -160,7 +162,7 @@ async function renderObjetos(alvo){
     <div class="toolbar">
       <select class="inp" id="obClasse"><option value="">Todas as classes</option>
         ${classes.map(([k,v]) => `<option value="${k}" ${o.classe===k?'selected':''}
-          ${semDetector.includes(k) ? 'disabled' : ''}>${esc(rotuloClasse(k, v))}</option>`).join('')}</select>
+          ${semDetector.includes(k) ? 'disabled' : ''}>${esc(rotuloOpcao(k, v))}</option>`).join('')}</select>
       <select class="inp" id="obCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, o.cam)}</select>
       <div class="periodo">
         <label for="obDe">Período</label>
@@ -191,9 +193,13 @@ async function renderObjetos(alvo){
       const visiveis = classes
         .map(([k]) => ({k: ROTULO_OBJ[k], v: (r.classes || {})[k] || 0,
                         cor: COR_CLASSE[k] || 'var(--acc)'}))
-        .filter(c => c.v > 0);
+        .filter(c => c.v > 0)
+        .sort((x, y) => y.v - x.v);
+      /* Deitadas e ordenadas, com o número ao lado. Em pé, Pessoa (dezenas de
+         milhares) achatava o resto: Mochila e Volume viravam um traço sem
+         nome legível. Aqui cada classe tem a sua linha e o seu valor. */
       g.innerHTML = visiveis.length
-        ? barsChart(visiveis, {h:206})
+        ? barrasH(visiveis, {w: 900, linha: 28, rotulo: 150, maxNome: 24, pad: {t: 6, r: 70, b: 6}})
         : vazio('box', 'Nenhuma detecção neste período.', 'Escolha outro intervalo no calendário.');
     }catch(e){ g.innerHTML = erroBloco(e); }
   };
@@ -255,6 +261,10 @@ async function renderObjetos(alvo){
    ========================================================== */
 async function renderAcoes(alvo){
   const classes = Object.entries(ROTULO_ACAO_UI), a = FILTRO.acoes, hoje = diaISO(new Date());
+  // Quantas ações têm detector de fato: vem do catálogo do servidor. Sem ele,
+  // conta todas — é o que a tela dizia antes.
+  const catalogo = (APP.cfg && Array.isArray(APP.cfg.acoes)) ? APP.cfg.acoes : [];
+  const disponiveis = catalogo.length ? catalogo.filter(x => x.disponivel).length : classes.length;
   alvo.innerHTML = `
   <div class="sec-hd"><h2>Análise de ações e comportamento</h2><span class="sp"></span>
     <div class="toolbar">
@@ -275,10 +285,11 @@ async function renderAcoes(alvo){
     <div class="panel"><div class="panel-hd"><h3>Modelo de análise</h3></div>
       <div class="panel-bd">
         <dl class="kv">
-          <dt>Arquitetura</dt><dd>Trajetórias + ByteTrack</dd>
-          <dt>Sinais</dt><dd>velocidade, permanência, densidade, cruzamento de linha</dd>
-          <dt>Classes ativas</dt><dd>${classes.length} comportamentos</dd>
-          <dt>Janela</dt><dd>90 amostras por trilha</dd>
+          <dt>Detecção</dt><dd>YOLO — pessoas, veículos e objetos em cada quadro</dd>
+          <dt>Rastreio</dt><dd>por posição, com previsão de movimento entre quadros próximos</dd>
+          <dt>Sinais</dt><dd>velocidade em alturas de corpo, aceleração, permanência, densidade, cruzamento de linha, contato entre pessoas</dd>
+          <dt>Comportamentos</dt><dd>${disponiveis} de ${classes.length} com detector ativo</dd>
+          <dt>Janela</dt><dd>até 90 posições por pessoa</dd>
         </dl>
         <div class="note" style="margin-top:14px">${ico('alert',15)}<div>Eventos comportamentais são <b>indícios</b>, não conclusões. Toda ação de severidade crítica exige confirmação humana antes do despacho de guarnição.</div></div>
       </div></div>
@@ -298,8 +309,11 @@ async function renderAcoes(alvo){
       const visiveis = classes
         .map(([k]) => ({k: ROTULO_ACAO_UI[k], v: (r.classes || {})[k] || 0,
                         cor:'var(--violet)'}))
-        .filter(c => c.v > 0);
-      g.innerHTML = visiveis.length ? barsChart(visiveis, {h:206})
+        .filter(c => c.v > 0)
+        .sort((x, y) => y.v - x.v);
+      // Deitadas: em pé, num meio painel, os nomes das ações saíam com 7 px.
+      g.innerHTML = visiveis.length
+        ? barrasH(visiveis, {w: 460, linha: 24, rotulo: 170, maxNome: 30, pad: {t: 4, r: 44, b: 4}})
         : vazio('box', 'Nenhuma ação neste período.', 'Escolha outro intervalo no calendário.');
     }catch(e){ g.innerHTML = erroBloco(e); }
   };

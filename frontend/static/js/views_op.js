@@ -520,7 +520,7 @@ function renderPTZ(){
       <button class="btn btn-soft btn-sm" id="ptzFicha">${ico('info',13)} Ficha</button>
     </div>
     <div style="margin-top:12px;display:grid;gap:6px">
-      <div class="sys-row"><span>Latência</span><b>${c.latencia_ms || 0} ms</b></div>
+      <div class="sys-row"><span>Latência</span><b>${textoLatencia(c)}</b></div>
       <div class="sys-row"><span>Bitrate</span><b>${fmtNum(c.bitrate_kbps)} kbps</b></div>
       <div class="sys-row"><span>Limiar facial</span><b>${Math.round(c.limiar_facial*100)}%</b></div>
       <div class="sys-row"><span>Zonas</span><b>${(c.zonas||[]).length}</b></div>
@@ -670,7 +670,7 @@ async function renderCameras(alvo){
       return `<tr class="clickable" data-cam="${esc(c.codigo)}">
         <td><div style="width:84px;aspect-ratio:16/9;border-radius:3px;overflow:hidden;border:1px solid var(--line-soft);background:#000">
           <canvas data-prev="${esc(c.codigo)}" style="width:100%;height:100%;display:block"></canvas></div></td>
-        <td><b>${esc(c.nome)}</b><br><span class="td-id">${esc(c.codigo)} · ${esc(c.fabricante)} ${esc(c.modelo)}</span></td>
+        <td><b>${esc(c.nome)}</b><br><span class="td-id">${esc(identCamera(c))}</span></td>
         <td>${esc(c.setor)}</td>
         <td><span class="chip ${st.cls}">${esc(st.lbl)}</span></td>
         <td class="mono" style="font-size:11px">${esc(c.resolucao)}<br><span style="color:var(--txt-4)">${c.fps}fps · ${esc(c.codec)}</span></td>
@@ -679,7 +679,7 @@ async function renderCameras(alvo){
           ${c.analitico_objeto ? '<span class="chip c-green">Objetos</span>' : ''}
           ${c.analitico_acao ? '<span class="chip c-violet">Ações</span>' : ''}
           ${c.ptz ? '<span class="chip c-blue">PTZ</span>' : ''}</div></td>
-        <td class="mono">${c.status === 'ONLINE' ? (c.latencia_ms || 0) + ' ms' : '—'}</td>
+        <td class="mono">${textoLatencia(c)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-ghost btn-sm btn-icon" data-ver="${esc(c.codigo)}" title="Ficha">${ico('eye',14)}</button>
           ${API.pode('edit') && API.pode('cams') ? `<button class="btn btn-ghost btn-sm btn-icon" data-edit="${esc(c.codigo)}" title="Configurar">${ico('edit',14)}</button>` : ''}
@@ -1292,6 +1292,18 @@ async function editarCamera(codigo){
   });
 }
 
+/* Latência só quando foi medida: zero quer dizer "não houve medida", e "0 ms"
+   na tela dizia que a câmera respondia instantaneamente. */
+function textoLatencia(c){
+  return c && c.status === 'ONLINE' && c.latencia_ms > 0 ? `${c.latencia_ms} ms` : '—';
+}
+
+/* Código, fabricante e modelo, sem o "·" solto quando os dois últimos faltam. */
+function identCamera(c){
+  const equip = [c.fabricante, c.modelo].filter(Boolean).join(' ');
+  return equip ? `${c.codigo} · ${equip}` : c.codigo;
+}
+
 async function abrirCamera(codigo){
   const box = abrirModal(`<div class="modal-bd">${carregando()}</div>`, true);
   let c, evts;
@@ -1341,7 +1353,7 @@ async function abrirCamera(codigo){
             <div class="eyebrow" style="margin-bottom:8px">Situação</div>
             <dl class="kv">
               <dt>Status</dt><dd><span class="chip ${st.cls}">${esc(st.lbl || c.status)}</span></dd>
-              <dt>Latência</dt><dd class="mono">${c.status === 'ONLINE' ? (c.latencia_ms || 0) + ' ms' : '—'}</dd>
+              <dt>Latência</dt><dd class="mono">${textoLatencia(c)}</dd>
               <dt>Analíticos</dt><dd><div style="display:flex;gap:3px;flex-wrap:wrap">
                 ${c.analitico_facial ? '<span class="chip c-amber">Facial</span>' : ''}
                 ${c.analitico_objeto ? '<span class="chip c-green">Objetos</span>' : ''}

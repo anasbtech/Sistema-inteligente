@@ -13,7 +13,7 @@ from app import audit
 from app.database import get_db
 from app.deps import exige, usuario_de_query
 from app.models import Alerta, Camera, StatusAlerta, TipoDeteccao, Usuario
-from app.schemas import AlertaFechaIn, AlertaOut, Pagina
+from app.schemas import AlertaFechaIn, AlertaLoteIn, AlertaOut, Pagina
 from app.services import evidencias
 from app.services.events import publicar
 from app.tipos import como_utc
@@ -36,12 +36,20 @@ async def listar(
     severidade: Optional[int] = Query(None, ge=1, le=4),
     tipo: Optional[TipoDeteccao] = None,
     camera: Optional[str] = None,
+    # A tela mandava o período desde sempre, e a rota não o lia: o filtro de
+    # datas da Central de alertas não filtrava nada.
+    desde: Optional[datetime] = None,
+    ate: Optional[datetime] = None,
     pagina: int = Query(1, ge=1),
     por_pagina: int = Query(25, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(exige("alerts")),
 ):
     filtros = []
+    if desde:
+        filtros.append(Alerta.disparado_em >= desde)
+    if ate:
+        filtros.append(Alerta.disparado_em <= ate)
     if status_alerta:
         filtros.append(Alerta.status == status_alerta)
     if severidade:
@@ -97,6 +105,53 @@ async def resumo(db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(
         "resolvidos": por_status.get(StatusAlerta.RESOLVIDO, 0),
         "criticos_pendentes": criticos,
         "tempo_medio_resposta_s": round(float(tmr), 1) if tmr else None,
+    }
+
+
+@router.post("/encerrar-lote", summary="Encerrar vários alertas com o mesmo desfecho")
+async def encerrar_lote(dados: AlertaLoteIn, request: Request,
+                        db: AsyncSession = Depends(get_db),
+                        usuario: Usuario = Depends(exige("alerts", "edit"))):
+    """A triagem em massa, com as mesmas regras do encerramento individual.
+
+    Cada alerta ganha a sua linha na trilha — o lote não apaga a
+    rastreabilidade: daqui a um ano, "quem encerrou ALR-01604 e por quê"
+    continua tendo resposta. Os já encerrados são pulados, não recusam o
+    lote: a fila muda enquanto o operador seleciona.
+    """
+    codigos = list(dict.fromkeys(c.strip() for c in dados.codigos if c.strip()))
+    alertas = (
+        await db.execute(select(Alerta).where(Alerta.codigo.in_(codigos)))
+    ).scalars().unique().all()
+    achados = {a.codigo for a in alertas}
+    resolucao = dados.resolucao.strip()
+    agora = datetime.now(timezone.utc)
+
+    encerrados, ja_encerrados = [], []
+    for a in alertas:
+        if a.status == StatusAlerta.RESOLVIDO:
+            ja_encerrados.append(a.codigo)
+            continue
+        a.status = StatusAlerta.RESOLVIDO
+        a.resolucao = resolucao
+        a.fechado_em = agora
+        a.atribuido_a = a.atribuido_a or usuario.id
+        await audit.registrar(
+            db, acao="ALERTA_FECHA",
+            descricao="Alerta encerrado com registro de desfecho (em lote)",
+            severidade="ok", usuario=usuario, alvo=a.codigo, finalidade=resolucao[:200],
+            request=request,
+            metadados={"severidade": a.severidade, "lote": len(codigos),
+                       "tempo_resposta_s": int((agora - como_utc(a.disparado_em)).total_seconds())},
+        )
+        encerrados.append(a.codigo)
+
+    if encerrados:
+        await publicar("alerta_atualizado", {"lote": len(encerrados), "status": "RESOLVIDO"})
+    return {
+        "encerrados": len(encerrados),
+        "ja_encerrados": ja_encerrados,
+        "nao_encontrados": [c for c in codigos if c not in achados],
     }
 
 
