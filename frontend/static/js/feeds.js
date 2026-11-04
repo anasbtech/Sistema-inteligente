@@ -68,8 +68,11 @@ const CAIXA_VIDA_MS=5000;
    Curto de propósito, e menor que o intervalo entre duas publicações: a
    caixa chega ao lugar certo antes da próxima notícia, então ela nunca
    mostra uma posição que o worker já desmentiu. Esticar isto até o intervalo
-   inteiro deixaria a caixa permanentemente atrás da pessoa. */
-const TRANSICAO_MS=320;
+   inteiro deixaria a caixa permanentemente atrás da pessoa.
+
+   Com o seguimento por fluxo óptico no worker, a posição chega a cada
+   ~0,16 s, e não mais só a cada análise: a transição acompanha esse ritmo. */
+const TRANSICAO_MS=180;
 /* Quantos tiles podem manter fluxo MJPEG contínuo. O navegador permite seis
    conexões HTTP por origem, e o MJPEG não devolve a sua enquanto estiver
    tocando. Com dezoito câmeras, cinco em fluxo dá espaço para o WebSocket,
@@ -213,6 +216,9 @@ function pintarAoVivo(ctx,img,W,H,conter){
   const w=img.naturalWidth*esc,h=img.naturalHeight*esc;
   if(conter){ctx.fillStyle='#000';ctx.fillRect(0,0,W,H)}
   ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
+  // Onde o quadro ficou: caixas e zonas vêm em coordenadas do quadro
+  // inteiro, e no tile recortado o quadro é maior que a área visível.
+  return {x:(W-w)/2,y:(H-h)/2,w,h};
 }
 
 /* ---------- Motor ---------- */
@@ -441,17 +447,29 @@ const FEED={
       if(!FEED.resize(t))return;
       const ctx=t.ctx,W=t.canvas.width,H=t.canvas.height;
       const vivo=t.img&&t.img.naturalWidth>0;
+      let q=null;
       // Mostra vídeo real quando carregado; enquanto carrega, canvas fica escuro
       if(vivo){
-        pintarAoVivo(ctx,t.img,W,H,t.opts.conter);
-        if(t.opts.zonas!==false&&FEED.mostrarZonas)drawZonas(ctx,t.cam,W,H,t.escala);
+        q=pintarAoVivo(ctx,t.img,W,H,t.opts.conter);
+        // Zonas e caixas sobre o quadro como ele foi pintado, não sobre o
+        // tile: com o recorte do mosaico, desenhar no tile inteiro deslocava
+        // a caixa para o lado da pessoa — no 1×1, mais de cem pixels.
+        if(t.opts.zonas!==false&&FEED.mostrarZonas){
+          ctx.save();ctx.translate(q.x,q.y);
+          drawZonas(ctx,t.cam,q.w,q.h,t.escala);
+          ctx.restore();
+        }
       }else{
         ctx.fillStyle='#0A0E15';
         ctx.fillRect(0,0,W,H);
       }
       // Caixas só sobre imagem: num tile preto, a caixa de "carro" flutuando
       // no vazio descrevia uma cena que ninguém estava vendo.
-      if(vivo&&t.opts.boxes!==false&&FEED.mostrarCaixas)pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),W,H,t.escala);
+      if(vivo&&t.opts.boxes!==false&&FEED.mostrarCaixas){
+        ctx.save();ctx.translate(q.x,q.y);
+        pintarCaixasReais(ctx,FEED.caixasDe(t.cam.codigo),q.w,q.h,t.escala);
+        ctx.restore();
+      }
     });
   },
   start(){if(this.running)return;this.running=true;this.last=performance.now();requestAnimationFrame(this.loop)},

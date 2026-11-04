@@ -579,6 +579,20 @@ class Settings(BaseSettings):
     # câmera; o que se mexe passa a ser reanalisado bem mais vezes.
     # Teto de idade: mesmo sem movimento, reanalisa ao menos a cada tanto.
     INFERENCIA_SOBREPOSICAO_PARADA_MAX_S: float = 15.0
+    # Seguimento das caixas entre duas análises (`services/seguimento.py`).
+    # O detector leva segundos por câmera e o vídeo roda a 6 quadros por
+    # segundo: sem seguir, a caixa ficava parada e pulava a cada análise.
+    # De quanto em quanto tempo as caixas das câmeras em tela são movidas
+    # pelo fluxo óptico — o mesmo ritmo em que o leitor entrega quadros.
+    INFERENCIA_SEGUIMENTO: bool = True
+    INFERENCIA_SEGUIMENTO_S: float = 0.16
+    # Histerese da tela: quem já está sendo seguido (entrou com
+    # INFERENCIA_SOBREPOSICAO_CONF_MIN) continua marcado enquanto o detector
+    # o achar com pelo menos isto. A pessoa meio escondida pela divisória cai
+    # para 0,35–0,45 numa análise e voltava a 0,6 na seguinte — a caixa
+    # piscava. Cadeira e monitor nunca passam do piso de entrada, então não
+    # chegam a ser seguidos e não ganham a tolerância.
+    INFERENCIA_SOBREPOSICAO_CONF_MANTER: float = 0.30
 
     # --- Alerta por presença ----------------------------------------------
     # Severidade do alerta que uma câmera com `alerta_presenca` gera.

@@ -30,6 +30,7 @@ from app.config import settings
 from app.database import db_context
 from app.models import Camera, StatusCamera, TipoDeteccao
 from app.schemas import DeteccaoIn
+from app.services.seguimento import Seguidor
 from app.services import (
     biometrics, chama, extras, face_engine, placa, video, vision,
 )
@@ -160,18 +161,29 @@ class Inferencia:
         # na tela que o teto, fatiar sempre do começo da lista deixava as
         # últimas fora do laço para sempre.
         self._vez_sobreposicao = 0
+        # Quem move as caixas entre uma análise e a seguinte, por câmera.
+        self._seguidores: Dict[str, Seguidor] = {}
+        self._task_acompanhamento: Optional[asyncio.Task] = None
 
     async def iniciar(self) -> None:
         if self._task and not self._task.done():
             return
         self._task = asyncio.create_task(self._loop())
         self._task_sobreposicao = asyncio.create_task(self._loop_sobreposicao())
+        self._task_acompanhamento = asyncio.create_task(self._loop_acompanhamento())
         log.info(
             "Inferência ativa (ciclo ~%.1fs, objeto=%s, face=%s)",
             self.intervalo, vision.yolo_disponivel(), face_engine.modelos_disponiveis(),
         )
 
     async def parar(self) -> None:
+        if self._task_acompanhamento:
+            self._task_acompanhamento.cancel()
+            try:
+                await self._task_acompanhamento
+            except asyncio.CancelledError:
+                pass
+            self._task_acompanhamento = None
         if self._task_sobreposicao:
             self._task_sobreposicao.cancel()
             try:
@@ -313,7 +325,8 @@ class Inferencia:
         return round(max(4.0, medido * 2.0), 1)
 
     async def _publicar_caixas(self, codigo: str, caixas: list,
-                               agora: Optional[float] = None) -> None:
+                               agora: Optional[float] = None,
+                               quadro=None, t_quadro: Optional[float] = None) -> None:
         """Publica a sobreposição e guarda o que foi publicado.
 
         A validade vai junto porque só o worker sabe quando volta a esta
@@ -327,19 +340,112 @@ class Inferencia:
         a validade é função do tempo entre duas publicações, e sem controlar
         o relógio não há como verificá-la. Mesmo acordo de
         `RastreioPorPosicao.atribuir`.
+
+        `quadro` é a imagem em que o detector achou estas caixas, lida em
+        `t_quadro`. Com ela, e com a câmera em tela, as caixas passam a ser
+        seguidas (`Seguidor.semear`) e saem daqui já na posição de agora.
         """
         agora = time.monotonic() if agora is None else agora
         anterior = self._ultimas_caixas.get(codigo)
         if anterior is not None:
             self._medir_intervalo(codigo, agora - anterior["em"])
+        na_tela = self._para_a_tela(caixas)
+        if quadro is not None and settings.INFERENCIA_SEGUIMENTO and                 any(c.codigo == codigo for c, _ in self._camaras_em_tela()):
+            seguidor = self._seguidor_de(codigo)
+            piso = settings.INFERENCIA_SOBREPOSICAO_CONF_MIN
+            manter = settings.INFERENCIA_SOBREPOSICAO_CONF_MANTER
+            fracas = [c for c in caixas if c.get("classe") == "pessoa"
+                      and manter <= float(c.get("confianca") or 0) < piso
+                      and not c.get("varredura")]
+            try:
+                if seguidor.cobre(t_quadro or agora) or not seguidor.tem_caixas():
+                    na_tela = await asyncio.to_thread(
+                        seguidor.semear, quadro, t_quadro or agora, na_tela, fracas)
+                else:
+                    # A volta completa analisa a câmera devagar (facial,
+                    # ações): o quadro dela pode ter vinte segundos. Semear
+                    # com ele levaria as caixas de volta para onde as pessoas
+                    # estavam; o que está sendo seguido é mais atual.
+                    seguidor.confirmar(na_tela, t_quadro or agora)
+                    na_tela = seguidor.caixas()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("%s: seguimento não semeou: %s", codigo, exc)
+        else:
+            if quadro is not None and na_tela:
+                # Fora da tela: não segue, mas lembra quem a análise
+                # confirmou — a tela que abrir aceita a mesma pessoa mesmo
+                # quando a passada curta a vê com menos confiança.
+                self._seguidor_de(codigo).confirmar(na_tela, t_quadro or agora)
+            if not na_tela and codigo in self._seguidores:
+                self._seguidores[codigo].esvaziar()
         carga = {
             "camera_codigo": codigo,
-            "caixas": self._para_a_tela(caixas),
+            "caixas": na_tela,
             "validade_s": self._validade_de(codigo),
             "em": agora,
         }
         self._ultimas_caixas[codigo] = carga
         await publicar("quadro_ao_vivo", carga)
+
+    def _seguidor_de(self, codigo: str) -> Seguidor:
+        seguidor = self._seguidores.get(codigo)
+        if seguidor is None:
+            seguidor = Seguidor()
+            self._seguidores[codigo] = seguidor
+        return seguidor
+
+    async def _loop_acompanhamento(self) -> None:
+        """Move as caixas das câmeras em tela a cada quadro novo.
+
+        É o que faz a marcação andar com a pessoa: o detector dá a posição a
+        cada um ou dois segundos, e entre uma e outra a caixa segue a textura
+        do corpo pelo fluxo óptico. Poucos milissegundos por câmera, numa
+        imagem de 640 px, contra segundos do detector.
+        """
+        await asyncio.sleep(8)
+        while True:
+            inicio = time.monotonic()
+            try:
+                await self._acompanhar()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Falha no acompanhamento das caixas: %s", exc)
+            resta = settings.INFERENCIA_SEGUIMENTO_S - (time.monotonic() - inicio)
+            await asyncio.sleep(max(0.03, resta))
+
+    async def _acompanhar(self) -> None:
+        if not settings.INFERENCIA_SEGUIMENTO:
+            return
+        agora = time.monotonic()
+        fila = []
+        for cam, leitor in self._camaras_em_tela():
+            quadro = leitor.bgr_nativo
+            seguidor = self._seguidor_de(cam.codigo)
+            # O leitor troca a matriz a cada imagem decodificada; a mesma
+            # matriz é o mesmo quadro, e não há o que mover.
+            if quadro is None or seguidor.quadro_visto is quadro:
+                continue
+            fila.append((cam.codigo, seguidor, quadro))
+        if not fila:
+            return
+        movidas = await asyncio.to_thread(
+            lambda: [(c, s.quadro(q, agora)) for c, s, q in fila])
+        for codigo, caixas in movidas:
+            carga = self._ultimas_caixas.get(codigo)
+            # Só move o que o detector pôs: depois da validade a cena não é
+            # mais afirmada por análise nenhuma, e a caixa tem de sumir.
+            if carga is None or not carga["caixas"]:
+                continue
+            restante = carga["validade_s"] - (agora - carga["em"])
+            if restante <= 0 or caixas == carga["caixas"]:
+                continue
+            carga["caixas"] = caixas
+            await publicar("quadro_ao_vivo", {
+                "camera_codigo": codigo,
+                "caixas": caixas,
+                "validade_s": round(restante, 1),
+            })
 
     def caixas_correntes(self) -> list:
         """O que cada câmera tem em cena, para semear uma tela que abre.
@@ -416,6 +522,7 @@ class Inferencia:
         if not vistas:
             return
         for cam in self._fila_da_renovacao(vistas):
+            t_quadro = time.monotonic()
             quadro = await asyncio.to_thread(
                 video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
             if quadro is None:
@@ -450,7 +557,8 @@ class Inferencia:
             } for o in objetos]
             caixas += self._distantes_de(cam.codigo, caixas)
             caixas += self._rostos_ancorados(cam.codigo, caixas)
-            await self._publicar_caixas(cam.codigo, caixas)
+            await self._publicar_caixas(cam.codigo, caixas,
+                                        quadro=quadro, t_quadro=t_quadro)
 
     async def _cena_parada(self, codigo: str, quadro) -> bool:
         """A cena desta câmera continua igual à da última análise curta?
@@ -1273,6 +1381,7 @@ class Inferencia:
 
         # Resolução nativa: no fluxo reduzido do mosaico o rosto chega pequeno
         # demais para qualquer piso de identificação.
+        t_quadro = time.monotonic()
         quadro = await asyncio.to_thread(
             video.quadro_bgr, cam.codigo, cam.rtsp_url, True
         )
@@ -1579,7 +1688,8 @@ class Inferencia:
         # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
         # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem
         # isso a última caixa ficaria pairando sobre o vídeo até expirar.
-        await self._publicar_caixas(cam.codigo, caixas_do_quadro)
+        await self._publicar_caixas(cam.codigo, caixas_do_quadro,
+                                    quadro=quadro, t_quadro=t_quadro)
 
 
 inferencia = Inferencia(settings.INFERENCIA_INTERVALO, settings.INFERENCIA_JANELA_S)
