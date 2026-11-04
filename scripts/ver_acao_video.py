@@ -22,6 +22,11 @@ Teclas na janela:
     n        próximo vídeo
     q / Esc  sai
 
+Na primeira vez de cada vídeo a IA analisa tudo, com uma barra de progresso,
+e guarda o resultado em `resultados_teste/ao_vivo/cache/`; nas seguintes o
+vídeo abre na hora e toca em tempo real. `--reanalisar` força uma análise
+nova (o cache também se renova sozinho quando o vídeo ou o código mudam).
+
 Usa o mesmo detector, o mesmo rastreio e o mesmo analisador da câmera ao vivo
 (`scripts/testar_acoes_video.py` faz a bateria com relatório).
 """
@@ -34,6 +39,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
@@ -245,21 +251,20 @@ def _desenhar_caixas(quadro, objs, zoom, vermelhos, confianca_acao, t, rotulo):
 
     Desenhar no quadro original e ampliar depois engordava as letras junto
     com a imagem — num vídeo de 320x240 a tarja de cada pessoa cobria a
-    pessoa ao lado.
+    pessoa ao lado. `objs` são as pessoas da análise: dicionários com
+    `bbox`, `conf` e `id`.
     """
     img = cv2.resize(quadro, None, fx=zoom, fy=zoom)
     for o in objs:
-        if o.classe != "pessoa":
-            continue
-        disparou = vermelhos.get(o.track_id, -1) >= t
+        disparou = vermelhos.get(o["id"], -1) >= t
         cor = VERMELHO if disparou else VERDE
-        x1, y1, x2, y2 = (int(v * zoom) for v in o.bbox)
+        x1, y1, x2, y2 = (int(v * zoom) for v in o["bbox"])
         cv2.rectangle(img, (x1, y1), (x2, y2), cor, 2 if disparou else 1)
         if disparou:
-            texto = f"{_a(rotulo.upper())} {confianca_acao.get(o.track_id, 0):.0%}"
+            texto = f"{_a(rotulo.upper())} {confianca_acao.get(o['id'], 0):.0%}"
             escala, cor_txt = 0.45, BRANCO
         else:
-            texto = f"{o.confianca:.0%}"
+            texto = f"{o['conf']:.0%}"
             escala, cor_txt = 0.36, (0, 0, 0)
         (tw, th), _ = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, escala, 1)
         ty = max(0, y1 - th - 4)
@@ -269,16 +274,43 @@ def _desenhar_caixas(quadro, objs, zoom, vermelhos, confianca_acao, t, rotulo):
     return img
 
 
-def tocar(video: Path, acao: str, janelas, args) -> str:
-    """Devolve 'proximo' ou 'sair'."""
+# ---------------------------------------------------------------------------
+# Análise (uma vez por vídeo) e reprodução (em tempo real)
+# ---------------------------------------------------------------------------
+# A análise roda o detector a 4,5 quadros por segundo de vídeo, e cada
+# passada leva de 0,2 s (máquina livre) a 1,4 s (com o servidor ligado), mais
+# 18 s para carregar o modelo na primeira. Analisar enquanto toca deixava o
+# vídeo lento e aos saltos. Por isso a análise é feita antes, uma vez, e
+# guardada: a reprodução lê o resultado e toca a 25 quadros por segundo.
+#
+# É o mesmo detector, o mesmo rastreio e o mesmo analisador — e o resultado
+# é o mesmo de analisar tocando, porque o analisador só vê os quadros
+# amostrados, em ordem, com o tempo de cada um.
+CACHE_VERSAO = 1
+
+
+def _chave_cache(video: Path, acao: str, args) -> str:
+    """Muda quando muda o vídeo, os parâmetros ou o código da análise."""
+    import hashlib
+
+    st = video.stat()
+    codigo = [int((RAIZ / f).stat().st_mtime) for f in
+              ("app/services/vision.py", "app/config.py", "scripts/testar_acoes_video.py")]
+    partes = [CACHE_VERSAO, video.name, st.st_size, int(st.st_mtime), acao, args.imgsz,
+              args.limiar, args.amostras, args.direcao, args.bytetrack, args.sem_subita,
+              args.permanencia_s, args.abandono_s, args.limite_aglomeracao, codigo]
+    return hashlib.sha1(json.dumps(partes, default=str).encode()).hexdigest()[:12]
+
+
+def analisar(video: Path, acao: str, args, progresso: dict) -> Optional[dict]:
+    """Roda a IA nos quadros amostrados e devolve o que ela viu em cada um.
+
+    `progresso` é compartilhado com a tela de espera: a fração feita, e
+    `cancelar` para parar no meio.
+    """
     cap = cv2.VideoCapture(str(video))
-    if not cap.isOpened():
-        print(f"Não abriu: {video}")
-        return "proximo"
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    # Tamanho da janela pela tela de quem está assistindo, não fixo.
-    args.zoom = _zoom_para_tela(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640,
-                                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 360, args.zoom_pedido)
+    total = max(1, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
     pular = max(1, round(fps / args.amostras))
     an = preparar_analisador(acao, args)
     if args.sem_subita and acao == "corrida":
@@ -287,6 +319,157 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
     if args.bytetrack:
         vision.obter_yolo().predictor = None
     zonas = zonas_padrao(acao, args.direcao)
+
+    amostras = []
+    indice = 0
+    while not progresso.get("cancelar"):
+        if not cap.grab():
+            break
+        if indice % pular:
+            indice += 1
+            continue
+        ok, quadro = cap.retrieve()
+        i, t = indice, indice / fps
+        indice += 1
+        if not ok:
+            continue
+        altura, largura = quadro.shape[:2]
+        if args.bytetrack:
+            objs = vision.detectar_objetos(quadro, args.limiar, True, set(), "nunca", args.imgsz)
+        else:
+            objs = rastreio.atribuir(
+                vision.detectar_objetos(quadro, args.limiar, False, set(), "nunca", args.imgsz),
+                agora=T0 + t)
+        eventos = []
+        for e in an.atualizar(objs, largura, altura, zonas, agora=T0 + t):
+            if e.classe != acao:
+                continue
+            tr = an.trilhas.get(e.track_id)
+            eventos.append({
+                "id": e.track_id,
+                "bbox": [float(v) for v in e.bbox] if e.bbox else None,
+                "confianca": float(e.confianca),
+                "severidade": e.severidade,
+                "duracao_s": e.duracao_s,
+                "velocidade": round(tr.arranque()[0], 2) if tr else None,
+            })
+        # Quem segue rápido: a caixa de quem já disparou continua vermelha
+        # enquanto a pessoa continua correndo.
+        rapidos = []
+        if acao == "corrida":
+            for o in objs:
+                tr = an.trilhas.get(o.track_id)
+                if tr is not None and tr.arranque()[0] >= an.piso_corrida_atual:
+                    rapidos.append(o.track_id)
+        amostras.append({
+            "i": i, "t": t, "w": largura, "h": altura,
+            "objs": [{"bbox": [round(float(v), 1) for v in o.bbox],
+                      "conf": round(float(o.confianca), 3), "id": o.track_id}
+                     for o in objs if o.classe == "pessoa"],
+            "eventos": eventos, "rapidos": rapidos,
+        })
+        progresso["fracao"] = min(1.0, indice / total)
+    cap.release()
+    if progresso.get("cancelar"):
+        return None
+    return {"fps": fps, "amostras": amostras}
+
+
+def _interpolar(atual: dict, proxima: Optional[dict], indice: int) -> list:
+    """As caixas no quadro `indice`, entre duas análises.
+
+    A IA olha 4,5 quadros por segundo e o vídeo tem 25: sem isto a caixa
+    ficaria parada por cinco quadros e saltaria. Quem aparece nas duas
+    análises desliza de uma posição à outra.
+    """
+    if proxima is None or proxima["i"] <= atual["i"]:
+        return atual["objs"]
+    f = (indice - atual["i"]) / (proxima["i"] - atual["i"])
+    seguinte = {o["id"]: o for o in proxima["objs"] if o["id"] is not None}
+    saida = []
+    for o in atual["objs"]:
+        n = seguinte.get(o["id"])
+        if n is None:
+            saida.append(o)
+        else:
+            saida.append(dict(o, bbox=[a + (b - a) * f for a, b in zip(o["bbox"], n["bbox"])]))
+    return saida
+
+
+def _tela_preparando(quadro, zoom, video: str, fracao: float):
+    """Janela que abre na hora, enquanto a IA analisa o vídeo pela primeira vez."""
+    img = cv2.resize(quadro, None, fx=zoom, fy=zoom)
+    img = (img * 0.45).astype(np.uint8)
+    h, w = img.shape[:2]
+    painel = np.full((h, PAINEL_L, 3), (24, 24, 24), np.uint8)
+    _bloco(painel, 12, 38, (55, 55, 55))
+    _texto(painel, 37, "PREPARANDO A ANALISE DA IA", BRANCO, 0.55, 2, 20)
+    _texto(painel, 86, video, BRANCO, 0.5)
+    _texto(painel, 110, "Primeira vez deste video: a IA analisa", CINZA, 0.42)
+    _texto(painel, 128, "tudo uma vez e guarda o resultado.", CINZA, 0.42)
+    _texto(painel, 146, "Nas proximas, ele abre na hora.", CINZA, 0.42)
+    x1, x2, y = 14, PAINEL_L - 14, 172
+    cv2.rectangle(painel, (x1, y), (x2, y + 18), (70, 70, 70), -1)
+    cv2.rectangle(painel, (x1, y), (x1 + int((x2 - x1) * fracao), y + 18), VERDE, -1)
+    _texto(painel, y + 40, f"{fracao:.0%}", BRANCO, 0.5, 1)
+    _texto(painel, h - 14, "q cancela", CINZA, 0.38)
+    return np.hstack([img, painel])
+
+
+def obter_analise(video: Path, acao: str, args) -> Optional[dict]:
+    """A análise guardada deste vídeo, ou uma nova, com tela de progresso."""
+    import threading
+
+    pasta = args.saida / "cache"
+    arquivo = pasta / f"{video.stem}_{acao}_{_chave_cache(video, acao, args)}.json"
+    if arquivo.exists() and not args.reanalisar:
+        try:
+            return json.loads(arquivo.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+
+    cap = cv2.VideoCapture(str(video))
+    ok, primeiro = cap.read()
+    cap.release()
+    if not ok:
+        return None
+    zoom = _zoom_para_tela(primeiro.shape[1], primeiro.shape[0], args.zoom_pedido)
+    progresso: dict = {"fracao": 0.0}
+    resultado: dict = {}
+    trabalho = threading.Thread(
+        target=lambda: resultado.update(dados=analisar(video, acao, args, progresso)),
+        daemon=True)
+    trabalho.start()
+    while trabalho.is_alive():
+        cv2.imshow(JANELA, _tela_preparando(primeiro, zoom, video.name, progresso["fracao"]))
+        if (cv2.waitKey(60) & 0xFF) in (ord("q"), 27):
+            progresso["cancelar"] = True
+            trabalho.join()
+            return None
+    dados = resultado.get("dados")
+    if dados:
+        pasta.mkdir(parents=True, exist_ok=True)
+        # Guarda só a versão atual deste vídeo: as antigas não valem mais.
+        for velho in pasta.glob(f"{video.stem}_{acao}_*.json"):
+            velho.unlink(missing_ok=True)
+        arquivo.write_text(json.dumps(dados), encoding="utf-8")
+    return dados
+
+
+def tocar(video: Path, acao: str, janelas, args) -> str:
+    """Devolve 'proximo' ou 'sair'."""
+    dados = obter_analise(video, acao, args)
+    if not dados:
+        return "sair"
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        print(f"Não abriu: {video}")
+        return "proximo"
+    fps = dados["fps"]
+    amostras = dados["amostras"]
+    # Tamanho da janela pela tela de quem está assistindo, não fixo.
+    args.zoom = _zoom_para_tela(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640,
+                                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 360, args.zoom_pedido)
     rotulo = vision.ROTULO_ACAO.get(acao, acao)
 
     disparos = []            # (t, bbox)
@@ -311,81 +494,68 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
     alvos = [j for j in (janelas or []) if j.tipo == acao]
     pausado = False
     indice = 0
+    k = 0                    # próxima análise a alcançar
+    atual = None
     ultimo = ultimo_img = None
     estado: dict = {}
+    proximo = time.perf_counter()
     while True:
         if not pausado:
-            ok = cap.grab()
+            ok, quadro = cap.read()
             if not ok:
                 break
-            if indice % pular:
-                indice += 1
-                continue
-            ok, quadro = cap.retrieve()
             t = indice / fps
-            indice += 1
-            if not ok:
-                continue
-            altura, largura = quadro.shape[:2]
-
-            if args.bytetrack:
-                objs = vision.detectar_objetos(quadro, args.limiar, True, set(), "nunca",
-                                               args.imgsz)
-            else:
-                objs = rastreio.atribuir(
-                    vision.detectar_objetos(quadro, args.limiar, False, set(), "nunca",
-                                            args.imgsz), agora=T0 + t)
-            eventos = [e for e in an.atualizar(objs, largura, altura, zonas, agora=T0 + t)
-                       if e.classe == acao]
             novos = []
-            for e in eventos:
-                disparos.append((t, e.bbox))
-                if e.track_id is not None:
-                    vermelhos[e.track_id] = t + 2.5
-                    confianca_acao[e.track_id] = float(e.confianca)
-                tr = an.trilhas.get(e.track_id)
-                gab = next((j for j in alvos if j.contem(t)), None)
-                if gab is not None and gab.detectado_em is None:
-                    gab.detectado_em = t
-                outro = next((j for j in (janelas or [])
-                              if j.tipo != acao and j.contem(t)), None)
-                x1, y1, x2, y2 = (int(v) for v in (e.bbox or (0, 0, largura, altura)))
-                registro = {
-                    "video": video.name,
-                    "segundo": round(t, 2),
-                    "quadro": indice - 1,
-                    "acao": acao,
-                    "rotulo": rotulo,
-                    "confianca": round(float(e.confianca), 2),
-                    "severidade": e.severidade,
-                    "pessoa_id": e.track_id,
-                    "bbox": [x1, y1, x2, y2],
-                    "bbox_normalizado": [round(x1 / largura, 4), round(y1 / altura, 4),
-                                         round(x2 / largura, 4), round(y2 / altura, 4)],
-                    "velocidade_corpos_s": round(tr.arranque()[0], 2) if tr else None,
-                    "duracao_s": e.duracao_s,
-                    "tempo_video": _tempo(t),
-                    "horario_registro": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                }
-                if janelas is not None:
-                    registro["gabarito"] = (
-                        {"resultado": "acerto", "trecho": f"{gab.inicio_s}-{gab.fim_s}s",
-                         "descricao": gab.descricao} if gab else
-                        {"resultado": "alarme falso",
-                         "descricao": outro.descricao if outro else "cena normal"})
-                registros.append(registro)
-                novos.append(registro)
-                print(f"  {video.name} {t:6.1f}s  IA disparou: {rotulo} ({e.confianca:.0%})")
+            # As análises deste quadro: disparos e quem segue correndo.
+            while k < len(amostras) and amostras[k]["i"] <= indice:
+                atual = amostras[k]
+                k += 1
+                ta = atual["t"]
+                largura, altura = atual["w"], atual["h"]
+                for e in atual["eventos"]:
+                    disparos.append((ta, e["bbox"]))
+                    if e["id"] is not None:
+                        vermelhos[e["id"]] = ta + 2.5
+                        confianca_acao[e["id"]] = e["confianca"]
+                    gab = next((j for j in alvos if j.contem(ta)), None)
+                    if gab is not None and gab.detectado_em is None:
+                        gab.detectado_em = ta
+                    outro = next((j for j in (janelas or [])
+                                  if j.tipo != acao and j.contem(ta)), None)
+                    x1, y1, x2, y2 = (int(v) for v in (e["bbox"] or (0, 0, largura, altura)))
+                    registro = {
+                        "video": video.name,
+                        "segundo": round(ta, 2),
+                        "quadro": atual["i"],
+                        "acao": acao,
+                        "rotulo": rotulo,
+                        "confianca": round(e["confianca"], 2),
+                        "severidade": e["severidade"],
+                        "pessoa_id": e["id"],
+                        "bbox": [x1, y1, x2, y2],
+                        "bbox_normalizado": [round(x1 / largura, 4), round(y1 / altura, 4),
+                                             round(x2 / largura, 4), round(y2 / altura, 4)],
+                        "velocidade_corpos_s": e["velocidade"],
+                        "duracao_s": e["duracao_s"],
+                        "tempo_video": _tempo(ta),
+                        "horario_registro": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                    }
+                    if janelas is not None:
+                        registro["gabarito"] = (
+                            {"resultado": "acerto", "trecho": f"{gab.inicio_s}-{gab.fim_s}s",
+                             "descricao": gab.descricao} if gab else
+                            {"resultado": "alarme falso",
+                             "descricao": outro.descricao if outro else "cena normal"})
+                    registros.append(registro)
+                    novos.append(registro)
+                    print(f"  {video.name} {ta:6.1f}s  IA disparou: {rotulo} "
+                          f"({e['confianca']:.0%})")
+                for tid in atual["rapidos"]:
+                    if tid in confianca_acao:
+                        vermelhos[tid] = max(vermelhos.get(tid, -1), ta + 0.5)
 
-            # Quem já foi reconhecido correndo segue vermelho enquanto continuar
-            # rápido — antes a caixa voltava a verde 2,5 s depois do alerta,
-            # com a pessoa ainda correndo.
-            if acao == "corrida":
-                for o in objs:
-                    tr = an.trilhas.get(o.track_id)
-                    if (o.track_id in confianca_acao and tr is not None
-                            and tr.arranque()[0] >= an.piso_corrida_atual):
-                        vermelhos[o.track_id] = max(vermelhos.get(o.track_id, -1), t + 0.5)
+            objs = _interpolar(atual, amostras[k] if k < len(amostras) else None,
+                               indice) if atual else []
             img = _desenhar_caixas(quadro, objs, args.zoom, vermelhos, confianca_acao,
                                    t, rotulo)
             # O print sai do quadro já desenhado: com a caixa vermelha do
@@ -408,6 +578,7 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
             }
             ultimo = _com_painel(img, capturas, saida_json, estado)
             ultimo_img = img
+            indice += 1
 
         if ultimo is not None:
             if pausado:
@@ -415,7 +586,14 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                                                dict(estado, situacao="pausado")))
             else:
                 cv2.imshow(JANELA, ultimo)
-        tecla = cv2.waitKey(1 if not pausado else 100) & 0xFF
+        # Ritmo do vídeo: cada quadro na sua hora, 25 por segundo. Atrasou
+        # (a máquina engasgou), recomeça a contar daqui em vez de correr.
+        proximo += 1.0 / fps
+        espera = proximo - time.perf_counter()
+        if espera < -0.25 or pausado:
+            proximo = time.perf_counter()
+            espera = 0
+        tecla = cv2.waitKey(100 if pausado else max(1, int(espera * 1000))) & 0xFF
         if tecla in (ord("q"), 27):
             cap.release()
             return "sair"
@@ -439,12 +617,12 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
     if alvos:
         print(f"  {video.name}: detectou {sum(j.detectado_em is not None for j in alvos)} "
               f"de {len(alvos)} do gabarito; {len(disparos)} disparo(s) no total")
-        # Tela final do vídeo, para dar tempo de ler o placar.
-        if ultimo is not None:
-            cv2.imshow(JANELA, _com_painel(ultimo_img, capturas, saida_json,
-                                           dict(estado, situacao="fim")))
-            if (cv2.waitKey(0) & 0xFF) in (ord("q"), 27):
-                return "sair"
+    # Tela final do vídeo, para dar tempo de ler o placar.
+    if ultimo is not None:
+        cv2.imshow(JANELA, _com_painel(ultimo_img, capturas, saida_json,
+                                       dict(estado, situacao="fim")))
+        if (cv2.waitKey(0) & 0xFF) in (ord("q"), 27):
+            return "sair"
     return "proximo"
 
 
@@ -463,6 +641,8 @@ def main() -> int:
                    help="comparação: rastreador do YOLO no lugar do rastreio do sistema")
     p.add_argument("--sem-subita", action="store_true",
                    help="comparação: corrida sem exigir a passagem de andar para correr")
+    p.add_argument("--reanalisar", action="store_true",
+                   help="ignora a análise guardada e roda a IA de novo")
     p.add_argument("--saida", type=Path, default=RAIZ / "resultados_teste" / "ao_vivo",
                    help="pasta do JSON com as detecções")
     p.add_argument("--permanencia-s", type=float)
