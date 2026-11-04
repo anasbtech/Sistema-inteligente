@@ -2464,3 +2464,31 @@ def test_filtro_bio_n_lista_os_bio_n_e_a_lista_padrao_nao(cliente):
     # A quantidade de capturas esperando triagem vai junto do esquema.
     esquema = cliente.get("/pessoas/esquema-ids").json()
     assert isinstance(esquema.get("aguardando_triagem"), int)
+
+
+def test_recorte_da_placa_e_guardado_e_servido(cliente, camera):
+    """A placa lida vem com o próprio recorte, que a ficha mostra ampliado."""
+    import base64
+
+    import cv2
+    import numpy as np
+
+    placa_img = np.full((120, 360, 3), 230, np.uint8)
+    cv2.putText(placa_img, "TVM8I52", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 4)
+    jpeg = base64.b64encode(cv2.imencode(".jpg", placa_img)[1].tobytes()).decode()
+
+    r = cliente.post("/deteccoes/ingest", json={
+        "tipo": "OBJETO", "camera_codigo": camera,
+        "ocorrido_em": datetime.now(timezone.utc).isoformat(),
+        "classe": "carro", "confianca": 0.9, "placa": "TVM8I52",
+        "snapshot_jpeg": jpeg, "placa_jpeg": jpeg,
+    })
+    assert r.status_code == 201, r.text
+    codigo = r.json()["codigo"]
+    det = cliente.get(f"/deteccoes/{codigo}").json()
+    assert det["placa"] == "TVM8I52"
+    assert det["placa_snapshot_key"], "o recorte da placa precisa ficar guardado"
+
+    token = cliente.headers["Authorization"].split()[-1]
+    img = cliente.get(f"/deteccoes/{codigo}/placa", params={"token": token})
+    assert img.status_code == 200 and img.headers["content-type"] == "image/jpeg"

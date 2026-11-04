@@ -66,7 +66,7 @@ def _catalogo() -> Dict[str, Detector]:
         "arma": Detector(
             "arma", settings.EXTRA_ARMA_MODEL,
             {"gun": "arma", "pistol": "arma", "rifle": "arma", "weapon": "arma",
-             "handgun": "arma", "firearm": "arma", "knife": "arma",
+             "handgun": "arma", "firearm": "arma", "knife": "faca",
              "arma": "arma"},
             settings.EXTRA_ARMA_MIN),
     }

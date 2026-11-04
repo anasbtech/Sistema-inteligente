@@ -90,6 +90,8 @@ async def expurgar(db: AsyncSession, usuario=None, origem: str = "manual") -> di
     for det in alvos:
         if evidencias.apagar(det.snapshot_key):
             imagens += 1
+        # O recorte da placa vence junto com o do veículo.
+        evidencias.apagar(getattr(det, "placa_snapshot_key", ""))
         await db.delete(det)
 
     if alvos:

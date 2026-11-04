@@ -368,7 +368,9 @@ def test_toda_classe_do_filtro_tem_origem_declarada():
     de_detector_extra = {"capacete", "arma"}
     de_campo = {"placa"}                       # lida sobre o veículo detectado
 
-    oferecidas = set(SEVERIDADE_OBJETO) - {"veiculo"}   # 'veiculo' é histórico
+    # 'veiculo' e 'animal' são históricos: registros de antes da separação
+    # por tipo e por espécie, que o detector não emite mais.
+    oferecidas = set(SEVERIDADE_OBJETO) - {"veiculo", "animal"}
     orfas = oferecidas - do_modelo - de_detector_extra - de_campo
     assert not orfas, f"classe sem origem: {sorted(orfas)}"
 
@@ -1652,3 +1654,51 @@ def test_tela_passa_a_frente_da_volta_completa_na_fila_do_modelo():
         f.join()
     assert ordem == ["ocupa", "tela", "volta"], ordem
     assert max(simultaneos) == 1, "duas inferências no modelo ao mesmo tempo"
+
+
+
+# ----------------------------------------------------------------------
+# Classes novas (2026-11-04): espécie, arma branca, celular, recorte da placa
+# ----------------------------------------------------------------------
+def test_animal_sai_pela_especie_e_o_impossivel_nao_entra():
+    from app.services.vision import CLASSES_ANIMAL, MAPA_CLASSES
+    assert MAPA_CLASSES["dog"] == "cachorro" and MAPA_CLASSES["cat"] == "gato"
+    assert MAPA_CLASSES["horse"] == "cavalo" and MAPA_CLASSES["bird"] == "passaro"
+    for exotico in ("elephant", "zebra", "giraffe", "bear"):
+        assert exotico not in MAPA_CLASSES, f"{exotico} aqui é sempre erro do modelo"
+    # As espécies continuam opcionais por câmera, como "animal" era.
+    assert {"cachorro", "gato", "cavalo"} <= CLASSES_ANIMAL
+
+
+def test_faca_tem_codigo_proprio_e_dispara_deteccao_de_arma():
+    """Faca era `arma` com rótulo "Objeto tipo arma" — confundia com arma de fogo."""
+    from app.services.vision import (CLASSES_ARMA, MAPA_CLASSES, AnalisadorAcoes,
+                                     ObjetoDetectado)
+    assert MAPA_CLASSES["knife"] == "faca"
+    assert "faca" in CLASSES_ARMA and "arma" in CLASSES_ARMA
+    an = AnalisadorAcoes()
+    an.acoes_ativas = {"arma_detectada"}
+    ev = an.atualizar([ObjetoDetectado("faca", 0.8, (100, 100, 140, 200), 1)],
+                      1280, 720, agora=1000.0)
+    assert [e.classe for e in ev] == ["arma_detectada"]
+
+
+def test_celular_so_entra_onde_a_camera_pede():
+    from types import SimpleNamespace
+
+    from app.services.inferencia import _classes_barradas
+    base = dict(detecta_veiculo=False, detecta_bagagem=False, detecta_animal=False)
+    assert "celular" in _classes_barradas(SimpleNamespace(**base, detecta_celular=False))
+    assert "celular" not in _classes_barradas(SimpleNamespace(**base, detecta_celular=True))
+
+
+def test_recorte_da_placa_e_ampliado_ate_ficar_legivel():
+    import numpy as np
+
+    from app.services.video import jpeg_ampliado
+    pequeno = np.full((24, 80, 3), 200, np.uint8)
+    jpeg = jpeg_ampliado(pequeno, 360)
+    import cv2
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert img.shape[1] == 360, "a placa de 80 px precisa sair com 360 de largura"
+    assert jpeg_ampliado(np.zeros((0, 0, 3), np.uint8)) is None

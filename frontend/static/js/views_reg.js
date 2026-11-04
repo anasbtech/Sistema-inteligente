@@ -26,6 +26,17 @@ function ligarPager(raiz, chave, recarregar){
   });
 }
 
+/* Placa lida: o recorte da placa (quando guardado) com o texto embaixo, no
+   formato de placa. O recorte é o que permite conferir a leitura — no
+   recorte do carro inteiro a placa tem poucos pixels. */
+function placaHTML(d, tamanho){
+  const img = d.placa_snapshot_key && API.access
+    ? `<img class="placa-img" alt="Placa ${esc(d.placa)}" loading="lazy"
+         src="${API.base}/deteccoes/${encodeURIComponent(d.codigo)}/placa?token=${encodeURIComponent(API.access)}">`
+    : '';
+  return `<span class="placa-lida ${tamanho || 'mini'}">${img}<b class="placa-txt">${esc(d.placa)}</b></span>`;
+}
+
 const barraConfianca = (v, cor) => `<div class="conf">
   <div class="conf-bar"><i style="width:${Math.round((v||0)*100)}%;background:${cor}"></i></div>
   <b>${pct100(v)}</b></div>`;
@@ -144,7 +155,8 @@ async function renderObjetos(alvo){
   // à separação por tipo e da cena sintética, e carro, caminhão, ônibus e
   // motocicleta já cobrem o caso. Continua em ROTULO_OBJ porque a tabela ainda
   // precisa saber traduzi-lo onde ele já foi gravado.
-  const classes = Object.entries(ROTULO_OBJ).filter(([k]) => k !== 'veiculo');
+  // `veiculo` e `animal` são históricos: o detector não os emite mais.
+  const classes = Object.entries(ROTULO_OBJ).filter(([k]) => k !== 'veiculo' && k !== 'animal');
   /* Capacete e arma de fogo não existem no modelo do parque: dependem de um
      detector próprio, que pode não estar instalado. A opção continua na lista
      — tirá-la mandaria quem a procura vasculhar a tela — mas diz ali mesmo
@@ -224,7 +236,7 @@ async function renderObjetos(alvo){
             <td><b style="color:${COR_CLASSE[d.classe]||'var(--txt-1)'}">${esc(rotuloClasse(d))}</b><br><span class="td-id">${esc(d.codigo)}</span></td>
             <td>${barraConfianca(d.confianca, COR_CLASSE[d.classe]||'var(--acc)')}</td>
             <td><b>${esc(d.camera?d.camera.codigo:'')}</b><br><span class="td-ts">${esc((d.camera?d.camera.nome:'').slice(0,24))}</span></td>
-            <td class="mono">${d.placa ? `<b style="letter-spacing:.08em">${esc(d.placa)}</b>` : '—'}</td>
+            <td>${d.placa ? placaHTML(d, 'mini') : '—'}</td>
             <td class="td-ts">${fmtDT(d.ocorrido_em)}</td>
             <td><span class="chip ${CLS_SEV[d.severidade]}">${esc(SEVERIDADE[d.severidade])}</span></td>
           </tr>`).join('') || `<tr><td colspan="7">${vazio('box','Nenhuma detecção encontrada.',
@@ -492,7 +504,7 @@ async function abrirDeteccao(codigo){
             : d.tipo === 'OBJETO' ? `
               <dt>Classe</dt><dd>${esc(rotuloClasse(d))}</dd>
               <dt>Confiança</dt><dd class="mono"><b>${pct100(d.confianca)}</b> (limiar ${Math.round((d.limiar_aplicado||0)*100)}%)</dd>
-              ${d.placa ? `<dt>Placa (OCR)</dt><dd class="mono"><b style="letter-spacing:.1em">${esc(d.placa)}</b></dd>` : ''}`
+              ${d.placa ? `<dt>Placa (OCR)</dt><dd>${placaHTML(d, 'grande')}</dd>` : ''}`
             : `
               <dt>Ação</dt><dd>${esc(rotuloClasse(d))}</dd>
               <dt>Confiança</dt><dd class="mono"><b>${pct100(d.confianca)}</b></dd>

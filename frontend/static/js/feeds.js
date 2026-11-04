@@ -44,6 +44,9 @@ const SEXOS={
 const COR_CLASSE={
   pessoa:'#2FC27A', carro:'#35A7DE', caminhao:'#E8712C', onibus:'#D9C13A',
   motocicleta:'#F0A02A', bicicleta:'#8C6FE0', animal:'#4ED1C5',
+  cachorro:'#4ED1C5', gato:'#4ED1C5', passaro:'#4ED1C5', cavalo:'#4ED1C5',
+  boi:'#4ED1C5', ovelha:'#4ED1C5',
+  faca:'#E8474D', tesoura:'#E8712C', bastao:'#E8712C', celular:'#B57BEE',
   mochila:'#C79A5B', volume:'#E8474D', capacete:'#5FC4F0', placa:'#D9C13A', arma:'#E8474D',
   veiculo:'#35A7DE',   // vocabulário da cena sintética, que não distingue o tipo
   rosto:'#E05F9E',     // rosto e corpo saem de modelos diferentes sobre a mesma

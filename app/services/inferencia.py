@@ -67,6 +67,8 @@ def _classes_barradas(cam) -> set:
         fora |= vision.CLASSES_BAGAGEM
     if not getattr(cam, "detecta_animal", False):
         fora |= vision.CLASSES_ANIMAL
+    if not getattr(cam, "detecta_celular", False):
+        fora |= vision.CLASSES_CELULAR
     return fora
 
 
@@ -1429,12 +1431,18 @@ class Inferencia:
                 # delimitou: procurá-la no quadro inteiro seria desperdiçar
                 # essa delimitação, e ela é o que há de menor em cena.
                 texto_placa = ""
+                jpeg_placa = None
                 if obj.classe in vision.VEICULOS:
                     x1, y1, x2, y2 = obj.bbox
                     recorte_bgr = quadro[max(0, y1):y2, max(0, x1):x2]
-                    lida = await asyncio.to_thread(placa.ler, recorte_bgr)
+                    lida = await asyncio.to_thread(placa.ler_com_recorte, recorte_bgr)
                     if lida:
-                        texto_placa, conf_placa = lida
+                        texto_placa, conf_placa, recorte_placa = lida
+                        # O recorte da placa vai junto, ampliado até um tamanho
+                        # legível: no recorte do carro inteiro ela tem poucos
+                        # pixels e não aguenta a ampliação de quem confere.
+                        jpeg_placa = await asyncio.to_thread(
+                            video.jpeg_ampliado, recorte_placa, 360)
                         caixa_obj["placa"] = texto_placa
                         log.info("%s: placa %s lida em %s (%.0f%%)",
                                  cam.codigo, texto_placa, obj.classe, conf_placa * 100)
@@ -1450,6 +1458,8 @@ class Inferencia:
                     track_id=obj.track_id,
                     placa=texto_placa,
                     snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
+                    placa_jpeg=(base64.b64encode(jpeg_placa).decode("ascii")
+                                if jpeg_placa else None),
                 ), origem="inferencia")
                 self.gerados += 1
                 if corpo is not None:

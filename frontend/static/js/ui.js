@@ -74,13 +74,18 @@ const STATUS_ALERTA = {
 };
 const ROTULO_OBJ = {
   pessoa:'Pessoa', carro:'Carro', caminhao:'Caminhão', onibus:'Ônibus',
-  motocicleta:'Motocicleta', bicicleta:'Bicicleta', animal:'Animal',
+  motocicleta:'Motocicleta', bicicleta:'Bicicleta',
+  // Animais pela espécie; `animal` fica para os registros de antes.
+  cachorro:'Cachorro', gato:'Gato', passaro:'Pássaro', cavalo:'Cavalo',
+  boi:'Boi / vaca', ovelha:'Ovelha', animal:'Animal',
+  faca:'Faca / arma branca', tesoura:'Tesoura', bastao:'Bastão / taco',
+  celular:'Celular',
   // `volume` é a classe do objeto, não um veredito. Abandono é ação, e
   // só se decide depois de segundos parado — chamar a caixa de "Volume
   // abandonado" afirmava na tela algo que nada havia avaliado, sobre uma
   // scooter estacionada na Portaria.
   mochila:'Mochila', volume:'Volume', capacete:'Capacete',
-  placa:'Placa veicular', arma:'Objeto tipo arma',
+  placa:'Placa veicular', arma:'Arma de fogo',
   veiculo:'Veículo'   // registros anteriores à separação por tipo
 };
 /* Espelha `vision.CATALOGO_ACOES`. Quem desenha o seletor por câmera lê o

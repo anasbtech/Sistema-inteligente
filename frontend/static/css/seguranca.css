@@ -1173,3 +1173,15 @@ button.id-card:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
   .ficha-tempo{flex-direction:column;gap:12px}
   .ficha-tempo li::before{display:none}
 }
+
+/* Placa lida: recorte da placa + texto em formato de placa. */
+.placa-lida{display:inline-flex;flex-direction:column;align-items:flex-start;gap:4px}
+.placa-lida .placa-img{display:block;border-radius:3px;border:1px solid var(--line);background:#fff}
+.placa-lida.mini .placa-img{height:26px;width:auto}
+.placa-lida.grande .placa-img{width:300px;max-width:100%;height:auto}
+.placa-txt{display:inline-block;padding:2px 8px;border-radius:3px;border:1px solid #c9d3dc;
+  background:#f4f7fa;color:#0b121a;font-family:var(--f-mono);font-weight:700;letter-spacing:.12em;font-size:12px}
+.placa-lida.grande .placa-txt{font-size:15px;padding:3px 10px}
+/* A tabela pinta todo <b> de claro; sobre o fundo branco da placa o texto
+   sumia. A cor da placa vence aqui. */
+.placa-lida b.placa-txt, .tbl .placa-lida b.placa-txt{color:#0b121a}

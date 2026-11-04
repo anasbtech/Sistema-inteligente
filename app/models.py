@@ -285,6 +285,9 @@ class Camera(Base):
     # silhueta: das 10 detecções que chegaram ao registro, as 10 eram pessoas.
     # Ligue em pátio, perímetro ou via — onde animal solto é ocorrência.
     detecta_animal: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Celular. Desligado porque numa sala de trabalho todo mundo tem um na mão;
+    # ligue na revista de entrada, na cela ou onde ele é proibido.
+    detecta_celular: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Capacete e arma de fogo, que vêm de detectores próprios e não do YOLO do
     # parque. Desligados por padrão: cada um custa uma passada a mais sobre o
@@ -496,6 +499,10 @@ class Deteccao(Base):
 
     severidade: Mapped[int] = mapped_column(Integer, default=1, index=True)  # 1..4
     snapshot_key: Mapped[str] = mapped_column(String(300), default="")       # chave no S3
+    # Recorte da placa lida, separado do recorte do veículo: na captura do
+    # carro inteiro a placa ocupa poucos pixels, e conferir a leitura exigia
+    # ampliar uma imagem que não aguenta ampliação.
+    placa_snapshot_key: Mapped[str] = mapped_column(String(300), default="")
     clip_key: Mapped[str] = mapped_column(String(300), default="")
 
     revisado: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

@@ -519,3 +519,23 @@ def encerrar_todos() -> None:
     for leitor in leitores:
         leitor.parar()
 
+
+
+def jpeg_ampliado(recorte, largura_min: int = 360) -> Optional[bytes]:
+    """JPEG de um recorte pequeno, ampliado até uma largura legível.
+
+    Para a placa: no quadro ela tem 60 a 120 px de largura, e a ficha a mostra
+    a 300. Ampliar aqui, com interpolação cúbica, sai mais nítido que deixar o
+    navegador esticar um JPEG minúsculo. Nunca reduz.
+    """
+    import cv2
+
+    if recorte is None or getattr(recorte, "size", 0) == 0:
+        return None
+    alt, larg = recorte.shape[:2]
+    if larg < largura_min:
+        fator = largura_min / max(larg, 1)
+        recorte = cv2.resize(recorte, (largura_min, max(1, int(alt * fator))),
+                             interpolation=cv2.INTER_CUBIC)
+    ok, buf = cv2.imencode(".jpg", recorte, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    return buf.tobytes() if ok else None

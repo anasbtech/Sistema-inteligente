@@ -265,6 +265,7 @@ class CameraBase(BaseModel):
     detecta_veiculo: bool = False
     detecta_bagagem: bool = False
     detecta_animal: bool = False
+    detecta_celular: bool = False
     detecta_capacete: bool = False
     detecta_arma: bool = False
     # Quantas pessoas juntas são aglomeração nesta câmera; em branco,
@@ -331,6 +332,7 @@ class CameraUpdate(BaseModel):
     detecta_veiculo: Optional[bool] = None
     detecta_bagagem: Optional[bool] = None
     detecta_animal: Optional[bool] = None
+    detecta_celular: Optional[bool] = None
     detecta_capacete: Optional[bool] = None
     detecta_arma: Optional[bool] = None
     limite_aglomeracao: Optional[int] = Field(None, ge=2, le=200)
@@ -380,6 +382,7 @@ class CameraOut(ORMModel):
     detecta_veiculo: bool
     detecta_bagagem: bool
     detecta_animal: bool
+    detecta_celular: bool = False
     detecta_capacete: bool
     detecta_arma: bool
     limiar_facial: float
@@ -505,6 +508,8 @@ class DeteccaoIn(BaseModel):
     # Recorte da captura em base64. A API é quem decide onde gravar: aceitar
     # um caminho vindo pela rede seria aceitar travessia de diretório.
     snapshot_jpeg: Optional[str] = None
+    # Recorte da placa lida, em JPEG base64. Só vem quando houve leitura.
+    placa_jpeg: Optional[str] = None
     hash_evidencia: str = ""
 
 
@@ -545,6 +550,8 @@ class DeteccaoOut(ORMModel):
     track_id: Optional[int]
     severidade: int
     snapshot_key: str
+    # Há recorte da placa guardado? A tela usa para decidir se mostra.
+    placa_snapshot_key: str = ""
     revisado: bool
     veredito: str
     hash_evidencia: str

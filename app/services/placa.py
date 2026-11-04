@@ -81,7 +81,18 @@ def normalizar(texto: str) -> str:
 
 
 def ler(recorte_veiculo: np.ndarray) -> Optional[Tuple[str, float]]:
-    """Placa legível dentro do recorte, ou `None`.
+    """Placa legível dentro do recorte, ou `None` — só o texto e a confiança."""
+    lida = ler_com_recorte(recorte_veiculo)
+    return (lida[0], lida[1]) if lida else None
+
+
+def ler_com_recorte(recorte_veiculo: np.ndarray
+                    ) -> Optional[Tuple[str, float, np.ndarray]]:
+    """Placa legível dentro do recorte, com o recorte da própria placa.
+
+    O recorte vai com uma margem pequena em volta: a moldura da placa ajuda
+    quem confere a leitura a ver que os caracteres são os dela, e não de um
+    adesivo no para-brisa.
 
     `None` quando não há placa, quando ela é pequena demais para ter
     caracteres, quando a confiança não alcança o piso ou quando o texto não é
@@ -100,7 +111,8 @@ def ler(recorte_veiculo: np.ndarray) -> Optional[Tuple[str, float]]:
         log.warning("Detector de placa falhou: %s", exc)
         return None
 
-    melhor: Optional[Tuple[str, float]] = None
+    melhor: Optional[Tuple[str, float, np.ndarray]] = None
+    alt_v, larg_v = recorte_veiculo.shape[:2]
     for caixa in caixas:
         b = caixa.bounding_box
         largura, altura = b.x2 - b.x1, b.y2 - b.y1
@@ -128,6 +140,9 @@ def ler(recorte_veiculo: np.ndarray) -> Optional[Tuple[str, float]]:
         # Mais de uma placa no recorte acontece quando o carro de trás entra
         # no enquadramento; fica a mais confiante, que é a do veículo em foco.
         if melhor is None or confianca > melhor[1]:
-            melhor = (texto, confianca)
+            mx, my = max(2, int(largura * 0.12)), max(2, int(altura * 0.25))
+            com_margem = recorte_veiculo[max(0, b.y1 - my):min(alt_v, b.y2 + my),
+                                         max(0, b.x1 - mx):min(larg_v, b.x2 + mx)]
+            melhor = (texto, confianca, com_margem.copy())
 
     return melhor

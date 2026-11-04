@@ -489,6 +489,15 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
             )
         except (ValueError, OSError) as exc:
             log.warning("Recorte de %s descartado: %s", codigo, exc)
+    chave_placa = ""
+    if dados.placa_jpeg and dados.placa:
+        try:
+            chave_placa = evidencias.gravar(
+                f"{codigo}-placa", dados.ocorrido_em,
+                base64.b64decode(dados.placa_jpeg, validate=True),
+            )
+        except (ValueError, OSError) as exc:
+            log.warning("Recorte da placa de %s descartado: %s", codigo, exc)
 
     det = Deteccao(
         codigo=codigo,
@@ -510,6 +519,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         track_id=dados.track_id,
         severidade=severidade,
         snapshot_key=chave,
+        placa_snapshot_key=chave_placa,
         hash_evidencia=dados.hash_evidencia,
         expurgo_em=expurgo,
     )
@@ -801,6 +811,27 @@ async def snapshot(codigo: str, token: str = Query(..., description="Access toke
                     headers={"Cache-Control": "private, max-age=300"})
 
 
+@router.get("/{codigo}/placa", summary="Recorte da placa lida (JPEG)")
+async def imagem_placa(codigo: str, token: str = Query(..., description="Access token JWT"),
+                       db: AsyncSession = Depends(get_db)):
+    """A placa recortada e ampliada, para conferir a leitura.
+
+    Sem auditoria pelo mesmo motivo do recorte da captura: a lista carrega uma
+    miniatura por linha, e o acesso que importa é abrir a ficha.
+    """
+    await usuario_de_query(token, db, "facial")
+    det = (
+        await db.execute(select(Deteccao).where(Deteccao.codigo == codigo))
+    ).scalars().unique().one_or_none()
+    if det is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Detecção não encontrada.")
+    imagem = evidencias.ler(det.placa_snapshot_key)
+    if imagem is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sem recorte de placa para esta detecção.")
+    return Response(content=imagem, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=300"})
+
+
 @router.get("/{codigo}", response_model=DeteccaoOut, summary="Detalhe da detecção")
 async def obter(codigo: str, request: Request, db: AsyncSession = Depends(get_db),
                 usuario: Usuario = Depends(exige("facial"))):
@@ -916,6 +947,7 @@ async def remover(codigo: str, request: Request,
     # Apagar o registro e deixar o recorte no disco transformaria a retenção
     # numa promessa vazia — o mesmo motivo do expurgo.
     recorte = evidencias.apagar(det.snapshot_key)
+    evidencias.apagar(det.placa_snapshot_key)
     await audit.registrar(
         db, acao="DET_EXCLUSAO", descricao=f"Detecção {det.codigo} removida ({det.classe or det.tipo.value})",
         severidade="warn", usuario=usuario, alvo=det.codigo,

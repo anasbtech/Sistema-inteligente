@@ -745,6 +745,7 @@ async function editarCamera(codigo){
     detecta_veiculo:  c ? !!c.detecta_veiculo : false,
     detecta_bagagem:  c ? !!c.detecta_bagagem : false,
     detecta_animal:   c ? !!c.detecta_animal : false,
+    detecta_celular:  c ? !!c.detecta_celular : false,
     detecta_capacete: c ? !!c.detecta_capacete : false,
     detecta_arma:     c ? !!c.detecta_arma : false
   };
@@ -942,8 +943,10 @@ async function editarCamera(codigo){
         <span>Desligado, veículo é ignorado — num hall ele só vem da janela. Ligado, carro, caminhão, ônibus, moto e bicicleta contam, e a placa é lida</span></div>${chave('detecta_veiculo')}</div>
       <div class="sw-row" data-csw="detecta_bagagem"><div class="bd"><b>Bagagem — mochila, bolsa, mala</b>
         <span>Vista do teto, essa silhueta costuma ser saco de lixo ou caixa: em seis semanas, dos 15 registros nenhum era bagagem. Ligue na revista de entrada ou no guarda-volumes</span></div>${chave('detecta_bagagem')}</div>
-      <div class="sw-row" data-csw="detecta_animal"><div class="bd"><b>Animal</b>
-        <span>O modelo não tem rótulo para pessoa agachada e escolhe o bicho de silhueta parecida: das 10 detecções deste parque, as 10 eram pessoas. Ligue em pátio, perímetro ou via</span></div>${chave('detecta_animal')}</div>
+      <div class="sw-row" data-csw="detecta_animal"><div class="bd"><b>Animais — cachorro, gato, cavalo, boi, pássaro</b>
+        <span>Pela espécie. O modelo não tem rótulo para pessoa agachada e escolhe o bicho de silhueta parecida: das 10 detecções deste parque, as 10 eram pessoas. Ligue em pátio, perímetro ou via</span></div>${chave('detecta_animal')}</div>
+      <div class="sw-row" data-csw="detecta_celular"><div class="bd"><b>Celular</b>
+        <span>Numa sala de trabalho todo mundo tem um na mão. Ligue na revista de entrada, na cela ou onde ele é proibido</span></div>${chave('detecta_celular')}</div>
       ${linhaDetectorExtra('capacete', 'Capacete', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
       ${linhaDetectorExtra('arma', 'Arma de fogo', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
       <div class="sw-row" data-csw="alerta_presenca"><div class="bd"><b>Alertar toda presença</b>

@@ -41,9 +41,13 @@ MAPA_CLASSES: Dict[str, str] = {
     "bus": "onibus",
     "motorcycle": "motocicleta",
     "bicycle": "bicicleta",
-    # Faca de mesa, que é o que o COCO chama de `knife`. Arma de fogo não
-    # existe neste modelo e vem do detector dedicado — veja `armamento.py`.
-    "knife": "arma",
+    # Arma branca e objetos que podem ferir. `faca` tinha o código `arma` e o
+    # rótulo "Objeto tipo arma", e se confundia com arma de fogo — que não
+    # existe neste modelo e vem do detector dedicado (`extras.py`), com o
+    # código `arma`. Agora cada um tem o seu.
+    "knife": "faca",
+    "scissors": "tesoura",
+    "baseball bat": "bastao",
     # --- opcionais, desligadas por padrão (veja CLASSES_OPCIONAIS) ---
     #
     # `backpack`, `handbag` e `suitcase` descrevem bagagem fotografada de
@@ -59,9 +63,18 @@ MAPA_CLASSES: Dict[str, str] = {
     # em silhueta. Das 10 detecções de animal que chegaram ao registro deste
     # parque — 26 câmeras, todas internas — as 10 eram pessoas. Numa câmera de
     # pátio ou de via pública, animal solto é ocorrência de verdade.
-    "dog": "animal", "cat": "animal", "horse": "animal", "cow": "animal",
-    "sheep": "animal", "bird": "animal", "bear": "animal",
-    "elephant": "animal", "zebra": "animal", "giraffe": "animal",
+    #
+    # Pela espécie, e só as que andam soltas por aqui. "Animal" sozinho não
+    # diz se é um cachorro no pátio ou um cavalo na via; e urso, elefante,
+    # zebra e girafa saíram do mapa — nesta instalação, quando o modelo diz
+    # "elefante", é sempre erro, e a classe que não pode estar certa não pode
+    # chegar ao registro.
+    "dog": "cachorro", "cat": "gato", "bird": "passaro",
+    "horse": "cavalo", "cow": "boi", "sheep": "ovelha",
+    # Celular: ocorrência numa revista de entrada, numa cela ou numa área onde
+    # é proibido; numa sala de trabalho, todo mundo tem um na mão. Opcional
+    # por câmera, como animal e bagagem.
+    "cell phone": "celular",
 }
 
 # Classes que não entram sozinhas: a câmera precisa pedir.
@@ -70,9 +83,16 @@ MAPA_CLASSES: Dict[str, str] = {
 # modelo — pessoa agachada vista do teto é cachorro para qualquer YOLO, e saco
 # de lixo é mochila. Onde o enquadramento muda, o acerto muda junto, e aí quem
 # decide é quem conhece a câmera.
-CLASSES_ANIMAL: set[str] = {"animal"}
+# `animal` continua aqui pelos registros gravados antes da separação por
+# espécie — o detector não o emite mais.
+CLASSES_ANIMAL: set[str] = {"cachorro", "gato", "passaro", "cavalo", "boi", "ovelha", "animal"}
 CLASSES_BAGAGEM: set[str] = {"mochila", "volume"}
-CLASSES_OPCIONAIS: set[str] = CLASSES_ANIMAL | CLASSES_BAGAGEM
+CLASSES_CELULAR: set[str] = {"celular"}
+CLASSES_OPCIONAIS: set[str] = CLASSES_ANIMAL | CLASSES_BAGAGEM | CLASSES_CELULAR
+# O que dispara "Detecção de arma": arma de fogo (detector dedicado) e faca.
+# Tesoura e bastão ficam no registro sem alerta — vassoura e cabo de rodo têm
+# a mesma silhueta de bastão.
+CLASSES_ARMA: set[str] = {"arma", "faca"}
 
 # Classes que o modelo troca entre si conforme o ângulo contam como uma
 # família só para decidir se um objeto já passou por ali — senão cada
@@ -116,6 +136,11 @@ SEVERIDADE_OBJETO: Dict[str, int] = {
     "pessoa": 1, "carro": 1, "caminhao": 1, "onibus": 1, "bicicleta": 1,
     "motocicleta": 2, "animal": 2, "mochila": 2, "capacete": 2, "placa": 2,
     "volume": 4, "arma": 4,
+    # Espécies: o mesmo peso de "animal", que elas substituem.
+    "cachorro": 2, "gato": 2, "passaro": 1, "cavalo": 2, "boi": 2, "ovelha": 2,
+    # Faca é arma branca: o mesmo peso da arma de fogo. Tesoura e bastão são
+    # objetos que podem ferir, mas comuns demais para valerem alerta crítico.
+    "faca": 4, "tesoura": 3, "bastao": 3, "celular": 2,
 }
 
 
@@ -1837,7 +1862,7 @@ class AnalisadorAcoes:
             # Não depende de zona, de horário nem de trajetória: o objeto
             # estar ali já é o fato. A classe vem de `knife` do COCO e, neste
             # parque, nunca apareceu — ligar custa nada e pode valer muito.
-            if obj.classe == "arma" and self._pode_alertar(trilha, "arma_detectada", t):
+            if obj.classe in CLASSES_ARMA and self._pode_alertar(trilha, "arma_detectada", t):
                 eventos.append(EventoAcao(
                     "arma_detectada", ROTULO_ACAO["arma_detectada"],
                     confianca=float(obj.confianca),
