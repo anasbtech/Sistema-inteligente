@@ -109,7 +109,13 @@ async def listar(
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(exige("biometrics")),
 ):
-    filtros = [Pessoa.ativo.is_(True), Pessoa.sexo != Sexo.N]
+    filtros = [Pessoa.ativo.is_(True)]
+    # A lista padrão é de quem tem cadastro: BIO-N é registro provisório de
+    # quem ainda não foi identificado. Pedidos explicitamente (sexo=N), eles
+    # aparecem — antes ficavam de fora até assim, e o cartão BIO-N da base,
+    # que filtra por eles, abria uma tabela vazia com BIO-N existentes.
+    if sexo != Sexo.N:
+        filtros.append(Pessoa.sexo != Sexo.N)
     if q:
         termo = f"%{q.strip()}%"
         filtros.append(or_(

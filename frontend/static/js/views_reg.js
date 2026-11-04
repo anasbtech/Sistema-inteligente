@@ -644,6 +644,30 @@ async function abrirDeteccao(codigo){
    ========================================================== */
 const ROTULO_SEXO = {M:'Masculino', F:'Feminino', N:'Não informado'};
 
+/* Capturas de rosto sem cadastro que esperam virar BIO-N. Sem esta linha o
+   cartão dizia "2 registros" com milhares de desconhecidos na base, e quem lia
+   concluía que não havia ninguém por identificar — quando o que havia era
+   ninguém triado ainda. O número já vinha do servidor e não era mostrado. */
+function linhaTriagem(n){
+  if(!n) return '';
+  return `<span class="triagem" data-triagem role="link" tabindex="0"
+            title="Abrir as capturas não identificadas no Reconhecimento facial">
+    ${ico('face', 12)} ${fmtNum(n)} ${n === 1 ? 'captura aguarda' : 'capturas aguardam'} triagem</span>`;
+}
+
+/* A linha de triagem leva às capturas não identificadas. */
+function ligarTriagem(raiz){
+  $$('[data-triagem]', raiz).forEach(el => {
+    const ir = e => {
+      e.stopPropagation();
+      if(!API.pode('facial')) return;
+      FILTRO.facial.match = 'false'; PAG.facial = 1; irPara('facial');
+    };
+    el.onclick = ir;
+    el.onkeydown = e => { if(e.key === 'Enter' || e.key === ' ') ir(e); };
+  });
+}
+
 async function renderBiometria(alvo){
   const esquema = await API.esquemaIds();
   const pref = esquema.prefixos || {};
@@ -668,11 +692,16 @@ async function renderBiometria(alvo){
         ${['M','F','N'].map(s => {
           const p = pref[s] || {};
           const cor = {M:'var(--acc-2)', F:'#F08CBE', N:'var(--txt-2)'}[s];
-          return `<div class="id-card ${s.toLowerCase()}">
+          /* O cartão filtra a tabela por este prefixo — clicar em BIO-N lista
+             todos os BIO-N. Clicar de novo no mesmo volta a mostrar todos. */
+          return `<button type="button" class="id-card ${s.toLowerCase()} ${b.sexo===s?'ativo':''}"
+                    data-pfx="${s}" aria-pressed="${b.sexo===s}"
+                    title="${b.sexo===s ? 'Mostrar todos os registros' : `Listar os registros ${esc(p.prefixo || 'BIO-'+s)}`}">
             <div class="pfx">${esc(p.prefixo || 'BIO-'+s)}-000000</div>
             <div class="lbl">${esc(p.rotulo || ROTULO_SEXO[s])}</div>
             <div class="cnt">${fmtNum(p.registros||0)} registros · próximo: <b style="color:${cor}">${esc(p.proximo||'—')}</b></div>
-          </div>`;
+            ${s === 'N' ? linhaTriagem(esquema.aguardando_triagem) : ''}
+          </button>`;
         }).join('')}
       </div>
       <div class="note" style="margin-top:13px">${ico('lock',15)}<div><b>Regra de integridade:</b> ${esc(esquema.regra || '')}</div></div>
@@ -718,7 +747,20 @@ async function renderBiometria(alvo){
   };
 
   $('#bioQ').oninput = debounce(() => { PAG.bio = 1; carregar(); }, 350);
-  ['bioSexo','bioStatus'].forEach(id => $('#'+id).onchange = () => { PAG.bio = 1; carregar(); });
+  ['bioSexo','bioStatus'].forEach(id => $('#'+id).onchange = () => {
+    PAG.bio = 1; marcarPrefixo($('#bioSexo').value); carregar();
+  });
+  /* Cartão do prefixo: filtra a tabela por ele, ou desfaz o filtro. */
+  const marcarPrefixo = s => $$('[data-pfx]', alvo).forEach(c => {
+    c.classList.toggle('ativo', c.dataset.pfx === s);
+    c.setAttribute('aria-pressed', String(c.dataset.pfx === s));
+  });
+  $$('[data-pfx]', alvo).forEach(c => c.onclick = e => {
+    if(e.target.closest('[data-triagem]')) return;
+    const s = $('#bioSexo').value === c.dataset.pfx ? '' : c.dataset.pfx;
+    $('#bioSexo').value = s; PAG.bio = 1; marcarPrefixo(s); carregar();
+  });
+  ligarTriagem(alvo);
   const novo = $('#bioNovo'); if(novo) novo.onclick = () => editarPessoa(null);
 
   await carregar();

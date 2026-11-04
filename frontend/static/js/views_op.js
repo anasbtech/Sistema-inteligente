@@ -187,10 +187,12 @@ async function renderPainel(alvo){
         <div class="id-scheme" style="margin-bottom:13px">
           ${['M','F','N'].map(s => {
             const p = pref[s] || {};
-            return `<div class="id-card ${s.toLowerCase()}">
+            return `<button type="button" class="id-card ${s.toLowerCase()}" data-dash-pfx="${s}"
+                      title="Listar os registros ${esc(p.prefixo || ('BIO-'+s))} na Base biométrica">
               <div class="pfx">${esc(p.prefixo || ('BIO-'+s))}</div>
               <div class="lbl">${esc(p.rotulo || '')}</div>
-              <div class="cnt">${fmtNum(p.registros || 0)} registros</div></div>`;
+              <div class="cnt">${fmtNum(p.registros || 0)} registros</div>
+              ${s === 'N' ? linhaTriagem(esquema.aguardando_triagem) : ''}</button>`;
           }).join('')}
         </div>
         <div class="note">${ico('info',15)}<div>O sexo é atributo <b>do cadastro</b>, informado no registro da pessoa — nunca inferido pelo modelo a partir da imagem. O identificador não muda entre capturas, exceto na saída de BIO-N: quem entrou sem identificação recebe o prefixo definitivo quando a pessoa for cadastrada.</div></div>
@@ -212,6 +214,12 @@ async function renderPainel(alvo){
   </div>`;
 
   $$('[data-ir]', alvo).forEach(b => b.onclick = () => irPara(b.dataset.ir));
+  // Cartão do prefixo: abre a Base biométrica já filtrada por ele.
+  $$('[data-dash-pfx]', alvo).forEach(c => c.onclick = e => {
+    if(e.target.closest('[data-triagem]') || !API.pode('biometrics')) return;
+    FILTRO.bio = {...FILTRO.bio, sexo: c.dataset.dashPfx}; PAG.bio = 1; irPara('biometrics');
+  });
+  ligarTriagem(alvo);
 
   // Seletor de período. Por irPara, e não por renderPainel direto: o
   // tratamento de erro do carregamento está lá, e o painel não pode ficar

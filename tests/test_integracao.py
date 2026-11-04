@@ -2443,3 +2443,24 @@ def test_encerrar_em_lote_fecha_todos_e_audita_cada_um(cliente, camera):
         "codigos": codigos, "resolucao": "Segunda tentativa sobre os mesmos alertas."})
     assert r2.json()["encerrados"] == 0
     assert sorted(r2.json()["ja_encerrados"]) == sorted(codigos)
+
+
+def test_filtro_bio_n_lista_os_bio_n_e_a_lista_padrao_nao(cliente):
+    """O cartão BIO-N da base filtra por eles e abria uma tabela vazia: a rota
+    tirava os BIO-N da lista até quando eram pedidos."""
+    criada = cliente.post("/pessoas", json={
+        "nome": "Nao Identificado Para Listar", "sexo": "N", "status": "VISITANTE"
+    }).json()
+    id_n = criada["id_biometrico"]
+
+    so_n = cliente.get("/pessoas", params={"sexo": "N", "por_pagina": 200}).json()
+    assert id_n in [p["id_biometrico"] for p in so_n["itens"]], "pedido, o BIO-N aparece"
+    assert all(p["sexo"] == "N" for p in so_n["itens"])
+
+    padrao = cliente.get("/pessoas", params={"por_pagina": 200}).json()
+    assert id_n not in [p["id_biometrico"] for p in padrao["itens"]], (
+        "a lista padrão continua sendo de quem tem cadastro")
+
+    # A quantidade de capturas esperando triagem vai junto do esquema.
+    esquema = cliente.get("/pessoas/esquema-ids").json()
+    assert isinstance(esquema.get("aguardando_triagem"), int)
