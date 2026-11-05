@@ -2643,3 +2643,5 @@ def test_video_teste_de_multidao_diz_quantas_pessoas_correm(cliente):
     assert r.status_code == 201, r.text
     a = cliente.get(f"/alertas/{r.json()['alerta']}").json()
     assert "12 pessoas correndo" in a["detalhe"] and "pessoa 42" not in a["detalhe"]
+    # "Envolvidos" da ficha da detecção é a contagem, não 1.
+    assert cliente.get(f"/deteccoes/{a['deteccao_codigo']}").json()["envolvidos"] == 12
