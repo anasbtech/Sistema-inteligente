@@ -2645,3 +2645,48 @@ def test_video_teste_de_multidao_diz_quantas_pessoas_correm(cliente):
     assert "12 pessoas correndo" in a["detalhe"] and "pessoa 42" not in a["detalhe"]
     # "Envolvidos" da ficha da detecção é a contagem, não 1.
     assert cliente.get(f"/deteccoes/{a['deteccao_codigo']}").json()["envolvidos"] == 12
+
+
+def test_captura_sem_rosto_confirmado_nao_entra_na_ficha(cliente, monkeypatch):
+    """Nuca, luva, objeto: o reconhecimento apontou alguém, mas no recorte não há
+    rosto. Vai para a conferência com a sugestão, não para a ficha."""
+    import base64
+    from datetime import datetime, timezone
+
+    import cv2
+    import numpy as np
+    from fastapi.testclient import TestClient as TC
+
+    from app.services import face_engine
+
+    pessoa = cliente.post("/pessoas", json={"nome": "Pessoa Rosto Confirmado Teste",
+                                            "sexo": "M", "status": "FUNCIONARIO"}).json()
+    pid = pessoa["id"]
+
+    async def aponta(db, emb, limiar=None):
+        return face_engine.ResultadoBusca(pid, pessoa["id_biometrico"], 0.62, limiar or 0.5,
+                                          pid, pessoa["id_biometrico"])
+    monkeypatch.setattr(face_engine, "buscar_pessoa", aponta)
+    monkeypatch.setattr(face_engine, "extrair_de_recorte", lambda jpeg: None)
+
+    import asyncio
+    from app.database import db_context, engine
+    from app.models import Camera, StatusCamera
+
+    async def criar_camera():
+        async with db_context() as db:
+            db.add(Camera(codigo="CAM-RC", nome="RC", setor="RC", status=StatusCamera.ONLINE,
+                          rtsp_url="", analitico_facial=True))
+        await engine.dispose()
+    asyncio.run(criar_camera())
+
+    ok, jpg = cv2.imencode(".jpg", np.full((120, 100, 3), 90, np.uint8))
+    cam = "CAM-RC"
+    corpo = {"tipo": "FACIAL", "camera_codigo": cam, "embedding": [0.01] * 512,
+             "qualidade_face": 0.6, "ocorrido_em": datetime.now(timezone.utc).isoformat(),
+             "snapshot_jpeg": base64.b64encode(jpg.tobytes()).decode()}
+    r = TC(app, client=("127.0.0.1", 50126)).post("/deteccoes/ingest", json=corpo)
+    assert r.status_code == 201, r.text
+    assert r.json()["match"] is False
+    d = cliente.get(f"/deteccoes/{r.json()['codigo']}").json()
+    assert d["pessoa"] is None

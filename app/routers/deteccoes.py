@@ -6,6 +6,7 @@ de alerta fiquem num lugar só.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import uuid
@@ -392,6 +393,20 @@ async def alertar_presenca(db: AsyncSession, cam: Camera,
 # ======================================================================
 # Ingestão — usada pelo worker de inferência E pelo simulador
 # ======================================================================
+async def _rosto_confirmado(db: AsyncSession, snapshot_b64: str, limiar: float,
+                            pessoa_id: str) -> bool:
+    """Há rosto de verdade no recorte, e ele aponta a mesma pessoa?"""
+    try:
+        jpeg = base64.b64decode(snapshot_b64, validate=True)
+    except ValueError:
+        return False
+    rosto = await asyncio.to_thread(face_engine.extrair_de_recorte, jpeg)
+    if rosto is None:
+        return False
+    de_novo = await face_engine.buscar_pessoa(db, rosto.embedding.tolist(), limiar)
+    return de_novo.match and de_novo.pessoa_id == pessoa_id
+
+
 async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
                              origem: str = "worker",
                              publicar_evento: bool = True,
@@ -427,6 +442,24 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         limiar = cam.limiar_facial
         resultado = await face_engine.buscar_pessoa(db, dados.embedding, limiar)
         similaridade = round(resultado.similaridade, 4)
+
+        # Dupla checagem antes de pôr a captura na ficha de alguém. Medido em
+        # 05/11/2026: as 13 capturas erradas atribuídas ao José e à Tereza
+        # (nuca, luvas, homem de fone) tinham "rosto" só no quadro inteiro —
+        # no recorte, o detector não acha rosto nenhum, e o vetor de um não-
+        # rosto calhava de ficar a 0,52-0,65 de alguém. A foto verdadeira
+        # passa. Sem rosto confirmado, ou se o rosto confirmado não aponta a
+        # mesma pessoa, a captura vai para a conferência humana, com a
+        # sugestão — e não para a ficha.
+        if resultado.match and dados.snapshot_jpeg and settings.FACE_CONFIRMAR_NO_RECORTE                 and origem != "seed":
+            confirmado = await _rosto_confirmado(db, dados.snapshot_jpeg, limiar,
+                                                 resultado.pessoa_id)
+            if not confirmado:
+                log.info("%s: %s (%.0f%%) sem rosto confirmado no recorte — vai para conferência",
+                         cam.codigo, resultado.id_biometrico, similaridade * 100)
+                resultado = face_engine.ResultadoBusca(
+                    None, None, resultado.similaridade, limiar,
+                    resultado.candidato_id, resultado.candidato_bio)
 
         if resultado.match:
             pessoa = (

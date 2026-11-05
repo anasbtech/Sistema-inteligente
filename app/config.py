@@ -216,6 +216,10 @@ class Settings(BaseSettings):
     # já apareceu. Seja qual for o valor, o alerta continua exigindo
     # confirmação humana antes de qualquer ação.
     FACE_THRESHOLD: float = 0.50
+    # Antes de pôr uma captura na ficha de alguém, confirma no recorte que
+    # há rosto de verdade e que ele aponta a mesma pessoa (ver
+    # `deteccoes._rosto_confirmado`). Sem isso, nuca e luva viravam o José.
+    FACE_CONFIRMAR_NO_RECORTE: bool = True
     FACE_DET_SIZE: int = 640
 
     # --- Cobertura do template por câmera --------------------------------
