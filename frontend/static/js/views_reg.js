@@ -236,9 +236,7 @@ async function renderObjetos(alvo){
         <tbody>${(r.itens||[]).map(d => `
           <tr class="clickable" data-det="${esc(d.codigo)}">
             <td><canvas data-snap="${snapAttr(d)}" width="54"></canvas></td>
-            <td><b style="color:${COR_CLASSE[d.classe]||'var(--txt-1)'}">${esc(rotuloClasse(d))}</b><br>${ehVeiculo(d)
-              ? `<span class="td-ts">${corVeiculoHTML(d)} · ${esc(marcaModelo(d))}</span>`
-              : `<span class="td-id">${esc(d.codigo)}</span>`}</td>
+            <td><b style="color:${COR_CLASSE[d.classe]||'var(--txt-1)'}">${esc(rotuloClasse(d))}</b><br><span class="td-id">${esc(d.codigo)}</span></td>
             <td>${barraConfianca(d.confianca, COR_CLASSE[d.classe]||'var(--acc)')}</td>
             <td><b>${esc(d.camera?d.camera.codigo:'')}</b><br><span class="td-ts">${esc((d.camera?d.camera.nome:'').slice(0,24))}</span></td>
             <td>${d.placa ? placaHTML(d, 'mini') : '—'}</td>
@@ -512,14 +510,7 @@ async function abrirDeteccao(codigo){
             : d.tipo === 'OBJETO' ? `
               <dt>Classe</dt><dd>${esc(rotuloClasse(d))}</dd>
               <dt>Confiança</dt><dd class="mono"><b>${pct100(d.confianca)}</b> (limiar ${Math.round((d.limiar_aplicado||0)*100)}%)</dd>
-              ${d.placa ? `<dt>Placa (OCR)</dt><dd>${placaHTML(d, 'grande')}</dd>` : ''}
-              ${ehVeiculo(d) ? `
-                <dt>Marca / modelo</dt><dd>${d.veiculo_marca
-                  ? `<b>${esc(marcaModelo(d))}</b><br><span class="td-ts">pela placa, na base oficial</span>`
-                  : `<span style="color:var(--amber)">Veículo não identificado</span><br><span class="td-ts">${d.placa
-                      ? 'consulta da placa na base oficial não configurada ou sem resposta'
-                      : 'placa não lida — marca e modelo vêm da placa'}</span>`}</dd>
-                <dt>Cor predominante</dt><dd>${corVeiculoHTML(d)}</dd>` : ''}`
+              ${d.placa ? `<dt>Placa (OCR)</dt><dd>${placaHTML(d, 'grande')}</dd>` : ''}`
             : `
               <dt>Ação</dt><dd>${esc(rotuloClasse(d))}</dd>
               <dt>Confiança</dt><dd class="mono"><b>${pct100(d.confianca)}</b></dd>

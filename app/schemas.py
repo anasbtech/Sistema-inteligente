@@ -510,9 +510,6 @@ class DeteccaoIn(BaseModel):
     snapshot_jpeg: Optional[str] = None
     # Recorte da placa lida, em JPEG base64. Só vem quando houve leitura.
     placa_jpeg: Optional[str] = None
-    # Cor predominante do veículo, calculada no recorte pela inferência.
-    veiculo_cor: str = ""
-    veiculo_cor_conf: Optional[float] = None
     hash_evidencia: str = ""
 
 
@@ -555,12 +552,6 @@ class DeteccaoOut(ORMModel):
     snapshot_key: str
     # Há recorte da placa guardado? A tela usa para decidir se mostra.
     placa_snapshot_key: str = ""
-    veiculo_cor: str = ""
-    veiculo_cor_conf: Optional[float] = None
-    veiculo_marca: str = ""
-    veiculo_modelo: str = ""
-    veiculo_ano: str = ""
-    veiculo_fonte: str = ""
     revisado: bool
     veredito: str
     hash_evidencia: str

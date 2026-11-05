@@ -2605,36 +2605,6 @@ def test_vincular_a_ficha_nao_e_recusado_pela_ia(cliente, monkeypatch):
     assert asyncio.run(rodar(True)) == 422
 
 
-def test_veiculo_registra_cor_e_marca_pela_placa(cliente, monkeypatch):
-    """Carro com placa lida: cor da imagem, marca/modelo da base oficial."""
-    from datetime import datetime, timezone
-
-    from fastapi.testclient import TestClient as TC
-
-    from app.services import veiculo
-
-    cam = cliente.get("/cameras").json()[0]["codigo"]
-    monkeypatch.setattr(veiculo, "consulta_ligada", lambda: True)
-    monkeypatch.setattr(veiculo, "consultar_placa",
-                        lambda p: {"marca": "FIAT", "modelo": "STRADA", "ano": "2022", "cor": ""}
-                        if p == "ABC1D23" else None)
-    corpo = {"tipo": "OBJETO", "camera_codigo": cam, "classe": "carro", "confianca": 0.91,
-             "ocorrido_em": datetime.now(timezone.utc).isoformat(),
-             "placa": "ABC1D23", "veiculo_cor": "branco", "veiculo_cor_conf": 0.6}
-    local = TC(app, client=("127.0.0.1", 50124))
-    r = local.post("/deteccoes/ingest", json=corpo)
-    assert r.status_code == 201, r.text
-    d = cliente.get(f"/deteccoes/{r.json()['codigo']}").json()
-    assert (d["veiculo_marca"], d["veiculo_modelo"], d["veiculo_ano"]) == ("FIAT", "STRADA", "2022")
-    assert d["veiculo_cor"] == "branco" and d["veiculo_fonte"] == "placa"
-
-    # Sem resposta da base: sem marca — a tela mostra "Veículo não identificado".
-    corpo["placa"] = "XYZ9Z99"
-    r = local.post("/deteccoes/ingest", json=corpo)
-    d = cliente.get(f"/deteccoes/{r.json()['codigo']}").json()
-    assert d["veiculo_marca"] == "" and d["veiculo_cor"] == "branco"
-
-
 def test_falso_positivo_facial_sai_da_ficha_da_pessoa(cliente):
     """Rosto que não é da pessoa: marcado falso positivo, sai da trajetória dela."""
     import asyncio

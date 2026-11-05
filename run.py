@@ -85,12 +85,6 @@ def _colunas_novas() -> list[tuple[str, str, str, str | None]]:
         ("cameras", "detecta_animal", "BOOLEAN DEFAULT 0", None),
         ("cameras", "detecta_celular", "BOOLEAN DEFAULT 0", None),
         ("deteccoes", "placa_snapshot_key", "VARCHAR(300) DEFAULT ''", None),
-        ("deteccoes", "veiculo_cor", "VARCHAR(20) DEFAULT ''", None),
-        ("deteccoes", "veiculo_cor_conf", "FLOAT", None),
-        ("deteccoes", "veiculo_marca", "VARCHAR(60) DEFAULT ''", None),
-        ("deteccoes", "veiculo_modelo", "VARCHAR(120) DEFAULT ''", None),
-        ("deteccoes", "veiculo_ano", "VARCHAR(12) DEFAULT ''", None),
-        ("deteccoes", "veiculo_fonte", "VARCHAR(40) DEFAULT ''", None),
         ("cameras", "detecta_capacete", "BOOLEAN DEFAULT 0", None),
         ("cameras", "detecta_arma", "BOOLEAN DEFAULT 0", None),
         # Nulas nas que já existiam, e é a resposta certa: não há como saber

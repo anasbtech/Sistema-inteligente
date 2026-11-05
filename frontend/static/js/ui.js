@@ -505,27 +505,3 @@ function pintarSnaps(raiz){
 /* Só o código: era a cena sintética que precisava de tipo, classe e bbox. */
 const snapAttr = (d, fonte) =>
   esc(JSON.stringify(fonte ? {codigo: d.codigo, fonte} : {codigo: d.codigo}));
-
-
-/* ---------- Veículo: categoria, cor, marca e modelo ---------- */
-/* Marca e modelo vêm da placa consultada na base oficial; sem consulta, o
-   veículo é "não identificado" — nunca um palpite visual. A cor sai da
-   imagem e vem com a fração do veículo que ela ocupa. */
-const CATEGORIA_VEICULO = {carro:'Carro', motocicleta:'Motocicleta', caminhao:'Caminhão', onibus:'Ônibus'};
-const AMOSTRA_COR = {branco:'#F2F2F2', prata:'#B8BEC6', cinza:'#6E757D', preto:'#15181C',
-  vermelho:'#D33A3A', laranja:'#E8782C', amarelo:'#E8C62C', verde:'#3FA34D', azul:'#2F6FD0',
-  roxo:'#7E4FC4', marrom:'#7A4E2D', bege:'#D9C7A3'};
-function ehVeiculo(d){ return !!(d && CATEGORIA_VEICULO[d.classe]); }
-function marcaModelo(d){
-  if(!d || !d.veiculo_marca) return 'Veículo não identificado';
-  return [d.veiculo_marca, d.veiculo_modelo].filter(Boolean).join(' ')
-       + (d.veiculo_ano ? ` · ${d.veiculo_ano}` : '');
-}
-function corVeiculoHTML(d){
-  if(!d || !d.veiculo_cor) return '<span style="color:var(--txt-4)">—</span>';
-  const amostra = AMOSTRA_COR[d.veiculo_cor] || '#888';
-  const pct = d.veiculo_cor_conf != null ? ` <span class="mono" style="color:var(--txt-4)">${Math.round(d.veiculo_cor_conf*100)}%</span>` : '';
-  return `<span style="display:inline-flex;align-items:center;gap:6px">`
-       + `<span style="width:11px;height:11px;border-radius:3px;background:${amostra};border:1px solid rgba(255,255,255,.35)"></span>`
-       + `${esc(d.veiculo_cor[0].toUpperCase() + d.veiculo_cor.slice(1))}${pct}</span>`;
-}

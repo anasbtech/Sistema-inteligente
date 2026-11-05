@@ -6,7 +6,6 @@ de alerta fiquem num lugar só.
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import uuid
@@ -27,7 +26,7 @@ from app.models import (
     TipoDeteccao, Usuario, Zona,
 )
 from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn, VideoTesteIn
-from app.services import biometrics, evidencias, face_engine, retencao, sequencias, veiculo
+from app.services import biometrics, evidencias, face_engine, retencao, sequencias
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
 from app.services.vision import (
@@ -549,12 +548,6 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         except (ValueError, OSError) as exc:
             log.warning("Recorte da placa de %s descartado: %s", codigo, exc)
 
-    # Marca, modelo e ano pela placa, na base oficial — fora da imagem de
-    # propósito (ver services/veiculo.py). Em thread: é uma ida à rede.
-    oficial = None
-    if dados.placa and veiculo.consulta_ligada():
-        oficial = await asyncio.to_thread(veiculo.consultar_placa, dados.placa)
-
     det = Deteccao(
         codigo=codigo,
         tipo=dados.tipo,
@@ -576,12 +569,6 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         severidade=severidade,
         snapshot_key=chave,
         placa_snapshot_key=chave_placa,
-        veiculo_cor=dados.veiculo_cor,
-        veiculo_cor_conf=dados.veiculo_cor_conf,
-        veiculo_marca=(oficial or {}).get("marca", ""),
-        veiculo_modelo=(oficial or {}).get("modelo", ""),
-        veiculo_ano=(oficial or {}).get("ano", ""),
-        veiculo_fonte="placa" if oficial else "",
         hash_evidencia=dados.hash_evidencia,
         expurgo_em=expurgo,
     )
@@ -610,12 +597,6 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
             "bbox": det.bbox,
             "snapshot_key": det.snapshot_key,
             "origem": origem,
-            "placa": det.placa,
-            "veiculo_cor": det.veiculo_cor,
-            "veiculo_cor_conf": det.veiculo_cor_conf,
-            "veiculo_marca": det.veiculo_marca,
-            "veiculo_modelo": det.veiculo_modelo,
-            "veiculo_ano": det.veiculo_ano,
             "pessoa": {
                 "id_biometrico": pessoa.id_biometrico,
                 "nome": pessoa.nome,

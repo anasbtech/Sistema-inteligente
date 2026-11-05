@@ -32,7 +32,7 @@ from app.models import Camera, StatusCamera, TipoDeteccao
 from app.schemas import DeteccaoIn
 from app.services.seguimento import Seguidor
 from app.services import (
-    biometrics, chama, extras, face_engine, placa, veiculo, video, vision,
+    biometrics, chama, extras, face_engine, placa, video, vision,
 )
 from app.services.events import publicar
 
@@ -1701,15 +1701,9 @@ class Inferencia:
                 # essa delimitação, e ela é o que há de menor em cena.
                 texto_placa = ""
                 jpeg_placa = None
-                cor, cor_conf = "", None
                 if obj.classe in vision.VEICULOS:
                     x1, y1, x2, y2 = obj.bbox
                     recorte_bgr = quadro[max(0, y1):y2, max(0, x1):x2]
-                    # Cor da lataria no mesmo recorte: milissegundos, uma vez
-                    # por passagem, só no registro (ver services/veiculo.py).
-                    cor, cor_conf = await asyncio.to_thread(
-                        veiculo.cor_predominante, recorte_bgr)
-                    cor_conf = cor_conf if cor else None
                     lida = await asyncio.to_thread(placa.ler_com_recorte, recorte_bgr)
                     if lida:
                         texto_placa, conf_placa, recorte_placa = lida
@@ -1732,8 +1726,6 @@ class Inferencia:
                     bbox=obj.bbox_normalizado(largura, altura),
                     track_id=obj.track_id,
                     placa=texto_placa,
-                    veiculo_cor=cor,
-                    veiculo_cor_conf=cor_conf,
                     snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
                     placa_jpeg=(base64.b64encode(jpeg_placa).decode("ascii")
                                 if jpeg_placa else None),
