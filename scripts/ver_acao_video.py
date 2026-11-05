@@ -77,6 +77,19 @@ CINZA = (170, 170, 170)
 # Miniatura do print no painel, em 16:9, e quantas cabem de uma vez.
 MINI_L, MINI_A = 176, 99
 MAX_CAPTURAS = 2
+# Disparos com menos que isto entre um e outro são o mesmo evento: numa
+# multidão correndo (vídeo do UMN) cada pessoa dispara, e um alerta por
+# disparo eram mais de 200 alertas para 11 cenas.
+GRUPO_S = 8.0
+# Numa multidão quem continua correndo para sair do quadro emenda uma cena na
+# seguinte; o que marca o começo de outra cena de pânico é a rajada — muita
+# gente disparando junto. Medido no vídeo do UMN: com só o intervalo, 6
+# eventos para 11 cenas; com a rajada, 12 eventos e as 11 cenas.
+RAJADA_N, RAJADA_S, RAJADA_SEPARACAO_S = 5, 2.0, 6.0
+# Nos primeiros instantes do evento, o print pega o quadro com mais gente
+# marcada em vermelho: quem corre vai sendo reconhecido em sequência, e o
+# quadro do primeiro disparo mostrava uma pessoa de vermelho entre quinze.
+JANELA_PRINT_S = 1.2
 # Quanto da tela a janela pode ocupar. Em notebook com escala de 125% a tela
 # tem 1536x864 pontos, e a janela antiga (1544 px) passava da largura.
 FRACAO_TELA_L, FRACAO_TELA_A = 0.80, 0.75
@@ -132,7 +145,9 @@ def _fazer_print(img, bbox_janela, registro, pasta: Path) -> dict:
     cheio = _carimbar(img.copy(), [
         f"{rotulo}  {registro['confianca']:.0%}   |   {registro['video']}   "
         f"t = {_tempo(registro['segundo'])}   |   quadro {registro['quadro']}",
-        f"registrado em {registro['horario_registro']}   -   pessoa {registro['pessoa_id']}",
+        f"registrado em {registro['horario_registro']}   -   " + (
+            f"{registro['pessoas_correndo']} pessoas correndo"
+            if registro.get("pessoas_correndo", 1) > 1 else f"pessoa {registro['pessoa_id']}"),
     ], 0.5)
     pasta.mkdir(parents=True, exist_ok=True)
     arquivo = pasta / (f"{registro['acao']}_{Path(registro['video']).stem}_"
@@ -179,6 +194,7 @@ def _enviar_alerta(servidor: str, registro: dict, arquivo_print: Path) -> None:
                 "segundo": registro["segundo"], "tempo_video": registro["tempo_video"],
                 "quadro": registro["quadro"], "confianca": registro["confianca"],
                 "pessoa_id": registro["pessoa_id"],
+                "pessoas": registro.get("pessoas_correndo"),
                 "velocidade_corpos_s": registro["velocidade_corpos_s"],
                 "gabarito": (registro.get("gabarito") or {}).get("resultado", ""),
                 "bbox_normalizado": registro["bbox_normalizado"],
@@ -271,7 +287,8 @@ def _com_painel(img, capturas, caminho_json, estado):
         # alinhar com espaços deixava cada valor num lugar.
         campos = [
             ("confianca", f"{r['confianca']:.0%}", BRANCO),
-            ("pessoa_id", str(r["pessoa_id"]), BRANCO),
+            (("pessoas", f"{r['pessoas_correndo']} correndo", BRANCO)
+             if r.get("pessoas_correndo", 1) > 1 else ("pessoa_id", str(r["pessoa_id"]), BRANCO)),
             ("velocidade", f"{r['velocidade_corpos_s']} corpos/s", BRANCO),
             ("quadro", str(r["quadro"]), BRANCO),
             ("registro", r["horario_registro"][-8:], BRANCO),
@@ -544,6 +561,37 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
         }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     gravar_json()
+    evento = None            # o evento de corrida em curso (disparos agrupados)
+    # Onde começa cada evento, calculado sobre a análise inteira (ela já está
+    # pronta antes de o vídeo tocar): intervalo longo ou rajada.
+    import bisect
+    tempos = sorted(a["t"] for a in amostras for _ in a["eventos"])
+    inicios_evento: set = set()
+    ini = ult = None
+    for tt in tempos:
+        rajada = (bisect.bisect_right(tempos, tt + RAJADA_S)
+                  - bisect.bisect_left(tempos, tt)) >= RAJADA_N
+        if ini is None or tt - ult > GRUPO_S or (
+                rajada and tt - ini > RAJADA_SEPARACAO_S and tt - ult > 1.0):
+            ini = tt
+            inicios_evento.add(round(tt, 3))
+        ult = tt
+
+    def fechar_evento(ev):
+        """Print e alerta do evento, com o quadro de mais gente em vermelho."""
+        r = ev["registro"]
+        r["pessoas_correndo"] = max(1, ev["melhor_n"])
+        r["disparos_no_evento"] = ev["n"]
+        img_ev, caixa_ev = ev["melhor"]
+        cap_ = _fazer_print(img_ev, caixa_ev, r, pasta_prints)
+        r["print"] = cap_["arquivo"].relative_to(RAIZ).as_posix()
+        capturas.append(cap_)
+        if not args.sem_alerta:
+            _enviar_alerta(args.servidor, r, cap_["arquivo"])
+        ev["feito"] = True
+        gravar_json()
+
+    atual_t_de = {a["i"]: a["t"] for a in amostras}
     alvos = [j for j in (janelas or []) if j.tipo == acao]
     pausado = False
     indice = 0
@@ -611,16 +659,30 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                                indice) if atual else []
             img = _desenhar_caixas(quadro, objs, args.zoom, vermelhos, confianca_acao,
                                    t, rotulo)
-            # O print sai do quadro já desenhado: com a caixa vermelha do
-            # disparo, que é o que se quer mostrar.
+            # Disparos próximos são um evento só: um print e um alerta.
             for r in novos:
-                cap_ = _fazer_print(img, [int(v * args.zoom) for v in r["bbox"]], r, pasta_prints)
-                r["print"] = cap_["arquivo"].relative_to(RAIZ).as_posix()
-                capturas.append(cap_)
-                if not args.sem_alerta:
-                    _enviar_alerta(args.servidor, r, cap_["arquivo"])
+                comeca = round(atual_t_de[r["quadro"]], 3) in inicios_evento
+                if evento is None or (comeca and r["segundo"] > evento["ultimo"]):
+                    if evento is not None and not evento["feito"]:
+                        fechar_evento(evento)
+                    evento = {"registro": r, "inicio": r["segundo"], "ultimo": r["segundo"],
+                              "n": 0, "melhor": None, "melhor_n": -1, "feito": False}
+                evento["ultimo"] = r["segundo"]
+                evento["n"] += 1
             if novos:
                 gravar_json()
+            # O print sai do quadro já desenhado, com as caixas vermelhas: o
+            # de mais gente marcada nos primeiros instantes do evento.
+            if evento is not None and not evento["feito"]:
+                vermelhas = [o for o in objs if vermelhos.get(o["id"], -1) >= t]
+                if len(vermelhas) > evento["melhor_n"]:
+                    caixas_v = vermelhas or [{"bbox": evento["registro"]["bbox"]}]
+                    uniao = [min(c["bbox"][0] for c in caixas_v), min(c["bbox"][1] for c in caixas_v),
+                             max(c["bbox"][2] for c in caixas_v), max(c["bbox"][3] for c in caixas_v)]
+                    evento["melhor_n"] = len(vermelhas)
+                    evento["melhor"] = (img.copy(), [int(v * args.zoom) for v in uniao])
+                if t - evento["inicio"] >= JANELA_PRINT_S:
+                    fechar_evento(evento)
             agora = next((j for j in alvos if j.inicio_s <= t <= j.fim_s), None)
             estado = {
                 "situacao": "detectada" if any(t - d[0] <= 2.5 for d in disparos) else "analisando",
@@ -669,6 +731,8 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
             return "sair"
 
     cap.release()
+    if evento is not None and not evento["feito"] and evento["melhor"] is not None:
+        fechar_evento(evento)
     if alvos:
         print(f"  {video.name}: detectou {sum(j.detectado_em is not None for j in alvos)} "
               f"de {len(alvos)} do gabarito; {len(disparos)} disparo(s) no total")

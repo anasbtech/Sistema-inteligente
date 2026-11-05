@@ -680,6 +680,8 @@ class VideoTesteIn(BaseModel):
     quadro: int = Field(0, ge=0)
     confianca: float = Field(..., ge=0, le=1)
     pessoa_id: Optional[int] = None
+    # Quantas pessoas estavam correndo no print (multidão); 1 ou vazio é uma.
+    pessoas: Optional[int] = Field(None, ge=0)
     velocidade_corpos_s: Optional[float] = None
     gabarito: str = Field("", max_length=40)
     bbox_normalizado: Optional[List[float]] = None

@@ -669,7 +669,9 @@ async def video_teste(dados: VideoTesteIn, request: Request,
     partes = [f"{rotulo} detectada no vídeo de teste {dados.video}",
               f"aos {dados.tempo_video or f'{dados.segundo:.1f}s'} (quadro {dados.quadro})",
               f"com {dados.confianca * 100:.0f}% de confiança"]
-    if dados.pessoa_id is not None:
+    if dados.pessoas and dados.pessoas > 1:
+        partes.append(f"{dados.pessoas} pessoas correndo")
+    elif dados.pessoa_id is not None:
         partes.append(f"pessoa {dados.pessoa_id}")
     if dados.velocidade_corpos_s is not None:
         partes.append(f"velocidade {dados.velocidade_corpos_s} corpos/s")
@@ -688,7 +690,7 @@ async def video_teste(dados: VideoTesteIn, request: Request,
         classe=dados.acao,
         confianca=round(dados.confianca, 4),
         duracao_s=1,
-        envolvidos=1,
+        envolvidos=max(1, dados.pessoas or 1),
         bbox=caixa,
         snapshot_jpeg=dados.print_jpeg,
     ), origem="video_teste", teste=texto)

@@ -2633,3 +2633,13 @@ def test_falso_positivo_facial_sai_da_ficha_da_pessoa(cliente):
     assert r.json()["pessoa"] is None
     d = cliente.get("/deteccoes/FR-TESTE-FP").json()
     assert d["pessoa"] is None and d["revisado"] and d["veredito"] == "Falso positivo"
+
+
+def test_video_teste_de_multidao_diz_quantas_pessoas_correm(cliente):
+    from fastapi.testclient import TestClient as TC
+    corpo = _disparo_de_teste()
+    corpo.update({"video": "UMN video data.avi", "pessoas": 12})
+    r = TC(app, client=("127.0.0.1", 50125)).post("/deteccoes/video-teste", json=corpo)
+    assert r.status_code == 201, r.text
+    a = cliente.get(f"/alertas/{r.json()['alerta']}").json()
+    assert "12 pessoas correndo" in a["detalhe"] and "pessoa 42" not in a["detalhe"]
