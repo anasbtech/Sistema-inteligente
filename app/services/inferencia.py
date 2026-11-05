@@ -73,6 +73,15 @@ def _classes_barradas(cam) -> set:
     return fora
 
 
+# Ações que acusam uma pessoa: só alertam com uma pessoa confirmada no quadro
+# (ver `Inferencia._pessoa_real`). Aglomeração, fogo, fumaça, arma, veículo e
+# abandono de objeto têm evidência própria e ficam de fora.
+ACOES_DE_PESSOA = frozenset({
+    "area_restrita", "invasao", "fora_de_horario", "permanencia", "contrafluxo",
+    "corrida", "queda", "briga", "roubo", "vandalismo",
+})
+
+
 class Inferencia:
     """Laço que percorre as câmeras on-line aplicando os modelos."""
 
@@ -1026,6 +1035,39 @@ class Inferencia:
         corpos.remove(alvo)
         return alvo
 
+    @staticmethod
+    def _pessoa_do_evento(ev, pessoas: list):
+        """A pessoa detectada neste quadro por trás do evento, se houver."""
+        if ev.track_id is not None:
+            for o in pessoas:
+                if o.track_id == ev.track_id:
+                    return o
+        if not ev.bbox:
+            return None
+        melhor, melhor_iou = None, 0.3
+        for o in pessoas:
+            v = vision.iou(o.bbox, ev.bbox)
+            if v > melhor_iou:
+                melhor, melhor_iou = o, v
+        return melhor
+
+    @staticmethod
+    def _pessoa_real(classe: str, pessoa) -> bool:
+        """Há uma pessoa de verdade por trás deste alerta?
+
+        Alerta de área restrita saía com a "pessoa" a 0,22 de confiança, e o
+        que estava na foto era planta, cadeira ou a letra da legenda. O
+        registro de objeto já exige 0,70; o alerta, que chama alguém, não
+        exigia nada. Queda tem piso menor: o corpo deitado é justamente o
+        que o modelo vê com menos certeza.
+        """
+        if pessoa is None:
+            return False
+        piso = (settings.ACAO_PESSOA_CONF_QUEDA if classe == "queda"
+                else settings.ACAO_PESSOA_CONF_MIN)
+        x1, y1, x2, y2 = pessoa.bbox
+        return pessoa.confianca >= piso and (y2 - y1) >= settings.ACAO_PESSOA_ALTURA_MIN_PX
+
     def _confiavel(self, obj) -> bool:
         """Descarta o que o modelo classifica sem base suficiente.
 
@@ -1113,7 +1155,13 @@ class Inferencia:
         pessoas = [o.bbox for o in objetos if o.classe == "pessoa"]
         eventos += await self._eventos_de_chama(cam, quadro, pessoas)
 
+        pessoas_vistas = [o for o in objetos if o.classe == "pessoa"]
         for ev in eventos:
+            pessoa = self._pessoa_do_evento(ev, pessoas_vistas)
+            if ev.classe in ACOES_DE_PESSOA and not self._pessoa_real(ev.classe, pessoa):
+                log.info("%s: %s descartado — sem pessoa confirmada (%s)", cam.codigo,
+                         ev.rotulo, f"{pessoa.confianca:.2f}" if pessoa else "nenhuma")
+                continue
             caixa = None
             if ev.bbox:
                 x1, y1, x2, y2 = ev.bbox
@@ -1125,9 +1173,14 @@ class Inferencia:
             # existe justamente para alguém olhar. Aglomeração não tem caixa,
             # porque é da cena inteira: ali o recorte é o quadro todo.
             recorte = ev.bbox or (0, 0, largura, altura)
-            jpeg = await asyncio.to_thread(
-                video.recortar_bgr, quadro, recorte, 0.25 if ev.bbox else 0.0
-            )
+            if pessoa is not None and ev.bbox:
+                # Foto de corpo inteiro: é por ela que o operador confirma
+                # que é gente (ver `video.area_de_pessoa`).
+                jpeg = await asyncio.to_thread(video.recortar_pessoa, quadro, pessoa.bbox)
+            else:
+                jpeg = await asyncio.to_thread(
+                    video.recortar_bgr, quadro, recorte, 0.25 if ev.bbox else 0.0
+                )
 
             await processar_deteccao(db, DeteccaoIn(
                 tipo=TipoDeteccao.ACAO,

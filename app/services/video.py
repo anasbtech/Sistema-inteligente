@@ -534,6 +534,48 @@ def recortar_bgr(quadro, bbox_px, margem: float = 0.25) -> Optional[bytes]:
         return None
 
 
+def area_de_pessoa(bbox_px, larg: int, alt: int) -> tuple:
+    """A região de uma foto de pessoa: o corpo inteiro e um pouco em volta.
+
+    A caixa do detector nem sempre é o corpo todo: pessoa atrás de mesa ou
+    balcão, cortada pela borda, ou de quem o modelo só achou as pernas. Com
+    25% de margem a foto do alerta saía com meio corpo — e é por ela que o
+    operador decide se aquilo é gente.
+
+    Daí: retrato 3:4, folga de 35% dos lados, e altura de pelo menos 2,6
+    larguras da caixa — a proporção de um corpo de pé. A folga cresce para o
+    lado em que a pessoa continua: caixa encostada no alto do quadro (só as
+    pernas) cresce para cima até onde houver imagem, e o resto para baixo.
+    Nunca menor que 30% da altura do quadro, para quem está longe ainda ter
+    em volta o lugar onde estava.
+    """
+    x1, y1, x2, y2 = (float(v) for v in bbox_px)
+    w, h = max(1.0, x2 - x1), max(1.0, y2 - y1)
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    alt_r = max(h * 1.3, w * 2.6, alt * 0.30)
+    larg_r = max(w * 1.7, alt_r * 3 / 4)
+    alt_r = max(alt_r, larg_r * 4 / 3)
+    alt_r, larg_r = min(alt_r, alt), min(larg_r, larg)
+    nx1 = min(max(0.0, cx - larg_r / 2), larg - larg_r)
+    ny1 = min(max(0.0, cy - alt_r / 2), alt - alt_r)
+    return int(nx1), int(ny1), int(nx1 + larg_r), int(ny1 + alt_r)
+
+
+def recortar_pessoa(quadro, bbox_px) -> Optional[bytes]:
+    """JPEG da pessoa de corpo inteiro (ver `area_de_pessoa`)."""
+    try:
+        import cv2
+        alt, larg = quadro.shape[:2]
+        x1, y1, x2, y2 = area_de_pessoa(bbox_px, larg, alt)
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            return None
+        ok, buf = cv2.imencode(".jpg", quadro[y1:y2, x1:x2],
+                               [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        return buf.tobytes() if ok else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def recorte(codigo: str, url: str, bbox: Optional[list], margem: float = 0.35) -> Optional[bytes]:
     """Recorte do quadro corrente da câmera, na região da caixa.
 

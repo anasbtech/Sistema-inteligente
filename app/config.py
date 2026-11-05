@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # Abaixo disso o modelo acerta a presença mas erra o rótulo — foi onde
     # apareceu "motocicleta 44%" sobre um recorte sem moto nenhuma.
     INFERENCIA_CONFIANCA_MIN: float = 0.70
+    # Pessoa por trás de um alerta de ação (área restrita, invasão, corrida…).
+    # Antes não havia piso: alertas saíam com "pessoa" a 0,22 — planta,
+    # cadeira, letra da legenda. Mais baixo que o registro de objeto (0,70)
+    # porque quem está em movimento borra; queda mais baixo ainda.
+    ACAO_PESSOA_CONF_MIN: float = 0.60
+    ACAO_PESSOA_CONF_QUEDA: float = 0.45
+    ACAO_PESSOA_ALTURA_MIN_PX: int = 60
     # Caixa menor que isso tem poucos pixels para classificar: o modelo
     # arrisca o rótulo, e é daí que sai a maior parte das trocas de classe.
     INFERENCIA_LADO_MIN_PX: int = 44
