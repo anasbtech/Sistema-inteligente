@@ -5,6 +5,8 @@ O identificador é emitido aqui e em nenhum outro lugar. Veja
 """
 from __future__ import annotations
 
+import asyncio
+
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
@@ -322,16 +324,22 @@ async def desconhecidos(
     # Com agrupamento: extrai embeddings e forma grupos por ligação.
     import numpy as np
 
+    # Fora da linha principal do servidor: reanalisar 60 rostos leva dezenas
+    # de segundos com a máquina ocupada (medido: 46 s), e na linha principal
+    # isso parava o sistema inteiro para todo mundo enquanto durasse.
+    def _extrair():
+        saida = []
+        for d, cam in linhas:
+            jpeg = evidencias.ler(d.snapshot_key)
+            face = face_engine.extrair_de_recorte(jpeg) if jpeg is not None else None
+            if face is not None:
+                saida.append((d, cam, np.asarray(face.embedding, dtype=np.float32)))
+        return saida
+
     vetores, deteccoes_map = [], {}
-    for d, cam in linhas:
-        jpeg = evidencias.ler(d.snapshot_key)
-        if jpeg is None:
-            continue
-        face = face_engine.extrair_de_recorte(jpeg)
-        if face is None:
-            continue
+    for d, cam, vetor in await asyncio.to_thread(_extrair):
         deteccoes_map[len(vetores)] = (d, cam)
-        vetores.append(np.asarray(face.embedding, dtype=np.float32))
+        vetores.append(vetor)
 
     if not vetores:
         return {"janela_horas": horas, "agrupado": True, "grupos": []}
@@ -963,17 +971,32 @@ async def trajetoria(
     if ate is not None:
         filtros.append(Deteccao.ocorrido_em <= ate)
 
+    # Só as colunas que a trilha usa. Carregar a detecção inteira trazia junto,
+    # por relacionamento, a câmera, a ficha da pessoa e as amostras do rosto
+    # dela — para cada uma das ~2.500 capturas de quem passa o dia diante de
+    # uma câmera. Medido em 05/11/2026: 6,2 s para abrir a ficha do André.
     linhas = (
         await db.execute(
-            select(Deteccao, Camera).join(Camera, Camera.id == Deteccao.camera_id)
+            select(Deteccao.codigo, Deteccao.tipo, Deteccao.ocorrido_em,
+                   Deteccao.similaridade, Deteccao.snapshot_key,
+                   Camera.codigo.label("cam_codigo"), Camera.nome.label("cam_nome"),
+                   Camera.setor.label("cam_setor"))
+            .join(Camera, Camera.id == Deteccao.camera_id)
             .where(*filtros).order_by(Deteccao.ocorrido_em.asc())
         )
     ).all()
 
+    class _Cam:
+        __slots__ = ("codigo", "nome", "setor")
+
+        def __init__(self, codigo, nome, setor):
+            self.codigo, self.nome, self.setor = codigo, nome, setor
+
     folga = intervalo_min * 60
     passagens: List[dict] = []
     atual: Optional[dict] = None
-    for det, cam in linhas:
+    for det in linhas:
+        cam = _Cam(det.cam_codigo, det.cam_nome, det.cam_setor)
         quando = como_utc(det.ocorrido_em)
         rosto = det.tipo == TipoDeteccao.FACIAL
         sim = (det.similaridade or 0.0) if rosto else 0.0
