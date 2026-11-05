@@ -1356,7 +1356,6 @@ async function abrirCamera(codigo){
         <div style="min-width:0">
           <div id="camQuadro" style="position:relative;${medidaCaixa(razaoInicial)};background:#000;border-radius:var(--r-m);overflow:hidden;border:1px solid var(--line)">
             <canvas id="camModalFeed" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
-            <div id="camNomeOverlay" style="position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,0.6);color:#fff;padding:6px 10px;border-radius:4px;font-size:13px;font-weight:500;backdrop-filter:blur(4px)">${esc(c.nome)}</div>
           </div>
         </div>
         <div class="cam-ficha-lado">
