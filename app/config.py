@@ -346,6 +346,13 @@ class Settings(BaseSettings):
     # em objeto *difícil*, não em objeto *pequeno*: quem resolve o pequeno é a
     # varredura, que entrega o mesmo corpo com mais pixels.
     OBJECT_MODEL: str = str(RAIZ / "models" / "yolov8s.pt")
+    # Onde o detector roda. "auto" usa o vídeo integrado Intel pelo OpenVINO
+    # quando ele existe, e o PyTorch na CPU quando não. Medido em 05/11/2026
+    # num quadro da CAM-013 com o parque ligado: PyTorch na CPU 1.455 ms,
+    # OpenVINO no vídeo integrado 475 ms, com as mesmas pessoas — e a CPU
+    # fica livre para vídeo, facial e navegador. "pytorch", "openvino-gpu" e
+    # "openvino-cpu" forçam um motor.
+    OBJECT_MOTOR: str = "auto"
     # Medido na Produção 02, uma sala com quatro pessoas sentadas: a 0,65 o
     # modelo marcava só a pessoa da frente, e as três ao fundo ficavam sem
     # caixa nenhuma. A 0,25 saem as quatro. Mais abaixo começa a inventar —
@@ -538,7 +545,15 @@ class Settings(BaseSettings):
     # Intervalo entre duas rodadas do laço. Cada câmera em tela custa ~1,3s,
     # então com uma tela aberta a marcação se renova em ~1,3s e com nove em
     # ~12s. Zero desliga o laço.
-    INFERENCIA_SOBREPOSICAO_S: float = 1.0
+    # 0,3 s desde que o detector foi para o vídeo integrado (~0,4 s por
+    # câmera): a pausa de 1 s entre rodadas virava a maior parte do ciclo.
+    INFERENCIA_SOBREPOSICAO_S: float = 0.3
+    # Sem ninguém olhando, o laço da tela passa por todas as câmeras com
+    # imagem, sem prioridade no modelo e com esta pausa entre uma e outra:
+    # é o que faz a caixa aparecer na hora em que a tela abre. Só vale com o
+    # detector no vídeo integrado (ver `Inferencia._candidatas_da_renovacao`).
+    INFERENCIA_TELA_PRONTA: bool = True
+    INFERENCIA_TELA_PRONTA_PAUSA_S: float = 0.5
     # Teto de câmeras por rodada.
     #
     # Dezesseis porque é o maior arranjo que a tela oferece (4×4), e com a
@@ -595,11 +610,12 @@ class Settings(BaseSettings):
     # para quem tem movimento. Com nove tiles a renovação era de ~12 s por
     # câmera; o que se mexe passa a ser reanalisado bem mais vezes.
     # Teto de idade: mesmo sem movimento, reanalisa ao menos a cada tanto.
-    # 60 s e não 15: com o 4x4 aberto, reanalisar a cada 15 s as câmeras
-    # vazias e paradas consumia a rodada inteira (medido 05/11/2026: ~45 s
-    # por câmera), e quem entrava numa câmera com movimento esperava a vez.
-    # Quem entra em cena gera movimento, e movimento passa na frente.
-    INFERENCIA_SOBREPOSICAO_PARADA_MAX_S: float = 60.0
+    # 20 s com o detector no vídeo integrado (~0,4 s por análise). Se ele
+    # cair para a CPU, `_cena_parada` usa 60 s: ali reanalisar a cada 15 s as
+    # câmeras vazias e paradas consumia a rodada inteira (medido 05/11/2026:
+    # ~45 s por câmera no 4x4). Quem entra em cena gera movimento, e
+    # movimento passa na frente.
+    INFERENCIA_SOBREPOSICAO_PARADA_MAX_S: float = 20.0
     # Teto da validade de uma caixa publicada (ver `_validade_de`). Acima
     # do teto de "cena parada", para a câmera parada não piscar.
     INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S: float = 75.0

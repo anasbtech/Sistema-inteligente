@@ -21,6 +21,9 @@ for sufixo in ("", "-wal", "-shm"):
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{BANCO_TESTE}"
 os.environ["SECRET_KEY"] = "chave-de-teste-com-mais-de-32-caracteres-ok"
 os.environ["SIMULADOR"] = "false"
+# Os testes medem o comportamento do detector, não a velocidade: no PyTorch
+# eles não pagam a compilação do vídeo integrado e não dependem da máquina.
+os.environ["OBJECT_MOTOR"] = "pytorch"
 os.environ["ENV"] = "development"
 os.environ["REDIS_URL"] = ""
 # Desabilita SMTP nos testes para evitar tentativas reais de envio de email

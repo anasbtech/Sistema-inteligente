@@ -18,6 +18,9 @@ opencv-python-headless==4.10.0.84
 insightface==0.7.3
 onnxruntime==1.20.1          # troque por onnxruntime-gpu se houver GPU
 ultralytics==8.3.55
+# Detector no vídeo integrado Intel (OBJECT_MOTOR=auto): ~3x mais rápido que o
+# PyTorch na CPU e libera a CPU. Sem ele, o detector segue no PyTorch.
+openvino==2026.4.1
 # Placa veicular: dois modelos ONNX pequenos (~7 MB cada), baixados na
 # primeira leitura. Rodam sobre o onnxruntime acima — não trazem torch.
 open-image-models==0.6.0     # localiza a placa dentro do recorte do veículo

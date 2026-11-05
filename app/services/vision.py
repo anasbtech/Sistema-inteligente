@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional, Sequence, Tuple
@@ -424,10 +425,26 @@ def yolo_disponivel() -> bool:
         return False
 
 
+import threading as _threading
+
+_trava_carga = _threading.Lock()
+
+
 def obter_yolo():
     global _yolo
     if _yolo is not None:
         return _yolo
+    # A tela e a volta pedem o modelo ao mesmo tempo na partida; sem a trava
+    # cada uma carregava o seu — e no vídeo integrado isso são dezenas de
+    # segundos de compilação em dobro.
+    with _trava_carga:
+        if _yolo is not None:
+            return _yolo
+        return _obter_yolo()
+
+
+def _obter_yolo():
+    global _yolo
     try:
         from ultralytics import YOLO  # import tardio
     except ImportError as exc:
@@ -437,11 +454,86 @@ def obter_yolo():
             "O restante do sistema funciona sem ele."
         ) from exc
 
-    _yolo = YOLO(settings.OBJECT_MODEL)
-    if settings.DEVICE == "cuda":
-        _yolo.to("cuda")
-    log.info("YOLO '%s' carregado (%s)", settings.OBJECT_MODEL, settings.DEVICE)
+    _yolo = _carregar_openvino(YOLO)
+    if _yolo is None:
+        _yolo = YOLO(settings.OBJECT_MODEL)
+        if settings.DEVICE == "cuda":
+            _yolo.to("cuda")
+        log.info("YOLO '%s' carregado (PyTorch, %s)", settings.OBJECT_MODEL, settings.DEVICE)
     return _yolo
+
+
+MOTOR_DETECTOR = "pytorch"
+
+
+def _carregar_openvino(YOLO):
+    """O detector pelo OpenVINO, no vídeo integrado Intel quando houver.
+
+    Devolve `None` — e o PyTorch assume — quando o motor pedido é outro, o
+    OpenVINO não está instalado, não há o dispositivo, ou a análise de prova
+    falha. O modelo convertido é gerado na primeira vez, ao lado do `.pt`.
+    """
+    global MOTOR_DETECTOR
+    motor = (settings.OBJECT_MOTOR or "auto").lower()
+    if motor == "pytorch" or not str(settings.OBJECT_MODEL).endswith(".pt"):
+        return None
+    try:
+        import numpy as np
+        import openvino as ov
+    except ImportError:
+        if motor != "auto":
+            log.warning("OBJECT_MOTOR=%s, mas o OpenVINO não está instalado", motor)
+        return None
+    try:
+        dispositivos = ov.Core().available_devices
+        if motor in ("auto", "openvino-gpu") and any(d.startswith("GPU") for d in dispositivos):
+            alvo = "intel:gpu"
+        elif motor in ("auto", "openvino-cpu", "openvino-gpu"):
+            if motor == "auto":
+                # Na CPU o OpenVINO não ganhou do PyTorch neste parque (2.503
+                # contra 1.455 ms): sem vídeo integrado, fica o PyTorch.
+                return None
+            alvo = "intel:cpu"
+        else:
+            return None
+        pt = Path(settings.OBJECT_MODEL)
+        pasta = pt.with_name(pt.stem + "_openvino_model")
+        if not (pasta / f"{pt.stem}.xml").exists():
+            log.info("Convertendo %s para OpenVINO (só na primeira vez)...", pt.name)
+            YOLO(str(pt)).export(format="openvino", dynamic=True, half=False,
+                                 imgsz=settings.OBJECT_IMGSZ)
+        # O vídeo integrado compila o modelo ao abrir: medido, 135 s. Com o
+        # cache em disco a compilação acontece uma vez só. O Ultralytics cria
+        # o próprio `ov.Core()`, então o cache entra pela classe.
+        cache = pasta / "cache_gpu"
+        cache.mkdir(exist_ok=True)
+        if not getattr(ov.Core, "_seguranca_cache", False):
+            original = ov.Core
+
+            class _CoreComCache(original):
+                _seguranca_cache = True
+
+                def __init__(self, *a, **k):
+                    super().__init__(*a, **k)
+                    try:
+                        self.set_property({"CACHE_DIR": str(cache)})
+                    except Exception:  # noqa: BLE001
+                        pass
+            ov.Core = _CoreComCache
+        modelo = YOLO(str(pasta), task="detect")
+        # Vale para toda chamada (passada inteira, rastreio e ladrilhos), sem
+        # mexer em nenhuma delas.
+        modelo.overrides["device"] = alvo
+        # Análise de prova: se o dispositivo não responder, melhor descobrir
+        # aqui e cair no PyTorch do que na primeira câmera.
+        modelo(np.zeros((720, 1280, 3), np.uint8), imgsz=settings.OBJECT_IMGSZ,
+               conf=0.5, verbose=False)
+        MOTOR_DETECTOR = f"openvino ({alvo})"
+        log.info("YOLO '%s' carregado (OpenVINO, %s)", pasta.name, alvo)
+        return modelo
+    except Exception as exc:  # noqa: BLE001
+        log.warning("OpenVINO indisponível (%s); o detector segue no PyTorch.", exc)
+        return None
 
 
 def _area(b: Tuple[int, int, int, int]) -> float:

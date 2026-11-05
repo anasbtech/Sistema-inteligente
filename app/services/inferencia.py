@@ -588,19 +588,43 @@ class Inferencia:
         self._vez_sobreposicao = (inicio + quantas) % len(vistas)
         return (vistas + vistas)[inicio:inicio + quantas]
 
+    def _candidatas_da_renovacao(self) -> Tuple[list, bool]:
+        """Quem o laço da tela atende agora, e se é o modo de fundo.
+
+        Com alguém assistindo, as câmeras em tela. Sem ninguém, todas as que
+        já entregam imagem — devagar e sem prioridade no modelo —, para a
+        caixa estar pronta quando a tela abrir. Antes, abrir o 4x4 punha as
+        dezesseis na fila de uma vez, e a sala cheia esperava 10 a 17 s pela
+        primeira caixa (medido em 05/11/2026).
+        """
+        em_tela = [c for c, _ in self._camaras_em_tela()]
+        # Na CPU não há folga para isso: a análise de fundo disputaria com a
+        # volta completa, que é quem grava e alerta.
+        if em_tela or not settings.INFERENCIA_TELA_PRONTA                 or vision.MOTOR_DETECTOR == "pytorch":
+            return em_tela, False
+        prontas = []
+        for c in self._cameras_cache:
+            leitor = video._leitores.get(c.codigo)
+            if c.rtsp_url and leitor is not None and leitor.bgr_nativo is not None:
+                prontas.append(c)
+        return prontas, True
+
     async def _renovar_sobreposicoes(self) -> None:
         if not vision.yolo_disponivel():
             return
-        vistas = [c for c, l in self._camaras_em_tela()]
+        vistas, fundo = self._candidatas_da_renovacao()
         if not vistas:
             return
         feitas: set = set()
         for _ in range(len(self._fila_da_renovacao(vistas))):
-            # A cada passo, a câmera em tela analisada há mais tempo — e a
-            # que acabou de abrir, que nunca foi, vem antes de todas. Na fila
+            # A cada passo, a câmera analisada há mais tempo — e a que
+            # acabou de abrir, que nunca foi, vem antes de todas. Na fila
             # montada no começo da rodada, o tile aberto no meio dela esperava
             # a rodada inteira (~19 s no 4×4) para ganhar a primeira caixa.
-            agora_em_tela = [c for c, _ in self._camaras_em_tela() if c.codigo not in feitas]
+            agora, fundo_agora = self._candidatas_da_renovacao()
+            if fundo and not fundo_agora:
+                break        # alguém abriu a tela: recomeça com a prioridade dela
+            agora_em_tela = [c for c in agora if c.codigo not in feitas]
             if not agora_em_tela:
                 break
             cam = min(agora_em_tela, key=lambda c: self._ultimas_caixas.get(
@@ -629,7 +653,7 @@ class Inferencia:
             # acha é reaproveitado da volta, logo abaixo.
             objetos = await asyncio.to_thread(
                 vision.detectar_objetos, quadro, cam.limiar_objeto, False,
-                _classes_barradas(cam), "nunca", urgente=True,
+                _classes_barradas(cam), "nunca", urgente=not fundo,
             )
             objetos = self._fora_das_zonas_ignoradas(objetos, cam, quadro)
             objetos = self._identidade_em_tela(cam.codigo, objetos)
@@ -643,6 +667,9 @@ class Inferencia:
             caixas += self._rostos_ancorados(cam.codigo, caixas)
             await self._publicar_caixas(cam.codigo, caixas,
                                         quadro=quadro, t_quadro=t_quadro)
+            if fundo:
+                # Sem ninguém olhando, deixa o modelo para a volta completa.
+                await asyncio.sleep(settings.INFERENCIA_TELA_PRONTA_PAUSA_S)
 
     async def _cena_parada(self, codigo: str, quadro) -> bool:
         """A cena desta câmera continua igual à da última análise curta?
@@ -664,9 +691,12 @@ class Inferencia:
         except Exception:                                    # noqa: BLE001
             return False
         anterior = self._cena_tela.get(codigo)
+        limite = settings.INFERENCIA_SOBREPOSICAO_PARADA_MAX_S
+        if vision.MOTOR_DETECTOR == "pytorch":
+            limite = max(limite, 60.0)    # detector na CPU: ver config
         parada = False
         if (anterior is not None and anterior[0].shape == mini.shape
-                and agora - anterior[1] < settings.INFERENCIA_SOBREPOSICAO_PARADA_MAX_S
+                and agora - anterior[1] < limite
                 and codigo in self._ultimas_caixas):
             dif = np.abs(mini - anterior[0])
             fracao = float(np.count_nonzero(dif > settings.MOVIMENTO_DELTA)) / dif.size
