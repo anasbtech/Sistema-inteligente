@@ -503,6 +503,16 @@ class Deteccao(Base):
     # carro inteiro a placa ocupa poucos pixels, e conferir a leitura exigia
     # ampliar uma imagem que não aguenta ampliação.
     placa_snapshot_key: Mapped[str] = mapped_column(String(300), default="")
+    # Identificação do veículo (ver `services/veiculo.py`). A cor sai da
+    # imagem; marca, modelo e ano saem da placa consultada na base oficial —
+    # vazios quando não houve consulta, e a tela mostra "Veículo não
+    # identificado".
+    veiculo_cor: Mapped[str] = mapped_column(String(20), default="")
+    veiculo_cor_conf: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    veiculo_marca: Mapped[str] = mapped_column(String(60), default="")
+    veiculo_modelo: Mapped[str] = mapped_column(String(120), default="")
+    veiculo_ano: Mapped[str] = mapped_column(String(12), default="")
+    veiculo_fonte: Mapped[str] = mapped_column(String(40), default="")
     clip_key: Mapped[str] = mapped_column(String(300), default="")
 
     revisado: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

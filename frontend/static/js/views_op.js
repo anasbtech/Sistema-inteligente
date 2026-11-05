@@ -570,6 +570,10 @@ function eventoHTML(d){
     sub = d.pessoa ? d.pessoa.id_biometrico : `${pct100(d.similaridade)} — abaixo do limiar`;
   }else if(d.tipo === 'OBJETO'){
     titulo = rotuloClasse(d); sub = `confiança ${pct100(d.confianca)}`;
+    if(ehVeiculo(d)){
+      titulo = `${rotuloClasse(d)}${d.veiculo_cor ? ' ' + d.veiculo_cor : ''}`;
+      sub = `${marcaModelo(d)}${d.placa ? ' · ' + d.placa : ''} · ${pct100(d.confianca)}`;
+    }
   }else{
     titulo = rotuloClasse(d); sub = `${duracao(d.duracao_s)} · ${d.envolvidos || 1} pessoa(s)`;
   }
@@ -594,6 +598,8 @@ function aoVivoNovoEvento(d){
     codigo: d.codigo, tipo: d.tipo, classe: d.classe, bbox: d.bbox,
     confianca: d.confianca, similaridade: d.similaridade,
     ocorrido_em: d.ocorrido_em, duracao_s: d.duracao_s, envolvidos: d.envolvidos,
+    placa: d.placa, veiculo_cor: d.veiculo_cor, veiculo_cor_conf: d.veiculo_cor_conf,
+    veiculo_marca: d.veiculo_marca, veiculo_modelo: d.veiculo_modelo, veiculo_ano: d.veiculo_ano,
     camera: {codigo: d.camera_codigo, nome: d.camera_nome,
              cena: (camPorCodigo(d.camera_codigo) || {}).cena || 'rua'},
     pessoa: d.pessoa

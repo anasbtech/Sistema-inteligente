@@ -108,6 +108,18 @@ class Settings(BaseSettings):
     # (`scripts/ver_acao_video.py`). Não aparece no mosaico, na lista de
     # câmeras nem na contagem: existe só para o alerta ter a quem pertencer.
     VIDEO_TESTE_CAMERA: str = "VIDEO-TESTE"
+
+    # --- Identificação do veículo ------------------------------------------
+    # Marca, modelo e ano vêm da placa lida, consultada na base oficial
+    # (SINESP/SENATRAN ou o serviço que a instituição tiver). "desligado":
+    # sem consulta, o veículo fica "Veículo não identificado". "http": GET em
+    # VEICULO_CONSULTA_URL com {placa} substituído, token Bearer opcional, e
+    # resposta JSON com marca/modelo/ano/cor (ver `services/veiculo.py`).
+    VEICULO_CONSULTA: str = "desligado"
+    VEICULO_CONSULTA_URL: str = ""
+    VEICULO_CONSULTA_TOKEN: str = ""
+    VEICULO_CONSULTA_TIMEOUT_S: float = 4.0
+    VEICULO_CONSULTA_CACHE_S: float = 86400.0
     # Pessoa por trás de um alerta de ação (área restrita, invasão, corrida…).
     # Antes não havia piso: alertas saíam com "pessoa" a 0,22 — planta,
     # cadeira, letra da legenda. Mais baixo que o registro de objeto (0,70)
