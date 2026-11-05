@@ -633,7 +633,8 @@ async def adicionar_amostra(
 
 
 async def _capturas_viram_amostras(db: AsyncSession, pessoa: Pessoa,
-                                   codigos: List[str]) -> tuple[list, list]:
+                                   codigos: List[str],
+                                   exigir_amostra: bool = True) -> tuple[list, list]:
     """Converte capturas gravadas em amostras do template de `pessoa`.
 
     O embedding é extraído do recorte em disco, e não reaproveitado do que o
@@ -656,15 +657,26 @@ async def _capturas_viram_amostras(db: AsyncSession, pessoa: Pessoa,
                  for c in codigos if c not in achadas]
 
     aceitas = []
+    sem_amostra: list = []
     for det in deteccoes:
         jpeg = evidencias.ler(det.snapshot_key)
         if jpeg is None:
             recusadas.append({"codigo": det.codigo, "motivo": "recorte não está mais em disco"})
             continue
-        face = face_engine.extrair_de_recorte(jpeg)
+        face = face_engine.extrair_confirmado(jpeg)
         if face is None:
-            recusadas.append({"codigo": det.codigo,
-                              "motivo": "nenhum rosto legível no recorte"})
+            if exigir_amostra:
+                recusadas.append({"codigo": det.codigo,
+                                  "motivo": "nenhum rosto legível no recorte"})
+                continue
+            # Quem olhou disse que é a pessoa, e a IA não decide contra isso:
+            # a captura fica vinculada à ficha mesmo sem virar amostra (o
+            # rosto não pôde ser extraído — de costas, encoberto, borrado).
+            det.pessoa_id = pessoa.id
+            det.similaridade = None
+            det.expurgo_em = None
+            aceitas.append(det.codigo)
+            sem_amostra.append(det.codigo)
             continue
         db.add(AmostraFacial(
             pessoa_id=pessoa.id, embedding=face.embedding.tolist(),
@@ -689,7 +701,10 @@ async def _capturas_viram_amostras(db: AsyncSession, pessoa: Pessoa,
         )
 
     await db.flush()
-    await face_engine.recalcular_template(db, pessoa)
+    if len(sem_amostra) < len(aceitas):
+        await face_engine.recalcular_template(db, pessoa)
+    recusadas += [{"codigo": c, "motivo": "vinculada sem amostra: rosto não extraível",
+                   "vinculada": True} for c in sem_amostra]
     return aceitas, recusadas
 
 
@@ -719,7 +734,10 @@ async def amostras_de_capturas(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Informe ao menos uma captura.")
 
-    aceitas, recusadas = await _capturas_viram_amostras(db, pessoa, codigos)
+    # Vincular a uma ficha existente: o operador afirmou quem é, então a
+    # captura vincula mesmo que o rosto não vire amostra.
+    aceitas, recusadas = await _capturas_viram_amostras(db, pessoa, codigos,
+                                                        exigir_amostra=False)
 
     await audit.registrar(
         db, acao="BIO_AMOSTRA", severidade="warn", usuario=usuario,

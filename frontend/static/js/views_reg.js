@@ -445,8 +445,11 @@ async function vincularCapturaAPessoa(d){
     try{
       const r = await API.amostrasDeCapturas(bio, [d.codigo]);
       fecharModal();
+      const semAmostra = (r.recusadas || []).some(x => x.vinculada);
       toast('Captura vinculada',
-        `${esc(p.nome)} — ${r.amostras} amostra(s) no template.`, 'ok');
+        semAmostra
+          ? `${esc(p.nome)} — vinculada à ficha. O rosto não pôde ser extraído desta imagem, então ela não virou amostra do reconhecimento.`
+          : `${esc(p.nome)} — ${r.amostras} amostra(s) no template.`, 'ok');
       irPara(APP.view);
     }catch(e){ erroToast(e); }
   };

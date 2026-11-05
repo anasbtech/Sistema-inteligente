@@ -165,7 +165,9 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
     altura, largura = quadro.shape[:2]
 
     saida: List[FaceDetectada] = []
-    for face in modelo.get(quadro):
+    with _trava_detector:
+        faces = modelo.get(quadro)
+    for face in faces:
         x1, y1, x2, y2 = [int(v) for v in face.bbox]
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(largura, x2), min(altura, y2)
@@ -191,6 +193,76 @@ def extrair_faces(quadro: np.ndarray, min_qualidade: Optional[float] = None,
 # ----------------------------------------------------------------------
 # Álgebra
 # ----------------------------------------------------------------------
+import threading as _threading
+
+# O limiar do detector é um atributo do modelo compartilhado: baixá-lo para
+# uma tentativa sem trava faria a inferência ao vivo, no mesmo instante,
+# aceitar rosto a 15% de confiança.
+_trava_detector = _threading.Lock()
+
+
+def _com_limiar(limiar: float, quadro: np.ndarray):
+    modelo = obter_modelo()
+    det = getattr(modelo, "det_model", None)
+    with _trava_detector:
+        antes = getattr(det, "det_thresh", None)
+        try:
+            if det is not None and antes is not None:
+                det.det_thresh = limiar
+            return modelo.get(quadro)
+        finally:
+            if det is not None and antes is not None:
+                det.det_thresh = antes
+
+
+def extrair_confirmado(jpeg: bytes) -> Optional[FaceDetectada]:
+    """O rosto de uma captura que um humano já confirmou ser da pessoa.
+
+    `extrair_de_recorte` usa o detector como ele vem, e rosto de lado não
+    passa no limiar de 50% dele — o operador olhava, via que era a pessoa,
+    e o sistema recusava o vínculo. Aqui a decisão já foi tomada por quem
+    olhou, então o detector só precisa *achar* o rosto: limiar de 15%,
+    moldura maior, imagem ampliada e espelhada, nessa ordem, até achar.
+    """
+    face = extrair_de_recorte(jpeg)
+    if face is not None:
+        return face
+    try:
+        import cv2
+    except ImportError:
+        raise ModelosIndisponiveis("OpenCV não instalado.")
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    tentativas = []
+    for borda in (0.4, 0.8, 0.0):
+        alt, larg = img.shape[:2]
+        mold = cv2.copyMakeBorder(img, int(alt * borda), int(alt * borda),
+                                  int(larg * borda), int(larg * borda), cv2.BORDER_REPLICATE)
+        tentativas.append(mold)
+        if max(img.shape[:2]) < 160:
+            tentativas.append(cv2.resize(mold, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC))
+        tentativas.append(cv2.flip(mold, 1))
+    for quadro in tentativas:
+        melhor = None
+        for f in _com_limiar(settings.FACE_LIMIAR_CONFIRMADO, quadro):
+            x1, y1, x2, y2 = [int(v) for v in f.bbox]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(quadro.shape[1], x2), min(quadro.shape[0], y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            lm = getattr(f, "kps", None)
+            q = calcular_qualidade(quadro[y1:y2, x1:x2], float(f.det_score), lm, y2 - y1)
+            cand = FaceDetectada(bbox=(x1, y1, x2, y2),
+                                 embedding=np.asarray(f.normed_embedding, dtype=np.float32),
+                                 qualidade=q, det_score=float(f.det_score), landmarks=lm)
+            if melhor is None or cand.qualidade > melhor.qualidade:
+                melhor = cand
+        if melhor is not None:
+            return melhor
+    return None
+
+
 def extrair_de_recorte(jpeg: bytes) -> Optional[FaceDetectada]:
     """Refaz o embedding a partir do recorte gravado de uma captura.
 

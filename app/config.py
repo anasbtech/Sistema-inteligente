@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     # Abaixo disso o modelo acerta a presença mas erra o rótulo — foi onde
     # apareceu "motocicleta 44%" sobre um recorte sem moto nenhuma.
     INFERENCIA_CONFIANCA_MIN: float = 0.70
+    # Limiar do detector de rosto quando um humano já confirmou a pessoa
+    # (vincular captura à ficha). O padrão de 50% não acha rosto de lado; aqui
+    # o detector só precisa localizar o rosto, não decidir quem é.
+    FACE_LIMIAR_CONFIRMADO: float = 0.15
     # Câmera técnica dos alertas gerados pelo vídeo de teste
     # (`scripts/ver_acao_video.py`). Não aparece no mosaico, na lista de
     # câmeras nem na contagem: existe só para o alerta ter a quem pertencer.

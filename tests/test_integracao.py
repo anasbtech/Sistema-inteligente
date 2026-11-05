@@ -2556,3 +2556,50 @@ def test_alerta_de_sala_nao_repete_o_nome_quando_setor_e_igual(cliente):
     assert "em Reunião. Agora há 2" in igual and "(Reunião)" not in igual
     diferente = asyncio.run(rodar("CAM-SALA2", "Sala 3", "Diretoria"))
     assert "em Sala 3 (Diretoria)." in diferente
+
+
+def test_vincular_a_ficha_nao_e_recusado_pela_ia(cliente, monkeypatch):
+    """O operador confirmou que é a pessoa: sem rosto extraível, vincula mesmo assim.
+
+    Abrir um registro novo (BIO-N) continua exigindo amostra, porque registro
+    sem nenhuma amostra não reconheceria ninguém.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    from fastapi import HTTPException
+
+    from app.database import db_context, engine
+    from app.models import Camera, Deteccao, Pessoa, StatusCamera, TipoDeteccao
+    from app.routers import pessoas as rota
+    from app.services import evidencias, face_engine
+
+    monkeypatch.setattr(evidencias, "ler", lambda chave: b"jpeg")
+    monkeypatch.setattr(face_engine, "extrair_confirmado", lambda jpeg: None)
+
+    async def rodar(exigir):
+        async with db_context() as db:
+            cam = Camera(codigo=f"CAM-V{int(exigir)}", nome="V", setor="V",
+                         status=StatusCamera.MANUTENCAO, rtsp_url="")
+            p = Pessoa(nome=f"Pessoa Vinculo {int(exigir)}", id_biometrico=f"BIO-M-99990{int(exigir)}",
+                       sexo="M", sexo_emissao="M", status="FUNCIONARIO")
+            db.add_all([cam, p])
+            await db.flush()
+            det = Deteccao(codigo=f"FR-TESTE-V{int(exigir)}", tipo=TipoDeteccao.FACIAL,
+                           ocorrido_em=datetime.now(timezone.utc), camera_id=cam.id,
+                           snapshot_key="x.jpg", severidade=1)
+            db.add(det)
+            await db.flush()
+            try:
+                aceitas, recusadas = await rota._capturas_viram_amostras(
+                    db, p, [det.codigo], exigir_amostra=exigir)
+                resultado = (aceitas, recusadas, det.pessoa_id == p.id)
+            except HTTPException as exc:
+                resultado = exc.status_code
+        await engine.dispose()
+        return resultado
+
+    aceitas, recusadas, vinculada = asyncio.run(rodar(False))
+    assert aceitas == ["FR-TESTE-V0"] and vinculada
+    assert recusadas and recusadas[0]["vinculada"]
+    assert asyncio.run(rodar(True)) == 422
