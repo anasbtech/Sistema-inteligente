@@ -2633,3 +2633,33 @@ def test_veiculo_registra_cor_e_marca_pela_placa(cliente, monkeypatch):
     r = local.post("/deteccoes/ingest", json=corpo)
     d = cliente.get(f"/deteccoes/{r.json()['codigo']}").json()
     assert d["veiculo_marca"] == "" and d["veiculo_cor"] == "branco"
+
+
+def test_falso_positivo_facial_sai_da_ficha_da_pessoa(cliente):
+    """Rosto que não é da pessoa: marcado falso positivo, sai da trajetória dela."""
+    import asyncio
+    from datetime import datetime, timezone
+
+    from app.database import db_context, engine
+    from app.models import Camera, Deteccao, Pessoa, StatusCamera, TipoDeteccao
+
+    async def preparar():
+        async with db_context() as db:
+            cam = Camera(codigo="CAM-FP", nome="FP", setor="FP",
+                         status=StatusCamera.MANUTENCAO, rtsp_url="")
+            p = Pessoa(nome="Pessoa Falso Positivo", id_biometrico="BIO-F-999991",
+                       sexo="F", sexo_emissao="F", status="FUNCIONARIO", total_deteccoes=1)
+            db.add_all([cam, p])
+            await db.flush()
+            db.add(Deteccao(codigo="FR-TESTE-FP", tipo=TipoDeteccao.FACIAL,
+                            ocorrido_em=datetime.now(timezone.utc), camera_id=cam.id,
+                            pessoa_id=p.id, similaridade=0.52, limiar_aplicado=0.5,
+                            severidade=1))
+        await engine.dispose()
+
+    asyncio.run(preparar())
+    r = cliente.post("/deteccoes/FR-TESTE-FP/revisao", json={"veredito": "Falso positivo"})
+    assert r.status_code == 200, r.text
+    assert r.json()["pessoa"] is None
+    d = cliente.get("/deteccoes/FR-TESTE-FP").json()
+    assert d["pessoa"] is None and d["revisado"] and d["veredito"] == "Falso positivo"

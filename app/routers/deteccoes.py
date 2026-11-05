@@ -1009,12 +1009,29 @@ async def revisar(codigo: str, dados: RevisaoIn, request: Request,
     det.revisado_por = usuario.id
     det.revisado_em = datetime.now(timezone.utc)
 
+    # Rosto que não é da pessoa sai da ficha dela: ficava na trajetória e na
+    # miniatura da Base biométrica como se fosse ela. A captura continua no
+    # registro, e a pessoa com quem foi confundida vai para a sugerida — é
+    # o que a reavaliação do limiar precisa saber sobre o erro.
+    desvinculada = None
+    if (dados.veredito == "Falso positivo" and det.tipo == TipoDeteccao.FACIAL
+            and det.pessoa_id is not None):
+        pessoa = await db.get(Pessoa, det.pessoa_id)
+        if pessoa is not None:
+            desvinculada = pessoa.id_biometrico
+            pessoa.total_deteccoes = max(0, (pessoa.total_deteccoes or 0) - 1)
+        det.pessoa_sugerida_id = det.pessoa_id
+        det.pessoa_id = None
+        det.pessoa = None        # a resposta não pode devolver a pessoa antiga
+
     await audit.registrar(
-        db, acao="DET_REVISAO", descricao=f"Detecção revisada: {dados.veredito}",
+        db, acao="DET_REVISAO", descricao=f"Detecção revisada: {dados.veredito}"
+        + (f" — desvinculada de {desvinculada}" if desvinculada else ""),
         severidade="ok" if dados.veredito == "Confirmado" else "warn",
         usuario=usuario, alvo=det.codigo, finalidade=dados.observacao or "Revisão operacional",
         request=request,
-        metadados={"similaridade": det.similaridade, "limiar": det.limiar_aplicado},
+        metadados={"similaridade": det.similaridade, "limiar": det.limiar_aplicado,
+                   "desvinculada_de": desvinculada},
     )
     return DeteccaoOut.model_validate(det)
 
