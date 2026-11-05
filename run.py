@@ -317,6 +317,30 @@ def abrir_quiosque(url: str, atraso: float = 2.0) -> bool:
     return True
 
 
+def ceder_a_tela() -> None:
+    """Põe o servidor abaixo do navegador na fila da CPU (Windows).
+
+    A IA analisa as câmeras sem parar e mantém os 8 núcleos em 100%. Na mesma
+    prioridade, o navegador disputava a CPU com ela: o login que o servidor
+    responde em 0,25 s levava 2,6 s para aparecer na tela, e o mosaico
+    engasgava. Abaixo do normal, a IA continua com toda a CPU que sobra — que
+    é quase toda —, mas a tela, o vídeo e o mouse passam na frente.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ABAIXO_DO_NORMAL = 0x4000
+        k = ctypes.windll.kernel32
+        # O identificador do processo é um ponteiro de 64 bits; sem declarar
+        # os tipos, o ctypes o corta para 32 e a chamada falha calada.
+        k.GetCurrentProcess.restype = ctypes.c_void_p
+        k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        k.SetPriorityClass(k.GetCurrentProcess(), ABAIXO_DO_NORMAL)
+    except Exception:  # noqa: BLE001 — sem isso o sistema funciona igual
+        pass
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description="SEGURANÇA — Centro Integrado de Videomonitoramento",
@@ -340,6 +364,7 @@ def main() -> None:
     args = p.parse_args()
 
     checar_dependencias()
+    ceder_a_tela()
 
     # As variáveis precisam existir antes de `app.config` ser importado. Só
     # o que a linha de comando pediu de fato: o que ela não disse fica para

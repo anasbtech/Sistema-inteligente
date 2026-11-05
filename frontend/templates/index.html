@@ -7,9 +7,9 @@
 <meta name="color-scheme" content="dark">
 <title>SEGURANÇA — Centro Integrado de Videomonitoramento</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<!-- Fontes e three.js servidos pelo próprio sistema: sem internet, a tela
+     não pode ficar esperando o Google Fonts ou o cdnjs responder. -->
+<link rel="stylesheet" href="/static/fonts/fontes.css">
 <link rel="stylesheet" href="/static/css/seguranca.css">
 </head>
 <body>
@@ -274,7 +274,7 @@
      pode depender de a pessoa estar com a lista de alertas aberta. -->
 <div id="alertaFaixa" hidden></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/static/vendor/three.r128.min.js"></script>
 <script src="/static/js/three-auth.js"></script>
 <script src="/static/js/feeds.js"></script>
 <script src="/static/js/api.js"></script>

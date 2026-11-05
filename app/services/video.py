@@ -167,6 +167,61 @@ def _abrir(cv2, url: str, espera_ms: int):
         return cap
 
 
+# Câmera que não entrega imagem espera antes de tentar de novo, e cada vez
+# mais. O OpenCV abre **uma câmera por vez** no processo (medido: em threads,
+# a segunda só começa quando a primeira termina), e cada tentativa ocupa essa
+# fila pelo tempo limite inteiro. A CAM-018 — conecta e não manda imagem —
+# reabriu 18 vezes e falhou 6 em quatro horas, e a cada vez as outras 23
+# esperavam: na partida, o mosaico levava até 60 s para mostrar todas.
+PAUSA_FALHA_S = 60.0
+PAUSA_FALHA_MAX_S = 300.0
+_pausa_ate: Dict[str, float] = {}
+_falhas_seguidas: Dict[str, int] = {}
+
+
+def em_pausa(codigo: str) -> bool:
+    return time.monotonic() < _pausa_ate.get(codigo, 0.0)
+
+
+def _registrar_falha(codigo: str) -> float:
+    n = _falhas_seguidas.get(codigo, 0) + 1
+    _falhas_seguidas[codigo] = n
+    pausa = min(PAUSA_FALHA_MAX_S, PAUSA_FALHA_S * 2 ** (n - 1))
+    _pausa_ate[codigo] = time.monotonic() + pausa
+    return pausa
+
+
+# Senha de abertura, na ordem em que os leitores foram criados. A trava do
+# OpenCV não é uma fila: com 24 câmeras esperando, ela entregava a vez a
+# qualquer uma, e a primeira página do mosaico — pré-aberta primeiro — ficava
+# pronta por último tão frequentemente quanto primeiro.
+_fila_abertura = threading.Condition()
+_senha_proxima = 0
+_senha_atendida = 0
+
+
+def _tirar_senha() -> int:
+    global _senha_proxima
+    with _fila_abertura:
+        senha = _senha_proxima
+        _senha_proxima += 1
+        return senha
+
+
+def _abrir_na_vez(cv2, url: str, espera_ms: int, senha: int):
+    global _senha_atendida
+    with _fila_abertura:
+        # O teto é só uma garantia: se um leitor sumir sem abrir, a fila não
+        # para por causa dele.
+        _fila_abertura.wait_for(lambda: _senha_atendida >= senha, timeout=espera_ms / 1000 + 30)
+    try:
+        return _abrir(cv2, url, espera_ms)
+    finally:
+        with _fila_abertura:
+            _senha_atendida = max(_senha_atendida, senha + 1)
+            _fila_abertura.notify_all()
+
+
 class LeitorIndisponivel(RuntimeError):
     """OpenCV ausente — a ponte não pode funcionar."""
 
@@ -194,6 +249,10 @@ class Leitor:
         # aberta, e é essa diferença que decide o ritmo de decodificação.
         self._ultimo_uso_exibicao = 0.0
         self._parar = threading.Event()
+        # Se este leitor chegou a entregar imagem: é o que separa a câmera
+        # que caiu por um instante (reconecta já) da que nunca funcionou.
+        self.entregou = False
+        self._senha = _tirar_senha()
         self._thread = threading.Thread(
             target=self._rodar, daemon=True, name=f"rtsp-{codigo}"
         )
@@ -235,7 +294,7 @@ class Leitor:
         import cv2
 
         espera = _abertura_ms.get(self.codigo, ABERTURA_MS)
-        cap = _abrir(cv2, self.url, espera)
+        cap = _abrir_na_vez(cv2, self.url, espera, self._senha)
 
         if not cap.isOpened():
             # Da próxima vez, esta câmera — e só ela — ganha o dobro. Falhar
@@ -250,7 +309,10 @@ class Leitor:
                         _abertura_ms[self.codigo] / 1000)
             self.pronto.set()
             cap.release()
-            _descartar(self)
+            pausa = _registrar_falha(self.codigo)
+            log.warning("[%s] nova tentativa em %.0fs", self.codigo, pausa)
+            # Fica registrado, morto e com o erro: quem pedir durante a pausa
+            # recebe a falha na hora, sem abrir outra tentativa na fila.
             return
 
         log.info("[%s] fluxo RTSP aberto", self.codigo)
@@ -314,6 +376,10 @@ class Leitor:
             # JPEG de 1080p por quadro lido, e com três câmeras isso satura a
             # CPU e derruba a própria leitura do RTSP.
             self.bgr_nativo = quadro
+            if not self.entregou:
+                self.entregou = True
+                _falhas_seguidas.pop(self.codigo, None)
+                _pausa_ate.pop(self.codigo, None)
 
             # O detalhe sai do quadro intacto, antes de qualquer redução — e
             # só quando há espectador, porque é um encode a mais por quadro.
@@ -354,6 +420,11 @@ class Leitor:
         cap.release()
         self.pronto.set()
         self.pronto_detalhe.set()   # não deixa espectador de detalhe pendurado
+        if self.erro and not self.entregou:
+            # Conectou e nunca mandou imagem: mesma pausa de quem não abriu.
+            pausa = _registrar_falha(self.codigo)
+            log.warning("[%s] nova tentativa em %.0fs", self.codigo, pausa)
+            return
         _descartar(self)
 
 
@@ -393,7 +464,8 @@ def obter(codigo: str, url: str) -> Leitor:
 
     with _trava:
         leitor = _leitores.get(codigo)
-        if leitor is None or not leitor.vivo:
+        # Morto e em pausa: devolve o mesmo, com o erro, sem nova tentativa.
+        if leitor is None or (not leitor.vivo and not em_pausa(codigo)):
             leitor = Leitor(codigo, url)
             _leitores[codigo] = leitor
         leitor.tocar()

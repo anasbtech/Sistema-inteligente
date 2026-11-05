@@ -199,7 +199,31 @@ class Inferencia:
                 pass
             self._task = None
 
+    async def _aquecer_leitores(self) -> None:
+        """Abre o fluxo de todas as câmeras na partida, na ordem do mosaico.
+
+        O OpenCV abre uma câmera por vez, ~3 s cada: as 24 levam pouco mais
+        de um minuto. Deixadas para quando a volta da IA chegasse a cada
+        uma, abriam na ordem dela — e a primeira página do mosaico, que é a
+        que a tela mostra ao abrir, chegava a esperar o minuto inteiro.
+        """
+        # A primeira volta leva ~4,5 min; sem folga, os leitores abertos agora
+        # que a volta só toca no fim fechariam por ociosidade antes disso — e
+        # reabrir custa a fila de novo. A volta corrige o valor ao terminar.
+        video.definir_ocioso(600.0)
+        try:
+            async with db_context() as db:
+                cameras = (await db.execute(
+                    select(Camera).where(Camera.status == StatusCamera.ONLINE)
+                    .order_by(Camera.codigo))).scalars().unique().all()
+            for cam in cameras:
+                if cam.rtsp_url:
+                    video.obter(cam.codigo, cam.rtsp_url)
+        except Exception as exc:  # noqa: BLE001 — a volta abre do mesmo jeito
+            log.warning("Não foi possível pré-abrir as câmeras: %s", exc)
+
     async def _loop(self) -> None:
+        await self._aquecer_leitores()
         # Deixa a API subir antes de disputar CPU com ela.
         await asyncio.sleep(4)
         while True:
@@ -521,7 +545,18 @@ class Inferencia:
         vistas = [c for c, l in self._camaras_em_tela()]
         if not vistas:
             return
-        for cam in self._fila_da_renovacao(vistas):
+        feitas: set = set()
+        for _ in range(len(self._fila_da_renovacao(vistas))):
+            # A cada passo, a câmera em tela analisada há mais tempo — e a
+            # que acabou de abrir, que nunca foi, vem antes de todas. Na fila
+            # montada no começo da rodada, o tile aberto no meio dela esperava
+            # a rodada inteira (~19 s no 4×4) para ganhar a primeira caixa.
+            agora_em_tela = [c for c, _ in self._camaras_em_tela() if c.codigo not in feitas]
+            if not agora_em_tela:
+                break
+            cam = min(agora_em_tela, key=lambda c: self._ultimas_caixas.get(
+                c.codigo, {}).get("em", float("-inf")))
+            feitas.add(cam.codigo)
             t_quadro = time.monotonic()
             quadro = await asyncio.to_thread(
                 video.quadro_bgr, cam.codigo, cam.rtsp_url, True)
