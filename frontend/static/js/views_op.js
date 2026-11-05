@@ -476,7 +476,7 @@ function montarMosaico(){
     // esticado ao dobro — e com o canvas limitado a 900px, esticado duas
     // vezes. Pedir nativo só aqui custa um encode a mais, de um espectador.
     if(cam) FEED.register(cv, cam,
-      {zonas: celulas <= 4, noise: celulas <= 9, hd: celulas === 1});
+      {zonas: celulas <= 9, noise: celulas <= 9, hd: celulas === 1});
   });
   $$('#mosaic .tile[data-cam]').forEach(t => {
     t.onclick = () => {
@@ -1607,37 +1607,16 @@ function abrirEditorZonas(cam){
         ctx.beginPath(); ctx.moveTo(0, H*i/8); ctx.lineTo(W, H*i/8); ctx.stroke();
       }
     }
-    zonas.forEach((z, i) => {
-      const pts = z.pontos;
-      if(!pts.length) return;
-      const ativo = i === atual;
-      ctx.save();
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.beginPath();
-      pts.forEach((p, k) => { const x = p[0]*W, y = p[1]*H; k ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
-      if(z.tipo === 'POLIGONO' && pts.length > 2){
-        ctx.closePath();
-        ctx.fillStyle = z.cor + (ativo ? '2A' : '1F');
-        ctx.fill();
-      }
-      ctx.setLineDash(z.tipo === 'LINHA' ? [] : [6, 4]);
-      // Mesmo contorno escuro do mosaico: aqui se desenha sobre o quadro
-      // real da câmera, então o fundo é tão claro quanto lá — e é pior
-      // errar o traçado por não enxergá-lo do que por descuido.
-      ctx.strokeStyle = 'rgba(0,0,0,0.60)';
-      ctx.lineWidth = ativo ? 5 : 4;
-      ctx.stroke();
-      ctx.strokeStyle = z.cor;
-      ctx.lineWidth = ativo ? 2.4 : 1.8;
-      ctx.stroke(); ctx.setLineDash([]);
-      // Alça em cada vértice, só na zona em edição: é o que mostra onde se
-      // clicou e permite conferir a forma antes de salvar.
-      if(ativo) pts.forEach(p => {
-        ctx.beginPath(); ctx.arc(p[0]*W, p[1]*H, 4, 0, Math.PI*2);
-        ctx.fillStyle = z.cor; ctx.fill();
-        ctx.lineWidth = 1.5; ctx.strokeStyle = '#0A1218'; ctx.stroke();
-      });
-      ctx.restore();
+    // O mesmo desenho do mosaico: o que se configura aqui é o que o
+    // operador vai ver na tela.
+    drawZonas(ctx, {zonas: zonas.filter(z => z.pontos.length > 1)}, W, H, 1);
+    // Alça em cada vértice, só na zona em edição: é o que mostra onde se
+    // clicou e permite conferir a forma antes de salvar.
+    const z = zonas[atual];
+    if(z) z.pontos.forEach(p => {
+      ctx.beginPath(); ctx.arc(p[0]*W, p[1]*H, 5, 0, Math.PI*2);
+      ctx.fillStyle = '#F2F5F8'; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = z.cor; ctx.stroke();
     });
   }
 

@@ -94,37 +94,163 @@ const POLL_MS=100;
 
 
 /* ---------- Overlays sobre a imagem da câmera ---------- */
-/* A zona é desenhada por cima do que a câmera vê, e o que ela vê muda: a
-   mesma linha cai sobre grama ao sol, parede branca e asfalto. Cor sozinha
-   não resolve — sobre a grama da Garagem a linha clara sumia.
+/* Zona desenhada como sinalização de segurança, e não como rabisco:
 
-   Por isso o traço vai duas vezes: um vulto escuro por baixo, mais largo, e
-   a cor da zona por cima. O contorno não depende do fundo nem da cor
-   escolhida, e é o que faz a linha existir sobre claro.
+   - área (polígono): preenchimento leve com listras diagonais finas — o
+     padrão de "área demarcada" — e contorno contínuo; vértices marcados;
+   - perímetro (linha): traço de cerca, com marcas perpendiculares a
+     intervalos regulares e extremidades fechadas;
+   - etiqueta com o que a zona faz e o nome dela ("ÁREA RESTRITA · RACKS"),
+     para quem olha o mosaico saber o que aquela linha vigia sem abrir a
+     configuração;
+   - zona `ignorar` discreta: cinza, tracejada e sem etiqueta. Ela existe
+     para o detector, não para o operador.
 
-   A espessura acompanha o tile, como já acontece com as caixas do worker.
-   Antes era fixa em 1,3px: no mosaico 4×4 ficava grossa e no 1×1, onde a
-   célula é a tela inteira, virava fio de cabelo. */
+   Todo traço vai duas vezes, um vulto escuro por baixo e a cor por cima: a
+   mesma linha cai sobre grama ao sol, parede branca e asfalto, e cor
+   sozinha some sobre claro. As medidas são em pixel de tela (`k`), para a
+   zona ter a mesma presença no 4×4 e no 1×1. */
+const ROTULO_REGRA_ZONA={
+  restrita:'ÁREA RESTRITA', invasao:'PERÍMETRO', veiculo_proibido:'VEÍCULO PROIBIDO',
+  contrafluxo:'SENTIDO ÚNICO', contagem:'CONTAGEM', permanencia:'PERMANÊNCIA',
+  aglomeracao:'AGLOMERAÇÃO'
+};
+function rotuloZona(z){
+  const r=z.regras||{};
+  const regra=Object.keys(ROTULO_REGRA_ZONA).find(k=>r[k]);
+  const tipo=regra?ROTULO_REGRA_ZONA[regra]:(z.tipo==='LINHA'?'LINHA':'ZONA');
+  const nome=(z.nome||'').trim().toUpperCase();
+  return nome&&nome!==tipo?`${tipo} · ${nome}`:tipo;
+}
+function _hexRgba(cor,a){
+  const h=(cor||'#35A7DE').replace('#','');
+  const n=parseInt(h.length===3?h.split('').map(c=>c+c).join(''):h.slice(0,6),16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;
+}
+function _tracoDuplo(ctx,cor,s,larg){
+  ctx.strokeStyle='rgba(0,0,0,0.55)';
+  ctx.lineWidth=(larg+2.4)*s;
+  ctx.stroke();
+  ctx.strokeStyle=cor;
+  ctx.lineWidth=larg*s;
+  ctx.stroke();
+}
+function _etiquetaZona(ctx,texto,x,y,cor,s,vis){
+  ctx.font=`700 ${10*s}px "IBM Plex Sans",system-ui,sans-serif`;
+  const pad=6*s,alt=17*s,tw=ctx.measureText(texto).width;
+  const larg=tw+pad*2+9*s;
+  // Dentro do que aparece na tela: a etiqueta da zona que encosta na borda,
+  // ou cujo vértice cai na parte que o mosaico recorta, não pode sumir.
+  x=Math.min(Math.max(vis.x0+4*s,x),vis.x1-larg-4*s);
+  y=Math.min(Math.max(vis.y0+4*s,y),vis.y1-alt-4*s);
+  ctx.fillStyle='rgba(8,14,20,0.82)';
+  ctx.beginPath();
+  if(ctx.roundRect)ctx.roundRect(x,y,larg,alt,3*s);else ctx.rect(x,y,larg,alt);
+  ctx.fill();
+  ctx.fillStyle=cor;
+  ctx.fillRect(x,y,3*s,alt);                         // faixa da cor da zona
+  ctx.beginPath();ctx.arc(x+9*s,y+alt/2,2.6*s,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#F2F5F8';
+  ctx.textBaseline='middle';
+  ctx.fillText(texto,x+pad+9*s,y+alt/2+0.5*s);
+}
 function drawZonas(ctx,cam,W,H,k){
-  // Mesma medida em pixel de tela das caixas: no 2x2 o canvas também é
-  // maior que o tile, e a linha chegava reduzida à tela.
-  const s=k||1;
+  const s0=k||1;
+  // No tile grande (1×1, ficha) etiqueta e traço crescem um quarto: na tela
+  // inteira a medida do mosaico ficava miúda.
+  const s=s0*(W/s0>=700?1.25:1);
+  // A parte do quadro que aparece no tile. O mosaico desenha o quadro
+  // maior que o tile (recorte para preencher) e desloca a origem; daqui se
+  // tira o que de fato está visível.
+  const T=ctx.getTransform();
+  const vis={x0:Math.max(0,-T.e/T.a),y0:Math.max(0,-T.f/T.d)};
+  vis.x1=Math.min(W,vis.x0+ctx.canvas.width/T.a);
+  vis.y1=Math.min(H,vis.y0+ctx.canvas.height/T.d);
+  const dentro=([x,y])=>x>=vis.x0&&x<=vis.x1&&y>=vis.y0&&y<=vis.y1;
+  // Etiqueta só onde cabe: no 4×4 dezesseis etiquetas cobririam a cena.
+  const comEtiqueta=W/s0>=300;
   (cam.zonas||[]).forEach(z=>{
-    const pts=z.pontos||[];
+    const pts=(z.pontos||[]).map(p=>[p[0]*W,p[1]*H]);
     if(pts.length<2)return;
+    const r=z.regras||{};
+    const ignorar=!!r.ignorar;
+    const cor=ignorar?'#9AA5B1':(z.cor||'#35A7DE');
     ctx.save();
     ctx.lineJoin='round';ctx.lineCap='round';
-    ctx.beginPath();
-    pts.forEach((p,i)=>{const x=p[0]*W,y=p[1]*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
-    if(z.tipo==='POLIGONO'){ctx.closePath();ctx.fillStyle=z.cor+'1F';ctx.fill()}
-    ctx.setLineDash(z.tipo==='LINHA'?[]:[6*s,4*s]);
-    ctx.strokeStyle='rgba(0,0,0,0.60)';
-    ctx.lineWidth=Math.max(3.4,4.6*s);
-    ctx.stroke();
-    ctx.strokeStyle=z.cor;
-    ctx.lineWidth=Math.max(1.7,2.3*s);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const caminho=fechar=>{
+      ctx.beginPath();
+      pts.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+      if(fechar)ctx.closePath();
+    };
+
+    if(z.tipo==='POLIGONO'){
+      caminho(true);
+      if(ignorar){
+        ctx.setLineDash([4*s,4*s]);
+        ctx.strokeStyle=_hexRgba(cor,0.55);ctx.lineWidth=1.2*s;ctx.stroke();
+        ctx.restore();return;
+      }
+      ctx.fillStyle=_hexRgba(cor,0.10);
+      ctx.fill();
+      // Listras diagonais finas, só dentro da área.
+      ctx.save();
+      ctx.clip();
+      const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+      const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+      const passo=14*s;
+      ctx.strokeStyle=_hexRgba(cor,0.16);ctx.lineWidth=1.2*s;
+      ctx.beginPath();
+      for(let d=x0-(y1-y0);d<x1;d+=passo){ctx.moveTo(d,y1);ctx.lineTo(d+(y1-y0),y0)}
+      ctx.stroke();
+      ctx.restore();
+      caminho(true);
+      _tracoDuplo(ctx,cor,s,2);
+    }else{
+      // Perímetro: a linha da cerca, mais grossa que o contorno de área.
+      caminho(false);
+      _tracoDuplo(ctx,cor,s,2.6);
+      // Marcas perpendiculares a cada ~26 px, como os mourões de uma cerca.
+      ctx.strokeStyle=cor;ctx.lineWidth=1.6*s;
+      for(let i=1;i<pts.length;i++){
+        const [ax,ay]=pts[i-1],[bx,by]=pts[i];
+        const L=Math.hypot(bx-ax,by-ay); if(L<1)continue;
+        const ux=(bx-ax)/L,uy=(by-ay)/L,nx=-uy,ny=ux,m=5*s;
+        for(let d=13*s;d<L-6*s;d+=26*s){
+          const cx=ax+ux*d,cy=ay+uy*d;
+          ctx.beginPath();ctx.moveTo(cx-nx*m,cy-ny*m);ctx.lineTo(cx+nx*m,cy+ny*m);
+          ctx.strokeStyle='rgba(0,0,0,0.55)';ctx.lineWidth=3.4*s;ctx.stroke();
+          ctx.strokeStyle=cor;ctx.lineWidth=1.6*s;ctx.stroke();
+        }
+      }
+    }
+
+    // Vértices: onde a zona dobra, que é o que se ajusta na configuração.
+    const ext=z.tipo==='LINHA'?[pts[0],pts[pts.length-1]]:pts;
+    ext.forEach(([x,y])=>{
+      ctx.beginPath();ctx.arc(x,y,(z.tipo==='LINHA'?4:2.8)*s,0,Math.PI*2);
+      ctx.fillStyle=cor;ctx.fill();
+      ctx.lineWidth=1.4*s;ctx.strokeStyle='rgba(0,0,0,0.65)';ctx.stroke();
+    });
+
+    if(comEtiqueta){
+      const texto=rotuloZona(z);
+      let ex,ey;
+      if(z.tipo==='LINHA'){
+        // No meio do segmento mais longo, acima da linha.
+        let melhor=0,mi=1;
+        for(let i=1;i<pts.length;i++){
+          const L=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);
+          if(L>melhor){melhor=L;mi=i}
+        }
+        ex=(pts[mi][0]+pts[mi-1][0])/2-30*s; ey=(pts[mi][1]+pts[mi-1][1])/2-26*s;
+      }else{
+        // No vértice visível mais alto, logo acima dele.
+        const cand=pts.filter(dentro);
+        const topo=(cand.length?cand:pts).reduce((a,b)=>b[1]<a[1]?b:a);
+        ex=topo[0]-8*s; ey=topo[1]-22*s;
+      }
+      _etiquetaZona(ctx,texto,ex,ey,cor,s,vis);
+    }
     ctx.restore();
   });
 }
