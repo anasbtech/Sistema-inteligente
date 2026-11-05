@@ -293,7 +293,12 @@ async def alertar_presenca(db: AsyncSession, cam: Camera,
     else:
         titulo = f"Entrada em {cam.nome}"
 
-    detalhe = (f"{quantidade} {pessoas} {verbo} em {cam.nome} ({cam.setor}). "
+    # O setor entre parênteses só quando acrescenta algo: na CAM-015 câmera
+    # e setor se chamam "Reunião", e o texto saía "em Reunião (Reunião)".
+    onde = cam.nome
+    if cam.setor and cam.setor.strip().lower() != cam.nome.strip().lower():
+        onde += f" ({cam.setor})"
+    detalhe = (f"{quantidade} {pessoas} {verbo} em {onde}. "
                f"Agora há {total} na sala. ")
     if nomes:
         # "na sala", e não "entrou": o facial lê quem está em cena no quadro,

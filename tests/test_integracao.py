@@ -2532,3 +2532,27 @@ def test_video_teste_vira_alerta_marcado_com_o_print(cliente):
 def test_video_teste_so_aceita_chamada_desta_maquina(cliente):
     r = cliente.post("/deteccoes/video-teste", json=_disparo_de_teste())
     assert r.status_code == 403
+
+
+def test_alerta_de_sala_nao_repete_o_nome_quando_setor_e_igual(cliente):
+    """CAM-015: câmera e setor "Reunião" — o texto saía "em Reunião (Reunião)"."""
+    import asyncio
+    from app.database import db_context, engine
+    from app.models import Camera, StatusCamera
+    from app.routers.deteccoes import alertar_presenca
+
+    async def rodar(codigo, nome, setor):
+        async with db_context() as db:
+            cam = Camera(codigo=codigo, nome=nome, setor=setor,
+                         status=StatusCamera.MANUTENCAO, rtsp_url="")
+            db.add(cam)
+            await db.flush()
+            alerta = await alertar_presenca(db, cam, 1, 2)
+            texto = alerta.detalhe
+        await engine.dispose()
+        return texto
+
+    igual = asyncio.run(rodar("CAM-SALA1", "Reunião", "Reunião"))
+    assert "em Reunião. Agora há 2" in igual and "(Reunião)" not in igual
+    diferente = asyncio.run(rodar("CAM-SALA2", "Sala 3", "Diretoria"))
+    assert "em Sala 3 (Diretoria)." in diferente
