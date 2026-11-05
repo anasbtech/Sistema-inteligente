@@ -58,3 +58,19 @@ def test_pessoa_inteira_ganha_folga_e_cabe_no_quadro():
     x1, y1, x2, y2 = video.area_de_pessoa((1200, 300, 1270, 560), larg, alt)
     assert x2 <= larg and y2 <= alt and x1 >= 0 and y1 >= 0
     assert x1 <= 1200 and y1 <= 300 and y2 >= 560
+
+
+def test_miniatura_do_aviso_e_pequena_e_valida():
+    """A foto vai no próprio aviso: data URL de JPEG, reduzida."""
+    import base64
+
+    import cv2
+    import numpy as np
+
+    from app.routers.deteccoes import _miniatura
+    ok, jpg = cv2.imencode(".jpg", np.random.default_rng(1).integers(0, 255, (1080, 1920, 3), np.uint8))
+    url = _miniatura(jpg.tobytes())
+    assert url.startswith("data:image/jpeg;base64,")
+    img = cv2.imdecode(np.frombuffer(base64.b64decode(url.split(",", 1)[1]), np.uint8), 1)
+    assert max(img.shape[:2]) <= 440
+    assert _miniatura(None) == "" and _miniatura(b"nao e jpeg") == ""

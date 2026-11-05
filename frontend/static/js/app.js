@@ -602,7 +602,16 @@ const ALERTA = {
        pés. A moldura fixa é o que dá ao cartão a mesma forma em todo alerta. */
     if(cv && img){
       molduraVazia(cv, 196, 216);
-      carregarRecorte(cv, img.codigo, 196, img.fonte, 216);
+      // A miniatura vem no próprio aviso: a foto aparece junto com ele, sem
+      // esperar outra ida ao servidor. Sem ela, busca como antes.
+      if(a.miniatura){
+        const foto = new Image();
+        foto.onload = () => encaixarRecorte(cv, foto, 196, 216);
+        foto.onerror = () => carregarRecorte(cv, img.codigo, 196, img.fonte, 216);
+        foto.src = a.miniatura;
+      }else{
+        carregarRecorte(cv, img.codigo, 196, img.fonte, 216);
+      }
     }
     // O foco vai para a ação principal: Enter abre o alerta sem precisar do mouse.
     setTimeout(() => { const b = $('[data-al-ver]', faixa); if(b) b.focus(); }, 60);

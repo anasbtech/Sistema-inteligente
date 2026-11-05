@@ -93,6 +93,33 @@ async def _proximo_codigo(db: AsyncSession, tipo: TipoDeteccao) -> str:
     return f"{pfx}-{ano}{numero:06d}"
 
 
+def _miniatura(jpeg: Optional[bytes], lado: int = 440) -> str:
+    """A foto do alerta reduzida, como data URL, para ir junto com o aviso.
+
+    O pop-up buscava a foto numa segunda requisição depois de aparecer, e
+    com o servidor ocupado ela chegava segundos depois — o aviso abria com
+    a moldura vazia. Indo no próprio evento (~20 KB), a foto aparece com ele.
+    """
+    if not jpeg:
+        return ""
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return ""
+        alt, larg = img.shape[:2]
+        fator = lado / max(alt, larg)
+        if fator < 1:
+            img = cv2.resize(img, (max(1, int(larg * fator)), max(1, int(alt * fator))),
+                             interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        return ("data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+                if ok else "")
+    except Exception:  # noqa: BLE001 — sem miniatura o pop-up busca a foto
+        return ""
+
+
 async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                         pessoa: Optional[Pessoa],
                         notificar: bool = True,
@@ -240,6 +267,8 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
             "camera_nome": cam.nome,
             "deteccao_codigo": det.codigo,
             "tem_imagem": bool(det.snapshot_key),
+            "miniatura": _miniatura(evidencias.ler(det.snapshot_key)
+                                    if det.snapshot_key else None),
             "ocorrido_em": det.ocorrido_em,
         })
         if det.severidade >= 4:
@@ -350,6 +379,8 @@ async def alertar_presenca(db: AsyncSession, cam: Camera,
         # Alerta de sala não nasce de detecção: a imagem é do próprio alerta.
         "deteccao_codigo": det.codigo if det is not None else "",
         "tem_imagem": bool(chave),
+        "miniatura": _miniatura(jpeg or (evidencias.ler(det.snapshot_key)
+                                         if det is not None and det.snapshot_key else None)),
         "ocorrido_em": agora,
     })
     if alerta.severidade >= 4:
