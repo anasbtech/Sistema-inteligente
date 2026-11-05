@@ -325,6 +325,12 @@ def ceder_a_tela() -> None:
     responde em 0,25 s levava 2,6 s para aparecer na tela, e o mosaico
     engasgava. Abaixo do normal, a IA continua com toda a CPU que sobra — que
     é quase toda —, mas a tela, o vídeo e o mouse passam na frente.
+
+    Desligado por padrão (liga com SEGURANCA_PRIORIDADE_BAIXA=1): medido em
+    05/11/2026, com o mosaico 4x4 aberto o navegador passa na frente também
+    da análise da tela, que foi de 1,2-2,4 s para 4-8 s por câmera — e 14 das
+    16 câmeras ficaram sem caixa em 40 s. Caixa faltando é pior que login
+    lento.
     """
     if sys.platform != "win32":
         return
@@ -364,7 +370,8 @@ def main() -> None:
     args = p.parse_args()
 
     checar_dependencias()
-    ceder_a_tela()
+    if os.environ.get("SEGURANCA_PRIORIDADE_BAIXA") == "1":
+        ceder_a_tela()
 
     # As variáveis precisam existir antes de `app.config` ser importado. Só
     # o que a linha de comando pediu de fato: o que ela não disse fica para

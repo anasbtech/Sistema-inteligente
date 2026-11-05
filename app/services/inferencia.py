@@ -221,6 +221,17 @@ class Inferencia:
                     video.obter(cam.codigo, cam.rtsp_url)
         except Exception as exc:  # noqa: BLE001 — a volta abre do mesmo jeito
             log.warning("Não foi possível pré-abrir as câmeras: %s", exc)
+        # A primeira análise carrega o modelo e prepara o tamanho de entrada:
+        # medido, 19 s. Feito agora, enquanto as câmeras ainda conectam, a
+        # primeira caixa da tela não paga essa conta.
+        if vision.yolo_disponivel():
+            try:
+                import numpy as np
+                vazio = np.zeros((720, 1280, 3), np.uint8)
+                await asyncio.to_thread(vision.detectar_objetos, vazio, 0.5, False,
+                                        set(), "nunca", urgente=True)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Aquecimento do detector falhou: %s", exc)
 
     async def _loop(self) -> None:
         await self._aquecer_leitores()
@@ -293,6 +304,7 @@ class Inferencia:
         for cam in self._ordem_da_volta(cameras):
             if not cam.rtsp_url:
                 continue
+            await self._ceder_a_tela()
             try:
                 async with db_context() as db:
                     await self._processar(db, cam)
@@ -304,6 +316,29 @@ class Inferencia:
                 self.falhas += 1
                 self.ultima_falha = f"{cam.codigo}: {exc}"
                 log.warning("Inferência falhou em %s: %s", cam.codigo, exc)
+
+    def _tela_em_atraso(self, agora: Optional[float] = None) -> bool:
+        """Alguma câmera em tela está há tempo demais sem análise?"""
+        agora = time.monotonic() if agora is None else agora
+        limite = settings.INFERENCIA_TELA_ATRASO_MAX_S
+        return any(
+            agora - self._ultimas_caixas.get(c.codigo, {}).get("em", float("-inf")) > limite
+            for c, _ in self._camaras_em_tela())
+
+    async def _ceder_a_tela(self) -> None:
+        """A volta completa espera enquanto a tela está atrasada.
+
+        Medido em 05/11/2026 com o mosaico 4x4 aberto: a volta (varredura e
+        facial em 24 câmeras, sem pausa) e a análise da tela disputavam a
+        CPU, cada análise da tela levava 5 a 9 s e 14 das 16 câmeras ficaram
+        sem caixa em 40 s. Com alguém assistindo, a tela vem primeiro. O
+        teto garante que a volta — que é quem grava e alerta — não pare.
+        """
+        if not settings.INFERENCIA_TELA_ATRASO_MAX_S:
+            return
+        fim = time.monotonic() + settings.INFERENCIA_VOLTA_ESPERA_MAX_S
+        while time.monotonic() < fim and self._tela_em_atraso():
+            await asyncio.sleep(0.5)
 
     def _medir_intervalo(self, codigo: str, gasto: float) -> None:
         """Quanto tempo passou entre as duas últimas publicações desta câmera.
@@ -346,7 +381,12 @@ class Inferencia:
         # Primeira publicação: ainda não há intervalo observado, e o da volta
         # é a única estimativa em mãos. A segunda já corrige.
         medido = self._intervalo_cam.get(codigo, self.ciclo_real)
-        return round(max(4.0, medido * 2.0), 1)
+        # Com teto: medida pela volta completa (~4 min), a validade passava
+        # de 300 s, e a caixa de quem já saiu ficava na tela — ou semeava o
+        # tile que abria — por minutos (05/11/2026). Quem está na tela é
+        # republicado pelo laço curto bem antes do teto.
+        return round(min(settings.INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S,
+                         max(4.0, medido * 2.0)), 1)
 
     async def _publicar_caixas(self, codigo: str, caixas: list,
                                agora: Optional[float] = None,
@@ -644,9 +684,11 @@ class Inferencia:
           somada à pessoa distante lembrada da volta, cada uma com a sua caixa.
         """
         piso = settings.INFERENCIA_SOBREPOSICAO_CONF_MIN
+        piso_varredura = settings.INFERENCIA_SOBREPOSICAO_CONF_VARREDURA
         boas = [c for c in caixas
-                if c.get("classe") == "rosto" or c.get("pessoa_nome") or c.get("varredura")
-                or float(c.get("confianca") or 0) >= piso]
+                if c.get("classe") == "rosto" or c.get("pessoa_nome")
+                or float(c.get("confianca") or 0) >= (
+                    piso_varredura if c.get("varredura") else piso)]
         boas.sort(key=lambda c: -float(c.get("confianca") or 0))
         saida: list = []
         for c in boas:

@@ -41,6 +41,12 @@ MIN_PONTOS = 3
 # as caixas ao mesmo tempo; largar na primeira falha apagava a cena inteira
 # até a próxima análise. A ~6 quadros por segundo, isto é ~1,5 s.
 MAX_FALHAS = 9
+# Quadros que uma caixa vive depois de perder a pessoa, mesmo voltando a
+# "seguir" algo. Quem entra no elevador some atrás da porta: o rastreio falha,
+# acha pontos novos na textura da porta — que fica parada — e a caixa ficava
+# presa ali até a próxima análise da câmera (CAM-001, 05/11/2026). Perdida
+# uma vez, só o detector a devolve; a ~6 quadros por segundo, isto é ~2 s.
+MAX_PERDIDA = 12
 # Por quanto tempo uma pessoa confirmada (acima do piso de entrada) abona
 # uma detecção fraca no mesmo lugar. Quem está sentado à mesa fica no lugar
 # por minutos; a volta completa, que é quem confirma com a varredura, passa
@@ -65,12 +71,14 @@ def _cinza_reduzido(quadro: np.ndarray) -> Tuple[np.ndarray, float]:
 class _Seguida:
     """Uma caixa sendo seguida: a caixa (normalizada) e os seus pontos."""
 
-    __slots__ = ("caixa", "pontos", "falhas")
+    __slots__ = ("caixa", "pontos", "falhas", "perdida")
 
     def __init__(self, caixa: dict, pontos: Optional[np.ndarray]) -> None:
         self.caixa = dict(caixa)
         self.pontos = pontos
         self.falhas = 0
+        # Quadros desde que o rastreio perdeu a pessoa; None enquanto não.
+        self.perdida: Optional[int] = None
 
 
 class Seguidor:
@@ -120,6 +128,10 @@ class Seguidor:
         alt, larg = cinza.shape[:2]
         vivas: List[_Seguida] = []
         for s in self._seguidas:
+            if s.perdida is not None:
+                s.perdida += 1
+                if s.perdida > MAX_PERDIDA:
+                    continue
             if s.pontos is None:
                 # Sem textura para seguir (rosto pequeno, pessoa ao fundo, ou
                 # o rastreio falhou no quadro anterior): fica onde está e
@@ -141,6 +153,8 @@ class Seguidor:
                 # Perdeu o que seguir neste quadro: a caixa fica parada e
                 # tenta de novo no próximo, até MAX_FALHAS seguidas.
                 s.falhas += 1
+                if s.perdida is None:
+                    s.perdida = 0
                 if s.falhas < MAX_FALHAS:
                     s.pontos = None
                     vivas.append(s)

@@ -572,19 +572,38 @@ class Settings(BaseSettings):
     # registra detecção a partir de INFERENCIA_CONFIANCA_MIN (0,70). Rosto
     # não passa por aqui: vem de outro modelo, com o seu próprio piso.
     INFERENCIA_SOBREPOSICAO_CONF_MIN: float = 0.50
+    # Piso de quem só a varredura em ladrilhos achou. Era isento, porque a
+    # pessoa distante sai com confiança baixa — e por isso a letra da legenda
+    # gravada pela câmera aparecia como "PESSOA 23%" ao lado do relógio
+    # (CAM-006, 05/11/2026). Mais baixo que o piso da passada inteira: quem
+    # está longe de verdade costuma passar de 0,40; a legenda, não.
+    INFERENCIA_SOBREPOSICAO_CONF_VARREDURA: float = 0.40
     # Câmera parada não precisa de análise nova para saber que ninguém se
     # mexeu: se a cena mudou menos que MOVIMENTO_FRACAO_MIN desde a última
     # análise, as caixas são republicadas sem rodar o detector, e a vez vai
     # para quem tem movimento. Com nove tiles a renovação era de ~12 s por
     # câmera; o que se mexe passa a ser reanalisado bem mais vezes.
     # Teto de idade: mesmo sem movimento, reanalisa ao menos a cada tanto.
-    INFERENCIA_SOBREPOSICAO_PARADA_MAX_S: float = 15.0
+    # 60 s e não 15: com o 4x4 aberto, reanalisar a cada 15 s as câmeras
+    # vazias e paradas consumia a rodada inteira (medido 05/11/2026: ~45 s
+    # por câmera), e quem entrava numa câmera com movimento esperava a vez.
+    # Quem entra em cena gera movimento, e movimento passa na frente.
+    INFERENCIA_SOBREPOSICAO_PARADA_MAX_S: float = 60.0
+    # Teto da validade de uma caixa publicada (ver `_validade_de`). Acima
+    # do teto de "cena parada", para a câmera parada não piscar.
+    INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S: float = 75.0
     # Seguimento das caixas entre duas análises (`services/seguimento.py`).
     # O detector leva segundos por câmera e o vídeo roda a 6 quadros por
     # segundo: sem seguir, a caixa ficava parada e pulava a cada análise.
     # De quanto em quanto tempo as caixas das câmeras em tela são movidas
     # pelo fluxo óptico — o mesmo ritmo em que o leitor entrega quadros.
     INFERENCIA_SEGUIMENTO: bool = True
+    # Com alguém assistindo, a volta completa cede a CPU à tela: antes de
+    # cada câmera da volta, espera enquanto alguma câmera em tela está há
+    # mais que isto sem análise — até VOLTA_ESPERA_MAX por câmera, para a
+    # volta (que grava e alerta) nunca parar. Zero desliga.
+    INFERENCIA_TELA_ATRASO_MAX_S: float = 6.0
+    INFERENCIA_VOLTA_ESPERA_MAX_S: float = 30.0
     INFERENCIA_SEGUIMENTO_S: float = 0.16
     # Histerese da tela: quem já está sendo seguido (entrou com
     # INFERENCIA_SOBREPOSICAO_CONF_MIN) continua marcado enquanto o detector

@@ -143,7 +143,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Vídeo e imagem ficam de fora: JPEG não comprime, e o MJPEG do mosaico —
+# 16 tiles a 6 quadros por segundo — era compactado na thread principal do
+# servidor, a mesma que atende todas as requisições (visto no perfil em
+# 05/11/2026). Era CPU jogada fora e atraso em tudo o mais.
+app.add_middleware(GZipMiddleware, minimum_size=1024, exclude_content_types=(
+    "text/event-stream", "multipart/x-mixed-replace", "image/jpeg", "image/png",
+    "image/webp", "video/mp4"))
 
 
 class CabecalhosETempo:

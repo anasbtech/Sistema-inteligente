@@ -119,3 +119,18 @@ def test_historico_diz_se_cobre_a_analise():
         s.quadro(_cena(200), 10.0 + i)
     assert s.cobre(11.5)
     assert not s.cobre(5.0)
+
+
+def test_caixa_que_perdeu_a_pessoa_nao_fica_presa_no_fundo():
+    """CAM-001: quem entra no elevador some; a caixa não pode ficar na porta."""
+    s = Seguidor()
+    s.quadro(_cena(200), 0.0)
+    s.semear(_cena(200), 0.0, [_caixa(200)])
+    fundo = cv2.cvtColor(cv2.GaussianBlur(
+        np.random.default_rng(7).integers(0, 60, (ALT, LARG), dtype=np.uint8),
+        (0, 0), 3), cv2.COLOR_GRAY2BGR)
+    # A pessoa some de uma vez (porta fechou): o fundo continua parado.
+    caixas = None
+    for i in range(1, 20):
+        caixas = s.quadro(fundo, i * 0.16)
+    assert caixas == []

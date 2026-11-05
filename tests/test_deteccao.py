@@ -916,6 +916,9 @@ def test_validade_segue_o_intervalo_medido_da_camera(monkeypatch):
     Medir dispensa adivinhar: o intervalo observado já embute o rodízio, o
     laço curto, o teto de câmeras e a câmera que falhou e nem publicou.
     """
+    from app.config import settings as _cfg
+    # O comportamento abaixo do teto; o teto tem teste próprio.
+    monkeypatch.setattr(_cfg, "INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S", 1e9)
     from app.services import inferencia as mod
 
     motor = mod.Inferencia()
@@ -942,6 +945,9 @@ def test_validade_sobe_na_hora_e_desce_devagar(monkeypatch):
     pessoa ainda em cena. Por isso o intervalo medido sobe de uma vez e desce
     pela metade a cada publicação.
     """
+    from app.config import settings as _cfg
+    # O comportamento abaixo do teto; o teto tem teste próprio.
+    monkeypatch.setattr(_cfg, "INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S", 1e9)
     from app.services import inferencia as mod
 
     motor = mod.Inferencia()
@@ -968,8 +974,10 @@ def test_validade_tem_piso_para_nao_piscar(monkeypatch):
     assert min(_publicar(motor, "CAM-RAPIDA", [0.0, 0.3, 0.6])) >= 4.0
 
 
-def test_camera_que_nunca_publicou_usa_o_ciclo():
+def test_camera_que_nunca_publicou_usa_o_ciclo(monkeypatch):
     """Sem intervalo observado ainda, o da volta é a única estimativa."""
+    from app.config import settings as _cfg
+    monkeypatch.setattr(_cfg, "INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S", 1e9)
     from app.services import inferencia as mod
 
     motor = mod.Inferencia()
@@ -1297,7 +1305,7 @@ def test_quem_so_a_varredura_acha_nao_pisca(monkeypatch):
 
     # O que a volta completa viu: a mesma pessoa, mais uma que só a varredura
     # alcançou, do outro lado da sala.
-    distante = ObjetoDetectado("pessoa", 0.3, (1500, 400, 1560, 520))
+    distante = ObjetoDetectado("pessoa", 0.45, (1500, 400, 1560, 520))
     distante.de_varredura = True
     motor._lembrar_distantes("CAM-700", [perto, distante], 1920, 1080)
 
@@ -1317,7 +1325,7 @@ def test_a_distante_nao_vira_caixa_em_dobro(monkeypatch):
     pessoa = ObjetoDetectado("pessoa", 0.9, (1500, 400, 1560, 520), track_id=1)
     motor, publicados, aio = _motor_com_tela(monkeypatch, [pessoa])
 
-    lembrada = ObjetoDetectado("pessoa", 0.3, (1498, 398, 1562, 522))
+    lembrada = ObjetoDetectado("pessoa", 0.45, (1498, 398, 1562, 522))
     lembrada.de_varredura = True
     motor._lembrar_distantes("CAM-700", [lembrada], 1920, 1080)
 
@@ -1330,7 +1338,7 @@ def test_a_distante_vence_com_a_volta(monkeypatch):
     """Lembrada para sempre, ela seria o fantasma que a validade apaga."""
     motor, publicados, aio = _motor_com_tela(monkeypatch, [])
 
-    distante = ObjetoDetectado("pessoa", 0.3, (1500, 400, 1560, 520))
+    distante = ObjetoDetectado("pessoa", 0.45, (1500, 400, 1560, 520))
     distante.de_varredura = True
     motor._lembrar_distantes("CAM-700", [distante], 1920, 1080)
     # Envelhece a lembrança para além de uma volta inteira.
@@ -1706,3 +1714,30 @@ def test_recorte_da_placa_e_ampliado_ate_ficar_legivel():
     img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
     assert img.shape[1] == 360, "a placa de 80 px precisa sair com 360 de largura"
     assert jpeg_ampliado(np.zeros((0, 0, 3), np.uint8)) is None
+
+
+def test_varredura_fraca_nao_vai_a_tela():
+    """CAM-006, 05/11/2026: "PESSOA 23%" colada no relógio gravado na imagem.
+
+    A varredura lê letra da legenda como pessoa a 0,21-0,44. Com piso 0,40
+    para ela, a 0,23 some; a pessoa distante de verdade, a 0,45, fica.
+    """
+    from app.services.inferencia import Inferencia
+    letra = {"classe": "pessoa", "confianca": 0.23, "bbox": [0.9, 0.1, 0.02, 0.06],
+             "varredura": True}
+    longe = {"classe": "pessoa", "confianca": 0.45, "bbox": [0.3, 0.3, 0.03, 0.1],
+             "varredura": True}
+    assert Inferencia._para_a_tela([letra, longe]) == [longe]
+
+
+def test_validade_tem_teto():
+    """Medida pela volta completa, a validade passava de 300 s (05/11/2026).
+
+    A caixa de quem já saiu ficava na tela por minutos, ou semeava o tile que
+    abria. Com teto, o que não é republicado some.
+    """
+    from app.config import settings
+    from app.services.inferencia import Inferencia
+    motor = Inferencia()
+    motor._medir_intervalo("CAM-X", 400.0)
+    assert motor._validade_de("CAM-X") == settings.INFERENCIA_SOBREPOSICAO_VALIDADE_MAX_S
