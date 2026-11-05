@@ -22,10 +22,10 @@ from app.config import settings
 from app.database import get_db
 from app.deps import exige, usuario_de_query
 from app.models import (
-    Alerta, Camera, Deteccao, Pessoa, StatusAlerta, StatusPessoa,
+    Alerta, Camera, Deteccao, Pessoa, StatusAlerta, StatusCamera, StatusPessoa,
     TipoDeteccao, Usuario, Zona,
 )
-from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn
+from app.schemas import DeteccaoIn, DeteccaoOut, Pagina, QuadroAoVivoIn, RevisaoIn, VideoTesteIn
 from app.services import biometrics, evidencias, face_engine, retencao, sequencias
 from app.services.events import publicar
 from app.services.notificacoes import notificar_alerta_critico
@@ -96,9 +96,14 @@ async def _proximo_codigo(db: AsyncSession, tipo: TipoDeteccao) -> str:
 async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                         pessoa: Optional[Pessoa],
                         notificar: bool = True,
-                        zona_nome: str = "") -> Optional[Alerta]:
-    """Severidade 3+ vira alerta. Abaixo disso fica só no registro."""
-    if det.severidade < 3:
+                        zona_nome: str = "",
+                        teste: str = "") -> Optional[Alerta]:
+    """Severidade 3+ vira alerta. Abaixo disso fica só no registro.
+
+    `teste` é o texto de um disparo do vídeo de teste: vira alerta sempre,
+    com o título marcado, para ninguém confundir com ocorrência real.
+    """
+    if det.severidade < 3 and not teste:
         return None
 
     async def maior_alerta() -> int:
@@ -109,7 +114,10 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
 
     numero_alerta = await sequencias.proximo_numero(db, "ALR", maior_alerta)
 
-    if det.tipo == TipoDeteccao.FACIAL and pessoa is not None:
+    if teste:
+        titulo = f"{ROTULO_ACAO.get(det.classe, det.classe)} (vídeo de teste)"
+        detalhe = teste
+    elif det.tipo == TipoDeteccao.FACIAL and pessoa is not None:
         # Chega aqui só com severidade 3+, que hoje é o acesso restrito.
         rotulo = ("Acesso restrito" if pessoa.status == StatusPessoa.RESTRITO
                   else "Pessoa")
@@ -350,7 +358,8 @@ async def alertar_presenca(db: AsyncSession, cam: Camera,
 # ======================================================================
 async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
                              origem: str = "worker",
-                             publicar_evento: bool = True) -> dict:
+                             publicar_evento: bool = True,
+                             teste: str = "") -> dict:
     """Caminho único de entrada de qualquer detecção no sistema.
 
     É aqui — e não no worker — que acontecem a busca 1:N, a aplicação do
@@ -461,6 +470,10 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
         severidade = severidade_objeto(dados.classe)
     else:
         severidade = SEVERIDADE_ACAO.get(dados.classe, 2)
+    if teste:
+        # Alerta de teste nasce com a gravidade mínima de um alerta real (3):
+        # a corrida sozinha é 2, que fica só no registro.
+        severidade = max(severidade, 3)
 
     zona_id = None
     if dados.zona_nome:
@@ -528,7 +541,8 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
 
     alerta = await _criar_alerta(db, det, cam, pessoa,
                                  notificar=publicar_evento,
-                                 zona_nome=dados.zona_nome or "")
+                                 zona_nome=dados.zona_nome or "",
+                                 teste=teste)
 
     if publicar_evento:
         await publicar("deteccao", {
@@ -580,6 +594,68 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
 async def ingest(dados: DeteccaoIn, db: AsyncSession = Depends(get_db)):
     """Endpoint de serviço: exponha só na rede interna, ou exija mTLS no gateway."""
     return await processar_deteccao(db, dados, origem="worker")
+
+
+async def _camera_do_video_teste(db: AsyncSession) -> Camera:
+    """A câmera técnica dos alertas de teste, criada na primeira vez."""
+    codigo = settings.VIDEO_TESTE_CAMERA
+    cam = (await db.execute(select(Camera).where(Camera.codigo == codigo))
+           ).scalars().unique().one_or_none()
+    if cam is None:
+        cam = Camera(codigo=codigo, nome="Vídeo de teste", setor="Testes",
+                     status=StatusCamera.MANUTENCAO, rtsp_url="",
+                     analitico_facial=False, analitico_objeto=False,
+                     analitico_acao=True)
+        db.add(cam)
+        await db.flush()
+    return cam
+
+
+@router.post("/video-teste", status_code=status.HTTP_201_CREATED,
+             summary="Alerta de um disparo do vídeo de teste (só desta máquina)")
+async def video_teste(dados: VideoTesteIn, request: Request,
+                      db: AsyncSession = Depends(get_db)):
+    """Leva à Central de alertas o que o visualizador de teste detectou.
+
+    Mesmo caminho de uma câmera real — registro, recorte, alerta e aviso na
+    tela —, com o alerta marcado "(vídeo de teste)" e uma câmera técnica que
+    não aparece no mosaico. Só aceita chamada da própria máquina: quem roda
+    o vídeo de teste está nela, e alerta não é algo que a rede possa criar.
+    """
+    origem_ip = request.client.host if request.client else ""
+    if origem_ip not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Alerta de vídeo de teste só pode vir desta máquina.")
+    if dados.acao not in ROTULO_ACAO:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Ação desconhecida.")
+    cam = await _camera_do_video_teste(db)
+    rotulo = ROTULO_ACAO[dados.acao]
+    partes = [f"{rotulo} detectada no vídeo de teste {dados.video}",
+              f"aos {dados.tempo_video or f'{dados.segundo:.1f}s'} (quadro {dados.quadro})",
+              f"com {dados.confianca * 100:.0f}% de confiança"]
+    if dados.pessoa_id is not None:
+        partes.append(f"pessoa {dados.pessoa_id}")
+    if dados.velocidade_corpos_s is not None:
+        partes.append(f"velocidade {dados.velocidade_corpos_s} corpos/s")
+    texto = ", ".join(partes) + "."
+    if dados.gabarito:
+        texto += f" Gabarito: {dados.gabarito}."
+    texto += " Gerado pelo visualizador de teste — não é ocorrência real."
+    caixa = None
+    if dados.bbox_normalizado and len(dados.bbox_normalizado) == 4:
+        x1, y1, x2, y2 = dados.bbox_normalizado
+        caixa = [x1, y1, x2 - x1, y2 - y1]
+    return await processar_deteccao(db, DeteccaoIn(
+        tipo=TipoDeteccao.ACAO,
+        camera_codigo=cam.codigo,
+        ocorrido_em=datetime.now(timezone.utc),
+        classe=dados.acao,
+        confianca=round(dados.confianca, 4),
+        duracao_s=1,
+        envolvidos=1,
+        bbox=caixa,
+        snapshot_jpeg=dados.print_jpeg,
+    ), origem="video_teste", teste=texto)
 
 
 @router.post("/ao-vivo", status_code=status.HTTP_204_NO_CONTENT,

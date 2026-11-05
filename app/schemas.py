@@ -669,3 +669,18 @@ class VerificacaoCadeia(BaseModel):
 
 
 TokenOut.model_rebuild()
+
+
+class VideoTesteIn(BaseModel):
+    """Um disparo do visualizador de teste, para virar alerta no sistema."""
+    video: str = Field(..., max_length=200)
+    acao: str = Field(..., max_length=40)
+    segundo: float = Field(..., ge=0)
+    tempo_video: str = Field("", max_length=16)
+    quadro: int = Field(0, ge=0)
+    confianca: float = Field(..., ge=0, le=1)
+    pessoa_id: Optional[int] = None
+    velocidade_corpos_s: Optional[float] = None
+    gabarito: str = Field("", max_length=40)
+    bbox_normalizado: Optional[List[float]] = None
+    print_jpeg: str = Field(..., description="Print do disparo, JPEG em base64")

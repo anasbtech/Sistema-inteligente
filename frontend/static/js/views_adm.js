@@ -38,7 +38,8 @@ async function renderAlertas(alvo){
       </div>
       <select class="inp" id="alSev"><option value="">Qualquer severidade</option>
         ${[4,3,2].map(s => `<option value="${s}" ${f.severidade==String(s)?'selected':''}>${SEVERIDADE[s]}</option>`).join('')}</select>
-      <select class="inp" id="alCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, f.cam)}</select>
+      <select class="inp" id="alCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, f.cam)}
+        <option value="VIDEO-TESTE" ${f.cam === 'VIDEO-TESTE' ? 'selected' : ''}>Vídeo de teste</option></select>
       <div class="periodo">
         <label for="alDe">Período</label>
         <input class="inp" id="alDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || hoje)}">
@@ -224,7 +225,7 @@ async function abrirAlerta(codigo){
       <button class="btn btn-ghost" data-close>Fechar</button>
       ${API.pode('settings') ? `<button class="btn btn-danger" id="alDel">Excluir</button>` : ''}
       <span class="sp" style="flex:1"></span>
-      ${a.camera && API.pode('live') ? `<button class="btn btn-soft" id="alCam">${ico('live',14)} Ver câmera</button>` : ''}
+      ${a.camera && a.camera.codigo !== 'VIDEO-TESTE' && API.pode('live') ? `<button class="btn btn-soft" id="alCam">${ico('live',14)} Ver câmera</button>` : ''}
       ${podeFechar && a.status === 'ABERTO'
         ? `<button class="btn btn-soft" id="alAssume">${ico('users',14)} Assumir</button>` : ''}
       ${podeFechar ? `<button class="btn btn-primary" id="alClose">${ico('check',14)} Encerrar alerta</button>` : ''}

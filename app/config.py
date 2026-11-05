@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     # Abaixo disso o modelo acerta a presença mas erra o rótulo — foi onde
     # apareceu "motocicleta 44%" sobre um recorte sem moto nenhuma.
     INFERENCIA_CONFIANCA_MIN: float = 0.70
+    # Câmera técnica dos alertas gerados pelo vídeo de teste
+    # (`scripts/ver_acao_video.py`). Não aparece no mosaico, na lista de
+    # câmeras nem na contagem: existe só para o alerta ter a quem pertencer.
+    VIDEO_TESTE_CAMERA: str = "VIDEO-TESTE"
     # Pessoa por trás de um alerta de ação (área restrita, invasão, corrida…).
     # Antes não havia piso: alertas saíam com "pessoa" a 0,22 — planta,
     # cadeira, letra da legenda. Mais baixo que o registro de objeto (0,70)

@@ -119,7 +119,8 @@ async def listar(
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(exige("live")),
 ):
-    filtros = []
+    # A câmera técnica do vídeo de teste não é câmera do parque.
+    filtros = [Camera.codigo != settings.VIDEO_TESTE_CAMERA]
     if q:
         termo = f"%{q.strip()}%"
         filtros.append(or_(Camera.nome.ilike(termo), Camera.codigo.ilike(termo),
@@ -147,7 +148,9 @@ async def setores(
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(exige("live")),
 ):
-    linhas = (await db.execute(select(Camera.setor).distinct().order_by(Camera.setor))).scalars().all()
+    linhas = (await db.execute(
+        select(Camera.setor).where(Camera.codigo != settings.VIDEO_TESTE_CAMERA)
+        .distinct().order_by(Camera.setor))).scalars().all()
     if lotacao:
         linhas = [s for s in linhas if s not in SETORES_DE_PASSAGEM]
     return {"setores": list(linhas)}

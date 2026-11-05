@@ -2492,3 +2492,43 @@ def test_recorte_da_placa_e_guardado_e_servido(cliente, camera):
     token = cliente.headers["Authorization"].split()[-1]
     img = cliente.get(f"/deteccoes/{codigo}/placa", params={"token": token})
     assert img.status_code == 200 and img.headers["content-type"] == "image/jpeg"
+
+
+# ----------------------------------------------------------------------
+# Alerta do vídeo de teste
+# ----------------------------------------------------------------------
+def _disparo_de_teste():
+    import base64
+    import cv2
+    import numpy as np
+    ok, jpg = cv2.imencode(".jpg", np.full((90, 160, 3), 120, np.uint8))
+    return {"video": "04.avi", "acao": "corrida", "segundo": 16.56, "tempo_video": "00:16.6",
+            "quadro": 414, "confianca": 0.75, "pessoa_id": 42, "velocidade_corpos_s": 2.41,
+            "gabarito": "acerto", "bbox_normalizado": [0.2, 0.3, 0.3, 0.9],
+            "print_jpeg": base64.b64encode(jpg.tobytes()).decode()}
+
+
+def test_video_teste_vira_alerta_marcado_com_o_print(cliente):
+    """Corrida tem severidade 2 e normalmente não alerta; a do teste alerta, marcada."""
+    from fastapi.testclient import TestClient as TC
+    # Sem `with`: não dispara a partida do servidor de novo (a inferência já
+    # está no laço do cliente principal).
+    local = TC(app, client=("127.0.0.1", 50123))
+    r = local.post("/deteccoes/video-teste", json=_disparo_de_teste())
+    assert r.status_code == 201, r.text
+    alerta = r.json()["alerta"]
+    assert alerta
+    a = cliente.get(f"/alertas/{alerta}").json()
+    assert a["titulo"] == "Corrida súbita (vídeo de teste)"
+    assert "00:16.6" in a["detalhe"] and "não é ocorrência real" in a["detalhe"]
+    assert a["deteccao_codigo"]
+    token = cliente.headers["Authorization"].split()[1]
+    img = cliente.get(f"/deteccoes/{a['deteccao_codigo']}/snapshot?token={token}")
+    assert img.status_code == 200 and img.headers["content-type"] == "image/jpeg"
+    # A câmera técnica não entra na lista de câmeras do parque.
+    assert all(c["codigo"] != "VIDEO-TESTE" for c in cliente.get("/cameras").json())
+
+
+def test_video_teste_so_aceita_chamada_desta_maquina(cliente):
+    r = cliente.post("/deteccoes/video-teste", json=_disparo_de_teste())
+    assert r.status_code == 403

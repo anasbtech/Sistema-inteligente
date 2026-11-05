@@ -532,7 +532,8 @@ const ALERTA = {
     const img = a.deteccao_codigo ? {codigo: a.deteccao_codigo, fonte: 'deteccoes'}
               : a.tem_imagem      ? {codigo: a.codigo, fonte: 'alertas'} : null;
     const podeAgir = API.pode('edit');
-    const podeVerCam = API.pode('live') && a.camera_codigo;
+    // O vídeo de teste não é câmera do parque: não há para onde ir.
+    const podeVerCam = API.pode('live') && a.camera_codigo && a.camera_codigo !== 'VIDEO-TESTE';
     // "Alerta · gravidade média": a gravidade é feminina, o alerta não — o
     // "Alerta média" que saía da junção direta lia como erro.
     const nivel = critico ? 'Alerta crítico'

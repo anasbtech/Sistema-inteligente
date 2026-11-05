@@ -16,6 +16,11 @@ faixa de horário (tempo no vídeo e hora do registro). O print aparece no
 painel ao lado, com os dados do disparo alinhados à direita dele, e é gravado
 em `resultados_teste/ao_vivo/prints/` — o caminho vai no JSON (`print`).
 
+Com o sistema ligado, cada disparo também vira **alerta na Central de
+alertas**, com o print, o tempo do vídeo e os dados — marcado "(vídeo de
+teste)" e numa câmera técnica que não aparece no mosaico. `--sem-alerta`
+desliga; `--servidor` aponta outro endereço (padrão http://127.0.0.1:8000).
+
 Teclas na janela:
     espaço   pausa / continua
     p        grava um print da janela inteira (vídeo + painel)
@@ -150,6 +155,48 @@ def _fazer_print(img, bbox_janela, registro, pasta: Path) -> dict:
     mini = _carimbar(mini, [_tempo(registro["segundo"])], 0.45)
     cv2.rectangle(mini, (0, 0), (MINI_L - 1, MINI_A - 1), VERMELHO, 2)
     return {"registro": registro, "mini": mini, "arquivo": arquivo}
+
+
+_avisou_sem_servidor = False
+
+
+def _enviar_alerta(servidor: str, registro: dict, arquivo_print: Path) -> None:
+    """Manda o disparo à Central de alertas, sem segurar o vídeo.
+
+    Roda numa thread: a requisição leva de dezenas de milissegundos a alguns
+    segundos com o servidor ocupado, e o vídeo não pode parar esperando.
+    Sistema desligado não é erro do teste — avisa uma vez e segue.
+    """
+    import base64
+    import threading
+    import urllib.request
+
+    def trabalho():
+        global _avisou_sem_servidor
+        try:
+            corpo = {
+                "video": registro["video"], "acao": registro["acao"],
+                "segundo": registro["segundo"], "tempo_video": registro["tempo_video"],
+                "quadro": registro["quadro"], "confianca": registro["confianca"],
+                "pessoa_id": registro["pessoa_id"],
+                "velocidade_corpos_s": registro["velocidade_corpos_s"],
+                "gabarito": (registro.get("gabarito") or {}).get("resultado", ""),
+                "bbox_normalizado": registro["bbox_normalizado"],
+                "print_jpeg": base64.b64encode(arquivo_print.read_bytes()).decode("ascii"),
+            }
+            req = urllib.request.Request(
+                servidor.rstrip("/") + "/deteccoes/video-teste",
+                data=json.dumps(corpo).encode(), method="POST",
+                headers={"Content-Type": "application/json"})
+            resp = json.loads(urllib.request.urlopen(req, timeout=20).read())
+            registro["alerta"] = resp.get("alerta")
+            print(f"  alerta criado: {resp.get('alerta')} ({resp.get('codigo')})")
+        except Exception as exc:  # noqa: BLE001
+            if not _avisou_sem_servidor:
+                _avisou_sem_servidor = True
+                print(f"  (sem alerta no sistema: {exc})")
+
+    threading.Thread(target=trabalho, daemon=True).start()
 
 
 def _texto(painel, y, texto, cor=BRANCO, escala=0.5, grosso=1, x=14):
@@ -293,9 +340,15 @@ def _chave_cache(video: Path, acao: str, args) -> str:
     """Muda quando muda o vídeo, os parâmetros ou o código da análise."""
     import hashlib
 
+    from app.config import settings
+
     st = video.stat()
     codigo = [int((RAIZ / f).stat().st_mtime) for f in
-              ("app/services/vision.py", "app/config.py", "scripts/testar_acoes_video.py")]
+              ("app/services/vision.py", "scripts/testar_acoes_video.py")]
+    # Só as configurações que mudam o que a IA vê e decide: mexer em e-mail,
+    # alerta ou tela não pode obrigar o vídeo a ser analisado de novo.
+    codigo.append({k: v for k, v in settings.model_dump().items()
+                   if k.startswith(("ACAO_", "OBJECT_", "YOLO"))})
     partes = [CACHE_VERSAO, video.name, st.st_size, int(st.st_mtime), acao, args.imgsz,
               args.limiar, args.amostras, args.direcao, args.bytetrack, args.sem_subita,
               args.permanencia_s, args.abandono_s, args.limite_aglomeracao, codigo]
@@ -564,6 +617,8 @@ def tocar(video: Path, acao: str, janelas, args) -> str:
                 cap_ = _fazer_print(img, [int(v * args.zoom) for v in r["bbox"]], r, pasta_prints)
                 r["print"] = cap_["arquivo"].relative_to(RAIZ).as_posix()
                 capturas.append(cap_)
+                if not args.sem_alerta:
+                    _enviar_alerta(args.servidor, r, cap_["arquivo"])
             if novos:
                 gravar_json()
             agora = next((j for j in alvos if j.inicio_s <= t <= j.fim_s), None)
@@ -641,6 +696,10 @@ def main() -> int:
                    help="comparação: rastreador do YOLO no lugar do rastreio do sistema")
     p.add_argument("--sem-subita", action="store_true",
                    help="comparação: corrida sem exigir a passagem de andar para correr")
+    p.add_argument("--sem-alerta", action="store_true",
+                   help="não cria alerta no sistema a cada disparo")
+    p.add_argument("--servidor", default="http://127.0.0.1:8000",
+                   help="endereço do sistema que recebe os alertas")
     p.add_argument("--reanalisar", action="store_true",
                    help="ignora a análise guardada e roda a IA de novo")
     p.add_argument("--saida", type=Path, default=RAIZ / "resultados_teste" / "ao_vivo",

@@ -528,7 +528,7 @@ async function abrirDeteccao(codigo){
       ${naoIdentificada && API.pode('biometrics') && API.pode('edit')
         ? `<button class="btn btn-soft" id="detVincular">${ico('face',14)} Vincular a cadastro</button>
            <button class="btn btn-soft" id="detCadastrar">${ico('db',14)} Cadastrar na base</button>` : ''}
-      ${d.camera ? `<button class="btn btn-soft" id="detCam">${ico('live',14)} Ver câmera</button>` : ''}
+      ${d.camera && d.camera.codigo !== 'VIDEO-TESTE' ? `<button class="btn btn-soft" id="detCam">${ico('live',14)} Ver câmera</button>` : ''}
       ${podeRevisar ? `<button class="btn btn-primary" id="detConf">${ico('check',14)} Confirmar</button>` : ''}
     </div>`;
 
