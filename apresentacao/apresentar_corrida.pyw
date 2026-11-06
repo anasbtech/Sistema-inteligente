@@ -10,7 +10,8 @@ import sys
 import traceback
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent
+# O atalho fica em apresentacao/; a raiz do projeto é a pasta de cima.
+RAIZ = Path(__file__).resolve().parent.parent
 os.chdir(RAIZ)
 sys.path.insert(0, str(RAIZ))
 LOG = RAIZ / "resultados_teste" / "ao_vivo" / "apresentar.log"

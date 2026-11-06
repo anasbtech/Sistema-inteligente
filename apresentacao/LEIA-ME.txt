@@ -1,0 +1,9 @@
+Atalhos para apresentar os testes de corrida súbita.
+Dê duplo clique (abrem só a janela do vídeo, sem a tela preta):
+
+  apresentar_corrida.pyw           vídeo 04 do Avenue: um homem correndo (2 alertas)
+  apresentar_corrida_multidao.pyw  vídeo do UMN: multidão em pânico (12 alertas)
+
+Com o sistema ligado, cada corrida detectada vira alerta "(vídeo de teste)"
+na Central de alertas, com o print e o horário.
+Teclas na janela: espaço pausa, p salva print, q fecha.

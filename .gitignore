@@ -33,3 +33,6 @@ logs/*.log
 # Bateria de teste de ações por vídeo (scripts/testar_acoes_video.py)
 videos_teste/
 resultados_teste/
+
+# Despejo de erro do compilador do vídeo integrado (OpenVINO), criado na pasta em que o servidor roda
+kernel.errors.txt
