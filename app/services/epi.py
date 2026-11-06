@@ -198,6 +198,19 @@ def _conferir_mascara(quadro: np.ndarray, bbox) -> Optional[dict]:
         return None
     olhos_y = (k[0][1] + k[1][1]) / 2
     boca_y = (k[3][1] + k[4][1]) / 2
+    # Só rosto de frente. De perfil ou olhando para a mesa, a faixa
+    # "nariz–queixo" cai na bochecha, no pescoço ou na sombra, e a falta de
+    # pele ali parecia máscara (medido: operador de cabeça baixa, olhos a
+    # 17 px num rosto de 99 px, saía "máscara 57%"). De frente, os olhos
+    # ficam a ~40% da largura do rosto e nariz e boca entre eles.
+    largura = float(caixas[i, 2] - caixas[i, 0])
+    olho_e, olho_d = sorted((k[0][0], k[1][0]))
+    # E rosto com pixels de verdade: olhos a menos de 11 px na imagem original
+    # (pessoa ao fundo, rosto de ~16 px) viram borrão cinza, e cinza na boca
+    # parece máscara. Rostos lidos certo nas fotos de teste: olhos a 16–28 px.
+    if (d / f < 11 or d < largura * .3 or not (olho_e <= k[2][0] <= olho_d)
+            or not (olhos_y < k[2][1] < boca_y)):
+        return None
     xa, xb = int(min(k[3][0], k[0][0])), int(max(k[4][0], k[1][0]))
     testa = _pele(img[max(0, int(olhos_y - .55 * d)):max(0, int(olhos_y - .25 * d)), max(0, xa):xb])
     baixo = _pele(img[int(k[2][1]):int(boca_y + .35 * d), max(0, xa):xb])
