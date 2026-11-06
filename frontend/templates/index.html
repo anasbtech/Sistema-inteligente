@@ -71,11 +71,29 @@
              alvo (círculo + mira), que lia como "tiro" num sistema que não
              aponta arma nenhuma; este diz o que o sistema faz. -->
         <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
-      <path d="M21 1.6 38.8 8.1V26.5L21 44.6 3.2 26.5V8.1L21 1.6z" fill="#0F1821" stroke="#35A7DE" stroke-width="2.4" stroke-linejoin="round"/>
-      <path d="M15 13.6v5.8M12.2 13.6h5.6" stroke="#35A7DE" stroke-width="2.2" stroke-linecap="round"/>
-      <rect x="11" y="19.4" width="13.4" height="6.6" rx="1.7" fill="#35A7DE"/>
-      <circle cx="26.2" cy="22.7" r="3.7" fill="#35A7DE"/>
-      <circle cx="26.2" cy="22.7" r="2.1" fill="#F0A02A"/>
+      <defs>
+        <linearGradient id="bF1" x1="21" y1="2" x2="21" y2="46" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#13212D"/><stop offset="1" stop-color="#0A121A"/>
+        </linearGradient>
+        <linearGradient id="bB1" x1="6" y1="4" x2="36" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#5FC4F0"/><stop offset="1" stop-color="#2484B8"/>
+        </linearGradient>
+        <radialGradient id="bI1" cx="19.6" cy="20.4" r="6.4" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#7AD3F7"/><stop offset=".55" stop-color="#35A7DE"/><stop offset="1" stop-color="#16506F"/>
+        </radialGradient>
+      </defs>
+      <!-- Escudo heráldico com fio interno -->
+      <path d="M21 2 37 7.5Q38.5 8 38.5 9.6V22C38.5 33 31 41 21 46 11 41 3.5 33 3.5 22V9.6Q3.5 8 5 7.5Z" fill="url(#bF1)" stroke="url(#bB1)" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M21 5.6 35 10.4V22C35 31 29 38 21 42.2 13 38 7 31 7 22V10.4Z" stroke="#35A7DE" stroke-opacity=".28" stroke-width=".8" stroke-linejoin="round"/>
+      <!-- Arcos de varredura -->
+      <path d="M10.19 18.07A11.5 11.5 0 0 1 17.07 11.19M31.81 25.93A11.5 11.5 0 0 1 24.93 32.81" stroke="#5FC4F0" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
+      <!-- Lente -->
+      <circle cx="21" cy="22" r="8.4" stroke="url(#bB1)" stroke-width="1.8"/>
+      <circle cx="21" cy="22" r="5.2" fill="url(#bI1)"/>
+      <circle cx="21" cy="22" r="2.1" fill="#07101A"/>
+      <circle cx="19.3" cy="20.3" r="1" fill="#fff" fill-opacity=".9"/>
+      <!-- Gravando -->
+      <circle cx="30.4" cy="13.6" r="1.5" fill="#F0A02A"/>
     </svg>
         <div class="auth-mark-txt">
           <b class="marca"><span class="marca-a">Aizon</span><span class="marca-b">VMS</span></b>
@@ -196,10 +214,29 @@
     <!-- 24x28 na tela: a bordadura interna e o anel da lente somem, que
          nesse tamanho viram borrão. Silhueta e motivo são os mesmos. -->
     <svg class="shield" viewBox="0 0 42 48" fill="none" aria-hidden="true">
-      <path d="M21 1.6 38.8 8.1v14.6L21 46.4 3.2 22.7V8.1L21 1.6z" fill="#0F1821" stroke="#35A7DE" stroke-width="2.4" stroke-linejoin="round"/>
-      <path d="M15.6 12.8v5.4M12.4 12.8h6.4" stroke="#35A7DE" stroke-width="2" stroke-linecap="round"/>
-      <rect x="10.6" y="18.4" width="13.2" height="7.6" rx="1.8" fill="#35A7DE"/>
-      <circle cx="28.6" cy="22.2" r="3.3" fill="#F0A02A"/>
+      <defs>
+        <linearGradient id="bF2" x1="21" y1="2" x2="21" y2="46" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#13212D"/><stop offset="1" stop-color="#0A121A"/>
+        </linearGradient>
+        <linearGradient id="bB2" x1="6" y1="4" x2="36" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#5FC4F0"/><stop offset="1" stop-color="#2484B8"/>
+        </linearGradient>
+        <radialGradient id="bI2" cx="19.6" cy="20.4" r="6.4" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#7AD3F7"/><stop offset=".55" stop-color="#35A7DE"/><stop offset="1" stop-color="#16506F"/>
+        </radialGradient>
+      </defs>
+      <!-- Escudo heráldico com fio interno -->
+      <path d="M21 2 37 7.5Q38.5 8 38.5 9.6V22C38.5 33 31 41 21 46 11 41 3.5 33 3.5 22V9.6Q3.5 8 5 7.5Z" fill="url(#bF2)" stroke="url(#bB2)" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M21 5.6 35 10.4V22C35 31 29 38 21 42.2 13 38 7 31 7 22V10.4Z" stroke="#35A7DE" stroke-opacity=".28" stroke-width=".8" stroke-linejoin="round"/>
+      <!-- Arcos de varredura -->
+      <path d="M10.19 18.07A11.5 11.5 0 0 1 17.07 11.19M31.81 25.93A11.5 11.5 0 0 1 24.93 32.81" stroke="#5FC4F0" stroke-opacity=".7" stroke-width="1.4" stroke-linecap="round"/>
+      <!-- Lente -->
+      <circle cx="21" cy="22" r="8.4" stroke="url(#bB2)" stroke-width="1.8"/>
+      <circle cx="21" cy="22" r="5.2" fill="url(#bI2)"/>
+      <circle cx="21" cy="22" r="2.1" fill="#07101A"/>
+      <circle cx="19.3" cy="20.3" r="1" fill="#fff" fill-opacity=".9"/>
+      <!-- Gravando -->
+      <circle cx="30.4" cy="13.6" r="1.5" fill="#F0A02A"/>
     </svg>
     <div class="brand-txt"><b class="marca"><span class="marca-a">Aizon</span><span class="marca-b">VMS</span></b></div>
   </div>

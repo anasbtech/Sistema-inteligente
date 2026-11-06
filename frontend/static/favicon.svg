@@ -1,7 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 42 48">
-  <!-- A 16px só sobram as massas: escudo, corpo e lente. -->
-  <path d="M21 1.6 38.8 8.1V26.5L21 44.6 3.2 26.5V8.1L21 1.6z" fill="#0F1821" stroke="#35A7DE" stroke-width="3" stroke-linejoin="round"/>
-  <rect x="10.4" y="19" width="14.4" height="7.4" rx="1.8" fill="#35A7DE"/>
-  <circle cx="26.6" cy="22.7" r="4.2" fill="#35A7DE"/>
-  <circle cx="26.6" cy="22.7" r="2.4" fill="#F0A02A"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 42 48" fill="none">
+      <defs>
+        <linearGradient id="bFf" x1="21" y1="2" x2="21" y2="46" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#13212D"/><stop offset="1" stop-color="#0A121A"/>
+        </linearGradient>
+        <linearGradient id="bBf" x1="6" y1="4" x2="36" y2="44" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#5FC4F0"/><stop offset="1" stop-color="#2484B8"/>
+        </linearGradient>
+        <radialGradient id="bIf" cx="19.6" cy="20.4" r="6.4" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#7AD3F7"/><stop offset=".55" stop-color="#35A7DE"/><stop offset="1" stop-color="#16506F"/>
+        </radialGradient>
+      </defs>
+      <!-- Escudo heráldico com fio interno -->
+      <path d="M21 2 37 7.5Q38.5 8 38.5 9.6V22C38.5 33 31 41 21 46 11 41 3.5 33 3.5 22V9.6Q3.5 8 5 7.5Z" fill="url(#bFf)" stroke="url(#bBf)" stroke-width="2.6" stroke-linejoin="round"/>
+      <!-- Lente -->
+      <circle cx="21" cy="22" r="8.4" stroke="url(#bBf)" stroke-width="1.8"/>
+      <circle cx="21" cy="22" r="5.2" fill="url(#bIf)"/>
+      <circle cx="21" cy="22" r="2.1" fill="#07101A"/>
+      <!-- Gravando -->
+      <circle cx="30.4" cy="13.6" r="1.5" fill="#F0A02A"/>
+    </svg>
