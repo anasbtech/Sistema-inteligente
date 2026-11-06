@@ -64,18 +64,19 @@ function epiTrabalhadorSVG(itens, exigidos){
     const caixas = EPI_AREA[k].map(b => cantos(b, cor, e !== 'detectado')).join('');
     const [lado, y, alvo] = ETIQ[k];
     const [bx1, by1, bx2, by2] = EPI_AREA[k][alvo];
-    const txt = `${EPI_CURTO[k]}${i.confianca != null ? ' ' + Math.round(i.confianca * 100) + '%' : e === 'ausente' ? ' ✕' : ' ?'}`;
-    const w = txt.length * 7.3 + 14;
+    // Só o resultado: o nome do item está na lista ao lado do boneco.
+    const txt = e === 'ausente' ? '✕' : i.confianca != null ? Math.round(i.confianca * 100) + '%' : '?';
+    const w = Math.max(30, txt.length * 10 + 14);
     const ly = Math.max(by1 + 3, Math.min(by2 - 3, y));
-    const [rx, lx1, lx2] = lado === 'e' ? [42 - w, 42, bx1] : [210, 210, bx2];
+    const [rx, lx1, lx2] = lado === 'e' ? [50 - w, 50, bx1] : [210, 210, bx2];
     return `${caixas}<g>
       <path d="M${lx1} ${y}H${(lx1 + lx2) / 2}L${lx2} ${ly}" stroke="${cor}" stroke-width="1.2" fill="none" opacity=".85"/>
       <circle cx="${lx2}" cy="${ly}" r="2.2" fill="${cor}"/>
-      <rect x="${rx}" y="${y - 10}" width="${w}" height="20" rx="3.5" fill="${cor}"/>
-      <text x="${rx + w / 2}" y="${y + 4.3}" text-anchor="middle" font-size="12.5" font-weight="700" fill="#08121A"
+      <rect x="${rx}" y="${y - 12}" width="${w}" height="24" rx="4" fill="${cor}"/>
+      <text x="${rx + w / 2}" y="${y + 5.5}" text-anchor="middle" font-size="16" font-weight="700" fill="#08121A"
             font-family="IBM Plex Sans,system-ui">${esc(txt)}</text></g>`;
   }).join('');
-  return `<svg viewBox="-70 4 392 462" width="100%" style="max-width:440px;max-height:440px" aria-label="Trabalhador com EPI">
+  return `<svg viewBox="-12 4 278 462" width="100%" style="max-width:440px;max-height:440px" aria-label="Trabalhador com EPI">
   <defs>
     <linearGradient id="eSk" x1="0" x2="1"><stop offset="0" stop-color="#B9805C"/><stop offset=".5" stop-color="#D49A74"/><stop offset="1" stop-color="#A9704F"/></linearGradient>
     <linearGradient id="eNv" x1="0" x2="1"><stop offset="0" stop-color="#1A2A44"/><stop offset=".5" stop-color="#26395A"/><stop offset="1" stop-color="#16243A"/></linearGradient>
@@ -153,8 +154,8 @@ function epiListaHTML(itens, exigidos){
     const pct = i.confianca != null ? ` · ${Math.round(i.confianca * 100)}%` : '';
     return `<div class="epi-item ${cls} ${exigidos.includes(k) ? '' : 'opc'}">
       <span class="bola">${simb}</span>
-      <div><b>${esc(EPI_ROTULO[k])}${exigidos.includes(k) ? '' : ' <span style="color:var(--txt-4);font-weight:500">(não exigido)</span>'}</b>
-        <small>${txt}${pct}${k === 'botas' ? ' — sem detector' : ''}</small></div></div>`;
+      <div title="${esc(EPI_ROTULO[k])}"><b>${esc(EPI_CURTO[k])}</b>
+        <small>${txt}${pct}${exigidos.includes(k) ? '' : ' · não exigido'}</small></div></div>`;
   }).join('');
 }
 
