@@ -209,8 +209,9 @@ function epiDesenharCaixas(){
     if(!sel) return;               // EPI só da pessoa selecionada: a cena não vira um borrão
     EPI_ORDEM.forEach(it => {
       const x = p.itens[it];
-      if(x && x.bbox) caixa(x.bbox, EPI_COR[x.estado],
-        `${x.estado === 'ausente' ? 'Sem ' + EPI_CURTO[it].toLowerCase() : EPI_CURTO[it]} ${Math.round(x.confianca * 100)}%`, 2);
+      if(!x || !x.bbox) return;
+      const rot = `${x.estado === 'ausente' ? 'Sem ' + EPI_CURTO[it].toLowerCase() : EPI_CURTO[it]} ${Math.round(x.confianca * 100)}%`;
+      (x.caixas || [x.bbox]).forEach(b => caixa(b, EPI_COR[x.estado], rot, 2));   // luvas: uma caixa por mão
     });
   });
 }

@@ -90,7 +90,63 @@ def recorte_da_pessoa(quadro: np.ndarray, bbox) -> Tuple[np.ndarray, Tuple[int, 
     return quadro[Y1:Y2, X1:X2], (X1, Y1)
 
 
-def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str]) -> dict:
+def _iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    i = ix * iy
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i
+    return i / u if u > 0 else 0.0
+
+
+def _procurar_luvas(m, quadro: np.ndarray, bbox) -> List[tuple]:
+    """Segunda passada só para luvas: a área da pessoa em 6 pedaços ampliados.
+
+    Na passada normal a luva tem poucos pixels e o modelo não a vê — medido
+    numa foto com as duas mãos enluvadas e à vista: nada, nem com limiar 5%.
+    Ampliando a região da mão, 81% e 84%. Como a mão pode estar levantada,
+    abaixada ou aberta para o lado, a área ganha folga larga para os lados e
+    para cima e é varrida em pedaços, em vez de adivinhar onde a mão está.
+    Devolve (estado, confiança, caixa) por mão, sem repetir a mesma mão.
+    """
+    import cv2
+
+    alt, larg = quadro.shape[:2]
+    x1, y1, x2, y2 = (float(v) for v in bbox)
+    w, h = x2 - x1, y2 - y1
+    X1, Y1 = max(0, int(x1 - w * .45)), max(0, int(y1 - h * .30))
+    X2, Y2 = min(larg, int(x2 + w * .45)), min(alt, int(y2 + h * .05))
+    area = quadro[Y1:Y2, X1:X2]
+    ah, aw = area.shape[:2]
+    if ah < 16 or aw < 16:
+        return []
+    achados = []
+    for cx in range(3):
+        for cy in range(2):
+            tw, th = aw / 3 * 1.35, ah / 2 * 1.35
+            tx1 = max(0, int(min(aw - tw, cx * aw / 3 - (tw - aw / 3) / 2)))
+            ty1 = max(0, int(min(ah - th, cy * ah / 2 - (th - ah / 2) / 2)))
+            peca = area[ty1:int(ty1 + th), tx1:int(tx1 + tw)]
+            if peca.size == 0:
+                continue
+            f = 640 / max(peca.shape[:2])
+            r = m(cv2.resize(peca, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC),
+                  conf=settings.EPI_CONF_MIN, imgsz=640, verbose=False)[0]
+            for c, p, b in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist()):
+                par = MAPA.get(m.names[int(c)])
+                if not par or par[0] != "luvas":
+                    continue
+                achados.append((par[1], float(p), [X1 + tx1 + b[0] / f, Y1 + ty1 + b[1] / f,
+                                                   X1 + tx1 + b[2] / f, Y1 + ty1 + b[3] / f]))
+    achados.sort(key=lambda a: -a[1])
+    maos: List[tuple] = []
+    for a in achados:                       # uma caixa por mão
+        if all(_iou(a[2], o[2]) < 0.3 for o in maos):
+            maos.append(a)
+    return maos[:2]
+
+
+def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str],
+                    procurar_luvas: bool = True) -> dict:
     """EPI de uma pessoa: estado de cada item, caixas e o resultado."""
     m = _carregar()
     itens = {k: {"estado": "nao_verificado", "confianca": None, "bbox": None} for k in ITENS}
@@ -109,6 +165,15 @@ def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str]) -> dict:
                 if atual["confianca"] is None or conf > atual["confianca"]:
                     itens[item] = {"estado": estado, "confianca": round(float(conf), 3),
                                    "bbox": [xyxy[0] + ox, xyxy[1] + oy, xyxy[2] + ox, xyxy[3] + oy]}
+        # Luva exigida e não vista: a passada ampliada (custa ~1 s por pedaço
+        # com a máquina ocupada, por isso só quando faz diferença).
+        if procurar_luvas and "luvas" in exigidos and itens["luvas"]["estado"] != "detectado":
+            maos = _procurar_luvas(m, quadro, bbox)
+            if maos:
+                melhor = maos[0]
+                itens["luvas"] = {"estado": melhor[0], "confianca": round(melhor[1], 3),
+                                  "bbox": [round(v, 1) for v in melhor[2]],
+                                  "caixas": [[round(v, 1) for v in x[2]] for x in maos]}
     exig = [e for e in exigidos if e in ITENS]
     estados = [itens[e]["estado"] for e in exig]
     if not exig:
@@ -123,11 +188,16 @@ def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str]) -> dict:
             "faltando": [e for e in exig if itens[e]["estado"] == "ausente"]}
 
 
-def analisar_quadro(quadro: np.ndarray, pessoas: List[tuple], exigidos: List[str]) -> List[dict]:
-    """`pessoas`: lista de (bbox, confiança, track_id)."""
+def analisar_quadro(quadro: np.ndarray, pessoas: List[tuple], exigidos: List[str],
+                    luvas_ate: int = 2) -> List[dict]:
+    """`pessoas`: lista de (bbox, confiança, track_id), as mais próximas primeiro.
+
+    A passada ampliada das luvas só nas `luvas_ate` primeiras: quem está ao
+    fundo não tem mão com pixels para isso, e o custo cresce por pessoa.
+    """
     saida = []
-    for bbox, conf, tid in pessoas:
-        r = analisar_pessoa(quadro, bbox, exigidos)
+    for n, (bbox, conf, tid) in enumerate(pessoas):
+        r = analisar_pessoa(quadro, bbox, exigidos, procurar_luvas=n < luvas_ate)
         r.update({"pessoa_bbox": [float(v) for v in bbox], "pessoa_conf": round(float(conf), 3),
                   "track_id": tid})
         saida.append(r)

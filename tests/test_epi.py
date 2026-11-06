@@ -61,3 +61,44 @@ def test_caixa_do_item_volta_para_coordenadas_do_quadro(monkeypatch):
     r = epi.analisar_pessoa(QUADRO, PESSOA, ["capacete"])
     rec, (ox, oy) = epi.recorte_da_pessoa(QUADRO, PESSOA)
     assert r["itens"]["capacete"]["bbox"] == [10 + ox, 5 + oy, 50 + ox, 30 + oy]
+
+
+def _modelo_luva_so_ampliada():
+    """Luva que só aparece nos pedaços ampliados — e só no primeiro (canto de cima, à esquerda)."""
+    vistos = []
+
+    class M:
+        names = {4: "Gloves"}
+
+        def __call__(self, img, **kw):
+            ampliado = max(img.shape[:2]) == 640
+            if ampliado:
+                vistos.append(img.shape)
+            achados = [(4, .82, [0, 0, 64, 64])] if ampliado and len(vistos) == 1 else []
+            c = _Caixas(achados)
+            w = SimpleNamespace(cls=SimpleNamespace(tolist=lambda: c.cls),
+                                conf=SimpleNamespace(tolist=lambda: c.conf),
+                                xyxy=SimpleNamespace(tolist=lambda: c.xyxy))
+            return [SimpleNamespace(boxes=w)]
+    return M(), vistos
+
+
+def test_luva_pequena_achada_na_passada_ampliada(monkeypatch):
+    m, vistos = _modelo_luva_so_ampliada()
+    monkeypatch.setattr(epi, "_carregar", lambda: m)
+    r = epi.analisar_pessoa(QUADRO, PESSOA, ["luvas"])
+    luva = r["itens"]["luvas"]
+    assert luva["estado"] == "detectado" and r["resultado"] == "conforme"
+    # Caixa de volta no quadro: o 1º pedaço começa no canto da área ampliada.
+    x1, y1, x2, y2 = PESSOA
+    X1, Y1 = int(x1 - (x2 - x1) * .45), int(y1 - (y2 - y1) * .30)
+    assert luva["bbox"][0] == pytest.approx(X1, abs=1) and luva["bbox"][1] == pytest.approx(max(0, Y1), abs=1)
+    assert len(vistos) == 6 and len(luva["caixas"]) == 1
+
+
+def test_sem_passada_ampliada_quando_luva_nao_e_exigida(monkeypatch):
+    m, vistos = _modelo_luva_so_ampliada()
+    monkeypatch.setattr(epi, "_carregar", lambda: m)
+    epi.analisar_pessoa(QUADRO, PESSOA, ["capacete"])
+    epi.analisar_quadro(QUADRO, [(PESSOA, .9, 1)], ["luvas"], luvas_ate=0)
+    assert vistos == []

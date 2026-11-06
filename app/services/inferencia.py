@@ -1339,7 +1339,8 @@ class Inferencia:
         try:
             analises = await asyncio.to_thread(
                 epi.analisar_quadro, quadro,
-                [(o.bbox, o.confianca, o.track_id) for o in pessoas], list(cam.epi_obrigatorios))
+                [(o.bbox, o.confianca, o.track_id) for o in pessoas], list(cam.epi_obrigatorios),
+                0)  # sem a passada ampliada das luvas: ~5 s por pessoa travaria a rodada
         except Exception as exc:  # noqa: BLE001
             log.warning("%s: análise de EPI falhou: %s", cam.codigo, exc)
             return
