@@ -287,6 +287,7 @@ const API = {
     return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
   },
   epiEstado(){ return this.get('/epi/estado'); },
+  epiCamera(codigo){ return this.get('/epi/camera/' + encodeURIComponent(codigo)); },
   async epiAnalisar(arquivo, exigidos){
     const fd = new FormData();
     fd.append('imagem', arquivo);
