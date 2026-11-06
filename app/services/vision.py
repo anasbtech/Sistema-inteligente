@@ -294,6 +294,12 @@ FICHA_ACAO: Dict[str, FichaAcao] = {f.codigo: f for f in CATALOGO_ACOES}
 # assim; derivados do catálogo para não divergirem dele.
 SEVERIDADE_ACAO: Dict[str, int] = {f.codigo: f.severidade for f in CATALOGO_ACOES}
 ROTULO_ACAO: Dict[str, str] = {f.codigo: f.rotulo for f in CATALOGO_ACOES}
+# EPI ausente não é ação de trajetória e não entra no catálogo (não se liga
+# por `acoes_ativas`): nasce da lista `epi_obrigatorios` da câmera.
+SEVERIDADE_ACAO["epi_ausente"] = 3
+ROTULO_ACAO["epi_ausente"] = "EPI obrigatório ausente"
+# Ações que o registro exibe e filtra, mas que não se ligam pelo catálogo.
+ACOES_FORA_DO_CATALOGO = frozenset({"epi_ausente"})
 
 # O que uma câmera nova liga sozinha: só o que pode disparar. Oferecer o
 # resto ligado por padrão seria repetir o problema que a ficha existe para

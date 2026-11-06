@@ -286,6 +286,13 @@ const API = {
   amostrasDeCapturas(id, codigos){
     return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
   },
+  epiEstado(){ return this.get('/epi/estado'); },
+  async epiAnalisar(arquivo, exigidos){
+    const fd = new FormData();
+    fd.append('imagem', arquivo);
+    return this.req('POST', '/epi/analisar',
+      {formData: fd, query: exigidos ? {exigidos: exigidos.join(',')} : {}});
+  },
   async buscarPorImagem(arquivo, limiar){
     const fd = new FormData();
     fd.append('imagem', arquivo);

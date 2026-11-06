@@ -24,7 +24,7 @@ from app.config import settings
 from app.database import MemoriaVolatil, close_connections, db_context, engine, get_redis
 from app.routers import (
     alertas, auditoria, auth, cameras, configuracao, deteccoes, pessoas, stream,
-    triagem_cadastro, usuarios,
+    triagem_cadastro, usuarios, epi as rotas_epi,
 )
 from app.services import video
 from app.services.configuracao import carregar as carregar_configuracao
@@ -258,6 +258,7 @@ app.include_router(usuarios.router)
 app.include_router(auditoria.router)
 app.include_router(configuracao.router)
 app.include_router(stream.router)
+app.include_router(rotas_epi.router)
 
 # --- Interface ---
 web.montar_estaticos(app)

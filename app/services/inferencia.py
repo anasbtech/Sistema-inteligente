@@ -172,6 +172,11 @@ class Inferencia:
         self._vez_sobreposicao = 0
         # Quem move as caixas entre uma análise e a seguinte, por câmera.
         self._seguidores: Dict[str, Seguidor] = {}
+        # Conformidade de EPI: a última análise de cada câmera (para o painel)
+        # e os números do dia.
+        self.epi_estado: Dict[str, dict] = {}
+        self.epi_dia: dict = {}
+        self._epi_alertado: Dict[str, float] = {}
         self._task_acompanhamento: Optional[asyncio.Task] = None
 
     async def iniciar(self) -> None:
@@ -1312,6 +1317,77 @@ class Inferencia:
         self._ocupacao[cam.codigo] = atual
         self._ocupacao_pendente.pop(cam.codigo, None)
 
+    async def _conferir_epi(self, db, cam: Camera, objetos, quadro, caixas: list,
+                            agora) -> None:
+        """EPI de cada pessoa em cena, nas câmeras que exigem EPI.
+
+        Só pessoa confiável (o mesmo piso do registro): EPI de uma cadeira não
+        existe. As caixas dos itens entram na sobreposição do vídeo; quem está
+        sem um item obrigatório gera alerta, um por pessoa a cada
+        EPI_ALERTA_JANELA_S.
+        """
+        from app.routers.deteccoes import processar_deteccao
+        from app.services import epi
+
+        if not epi.disponivel():
+            return
+        pessoas = [o for o in objetos if o.classe == "pessoa" and self._confiavel(o)]
+        if not pessoas:
+            self.epi_estado[cam.codigo] = {"em": agora, "pessoas": [], "exigidos": cam.epi_obrigatorios}
+            return
+        alt, larg = quadro.shape[:2]
+        try:
+            analises = await asyncio.to_thread(
+                epi.analisar_quadro, quadro,
+                [(o.bbox, o.confianca, o.track_id) for o in pessoas], list(cam.epi_obrigatorios))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("%s: análise de EPI falhou: %s", cam.codigo, exc)
+            return
+
+        dia = agora.date().isoformat()
+        if self.epi_dia.get("dia") != dia:
+            self.epi_dia = {"dia": dia, "analisadas": 0, "conforme": 0, "fora": 0,
+                            "inconclusivo": 0, "faltando": {}}
+        for a in analises:
+            self.epi_dia["analisadas"] += 1
+            self.epi_dia[a["resultado"]] = self.epi_dia.get(a["resultado"], 0) + 1
+            for f in a["faltando"]:
+                self.epi_dia["faltando"][f] = self.epi_dia["faltando"].get(f, 0) + 1
+            for item, info in a["itens"].items():
+                if info["bbox"] is None:
+                    continue
+                caixas.append({
+                    "classe": f"epi_{item}" if info["estado"] == "detectado" else f"epi_sem_{item}",
+                    "confianca": info["confianca"],
+                    "bbox": [info["bbox"][0] / larg, info["bbox"][1] / alt,
+                             (info["bbox"][2] - info["bbox"][0]) / larg,
+                             (info["bbox"][3] - info["bbox"][1]) / alt],
+                    "track_id": None,
+                })
+        self.epi_estado[cam.codigo] = {"em": agora, "pessoas": analises,
+                                       "exigidos": list(cam.epi_obrigatorios),
+                                       "largura": larg, "altura": alt}
+
+        for a in analises:
+            if a["resultado"] != "fora":
+                continue
+            x1, y1, x2, y2 = a["pessoa_bbox"]
+            chave = f"{cam.codigo}:{a['track_id'] if a['track_id'] is not None else f'{int(x1)//120}:{int(y1)//120}'}"
+            agora_mono = time.monotonic()
+            if agora_mono - self._epi_alertado.get(chave, -1e9) < settings.EPI_ALERTA_JANELA_S:
+                continue
+            self._epi_alertado[chave] = agora_mono
+            nomes = ", ".join(epi.ITENS[f].lower() for f in a["faltando"])
+            jpeg = await asyncio.to_thread(video.recortar_pessoa, quadro, a["pessoa_bbox"])
+            await processar_deteccao(db, DeteccaoIn(
+                tipo=TipoDeteccao.ACAO, camera_codigo=cam.codigo, ocorrido_em=agora,
+                classe="epi_ausente", confianca=a["pessoa_conf"], duracao_s=1, envolvidos=1,
+                bbox=[x1 / larg, y1 / alt, (x2 - x1) / larg, (y2 - y1) / alt],
+                track_id=a["track_id"], detalhe_extra=nomes,
+                snapshot_jpeg=base64.b64encode(jpeg).decode("ascii") if jpeg else None,
+            ), origem="inferencia")
+            log.info("%s: EPI ausente (%s)", cam.codigo, nomes)
+
     async def _eventos_de_chama(self, cam: Camera, quadro, pessoas=()) -> list:
         """Fogo e fumaça, por assinatura de imagem.
 
@@ -1844,6 +1920,9 @@ class Inferencia:
         # Reescrito a cada volta, inclusive vazio: quem não foi reconhecido
         # agora não pode continuar nomeado pela leitura de minutos atrás.
         self._lembrar_ancoras(cam.codigo, ancoras)
+
+        if getattr(cam, "epi_obrigatorios", None) and cam.analitico_objeto:
+            await self._conferir_epi(db, cam, objetos, quadro, caixas_do_quadro, agora)
 
         # Publicado sempre, inclusive vazio: a lista é a cena atual, e mandar
         # vazio é o que apaga a caixa de um objeto que acabou de sair. Sem

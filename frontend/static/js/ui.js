@@ -73,6 +73,10 @@ const STATUS_ALERTA = {
   RESOLVIDO:    {lbl:'Resolvido',cls:'c-green'}
 };
 const ROTULO_OBJ = {
+  // EPI (caixas da sobreposição nas câmeras que exigem EPI)
+  epi_capacete:'Capacete', epi_oculos:'Óculos', epi_mascara:'Máscara', epi_colete:'Colete',
+  epi_luvas:'Luvas', epi_sem_capacete:'Sem capacete', epi_sem_oculos:'Sem óculos',
+  epi_sem_mascara:'Sem máscara', epi_sem_colete:'Sem colete', epi_sem_luvas:'Sem luvas',
   pessoa:'Pessoa', carro:'Carro', caminhao:'Caminhão', onibus:'Ônibus',
   motocicleta:'Motocicleta', bicicleta:'Bicicleta',
   // Animais pela espécie; `animal` fica para os registros de antes.
@@ -100,6 +104,7 @@ const ROTULO_ACAO_UI = {
   area_restrita:'Pessoa em área restrita',
   fora_de_horario:'Entrada em horário não permitido',
   veiculo_proibido:'Veículo em área proibida',
+  epi_ausente:'EPI obrigatório ausente',
   arma_detectada:'Detecção de arma', fumaca:'Fumaça'
 };
 const SEVERIDADE = ['', 'Informativo', 'Baixa', 'Média', 'Crítica'];

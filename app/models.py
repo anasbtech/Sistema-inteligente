@@ -288,6 +288,9 @@ class Camera(Base):
     # Celular. Desligado porque numa sala de trabalho todo mundo tem um na mão;
     # ligue na revista de entrada, na cela ou onde ele é proibido.
     detecta_celular: Mapped[bool] = mapped_column(Boolean, default=False)
+    # EPIs exigidos nesta câmera (services/epi.py): ["capacete", "colete"...].
+    # Vazia = conformidade de EPI desligada.
+    epi_obrigatorios: Mapped[list] = mapped_column(JSONPortatil, default=list)
 
     # Capacete e arma de fogo, que vêm de detectores próprios e não do YOLO do
     # parque. Desligados por padrão: cada um custa uma passada a mais sobre o

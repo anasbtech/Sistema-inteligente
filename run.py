@@ -84,6 +84,7 @@ def _colunas_novas() -> list[tuple[str, str, str, str | None]]:
         ("cameras", "detecta_bagagem", "BOOLEAN DEFAULT 0", None),
         ("cameras", "detecta_animal", "BOOLEAN DEFAULT 0", None),
         ("cameras", "detecta_celular", "BOOLEAN DEFAULT 0", None),
+        ("cameras", "epi_obrigatorios", "JSON DEFAULT '[]'", None),
         ("deteccoes", "placa_snapshot_key", "VARCHAR(300) DEFAULT ''", None),
         ("cameras", "detecta_capacete", "BOOLEAN DEFAULT 0", None),
         ("cameras", "detecta_arma", "BOOLEAN DEFAULT 0", None),

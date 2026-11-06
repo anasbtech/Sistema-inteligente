@@ -268,6 +268,7 @@ class CameraBase(BaseModel):
     detecta_celular: bool = False
     detecta_capacete: bool = False
     detecta_arma: bool = False
+    epi_obrigatorios: List[str] = []
     # Quantas pessoas juntas são aglomeração nesta câmera; em branco,
     # vale o padrão do parque. Piso 2 porque uma pessoa sozinha não
     # aglomera, e duas é a menor reunião possível.
@@ -335,6 +336,7 @@ class CameraUpdate(BaseModel):
     detecta_celular: Optional[bool] = None
     detecta_capacete: Optional[bool] = None
     detecta_arma: Optional[bool] = None
+    epi_obrigatorios: Optional[List[str]] = None
     limite_aglomeracao: Optional[int] = Field(None, ge=2, le=200)
     limiar_facial: Optional[float] = Field(None, ge=0.5, le=1.0)
     limiar_objeto: Optional[float] = Field(None, ge=0.1, le=1.0)
@@ -385,6 +387,7 @@ class CameraOut(ORMModel):
     detecta_celular: bool = False
     detecta_capacete: bool
     detecta_arma: bool
+    epi_obrigatorios: List[str] = []
     limiar_facial: float
     limiar_objeto: float
     retencao_dias: int
@@ -510,6 +513,8 @@ class DeteccaoIn(BaseModel):
     snapshot_jpeg: Optional[str] = None
     # Recorte da placa lida, em JPEG base64. Só vem quando houve leitura.
     placa_jpeg: Optional[str] = None
+    # Texto que completa o alerta (ex.: os EPIs que faltam).
+    detalhe_extra: str = ""
     hash_evidencia: str = ""
 
 

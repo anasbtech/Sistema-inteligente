@@ -44,7 +44,8 @@ def test_catalogo_cobre_exatamente_as_acoes_da_interface():
     assert corpo, "ROTULO_ACAO_UI não encontrado em ui.js"
     da_interface = set(re.findall(r"(\w+)\s*:", corpo.group(1)))
 
-    assert {f.codigo for f in CATALOGO_ACOES} == da_interface
+    from app.services.vision import ACOES_FORA_DO_CATALOGO
+    assert {f.codigo for f in CATALOGO_ACOES} | ACOES_FORA_DO_CATALOGO == da_interface
 
 
 def test_acao_sem_detector_declara_o_motivo():

@@ -125,7 +125,8 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                         pessoa: Optional[Pessoa],
                         notificar: bool = True,
                         zona_nome: str = "",
-                        teste: str = "") -> Optional[Alerta]:
+                        teste: str = "",
+                        extra: str = "") -> Optional[Alerta]:
     """Severidade 3+ vira alerta. Abaixo disso fica só no registro.
 
     `teste` é o texto de um disparo do vídeo de teste: vira alerta sempre,
@@ -182,6 +183,11 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                 f"Pessoa sem autorização {o_que}{onde} em {cam.nome}. Quem o "
                 "reconhecimento facial não identificou conta como não "
                 "autorizado — confirme na imagem."
+            )
+        elif det.classe == "epi_ausente":
+            detalhe = (
+                f"Pessoa sem EPI obrigatório em {cam.nome}: falta {extra or 'item exigido'}. "
+                "A detecção de EPI sinaliza para revisão humana — confirme na imagem."
             )
         elif det.classe == "contrafluxo":
             onde = f" ({zona_nome})" if zona_nome else ""
@@ -611,7 +617,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     alerta = await _criar_alerta(db, det, cam, pessoa,
                                  notificar=publicar_evento,
                                  zona_nome=dados.zona_nome or "",
-                                 teste=teste)
+                                 teste=teste, extra=dados.detalhe_extra)
 
     if publicar_evento:
         await publicar("deteccao", {

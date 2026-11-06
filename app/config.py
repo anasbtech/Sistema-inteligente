@@ -411,6 +411,15 @@ class Settings(BaseSettings):
     # o que se perde volta no próximo quadro, o que se inventa mobiliza gente.
     EXTRA_CAPACETE_MIN: float = 0.60
     EXTRA_ARMA_MIN: float = 0.70
+
+    # --- Conformidade de EPI (services/epi.py) -------------------------------
+    # Detector de EPI em ONNX (só pesos, sem código executável). Não vem no
+    # repositório: models/ fica fora do git. SafetyVision v2, AGPL-3.0:
+    # https://huggingface.co/ayushgupta7777/safetyvision-yolov8 (v2/best_640.onnx)
+    EPI_MODEL: str = str(RAIZ / "models" / "epi" / "safetyvision_v2_640.onnx")
+    EPI_CONF_MIN: float = 0.30
+    # Mesma pessoa sem EPI não gera alerta de novo antes disto.
+    EPI_ALERTA_JANELA_S: float = 300.0
     # Lado a que o YOLO reduz o quadro antes de analisar, e que manda mais que
     # o limiar em quem está longe. O padrão do Ultralytics é 640: nele a sala
     # acima entregava uma pessoa só, porque quem senta ao fundo chega ao

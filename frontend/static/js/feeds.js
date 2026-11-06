@@ -42,6 +42,9 @@ const SEXOS={
    a usuária validou a leitura. Veículo passou a azul para não disputar o
    verde com a pessoa; mochila saiu do rosa pelo mesmo motivo. */
 const COR_CLASSE={
+  epi_capacete:'#2FB67C', epi_oculos:'#2FB67C', epi_mascara:'#2FB67C', epi_colete:'#2FB67C',
+  epi_luvas:'#2FB67C', epi_sem_capacete:'#E8474D', epi_sem_oculos:'#E8474D',
+  epi_sem_mascara:'#E8474D', epi_sem_colete:'#E8474D', epi_sem_luvas:'#E8474D',
   pessoa:'#2FC27A', carro:'#35A7DE', caminhao:'#E8712C', onibus:'#D9C13A',
   motocicleta:'#F0A02A', bicicleta:'#8C6FE0', animal:'#4ED1C5',
   cachorro:'#4ED1C5', gato:'#4ED1C5', passaro:'#4ED1C5', cavalo:'#4ED1C5',

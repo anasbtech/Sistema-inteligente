@@ -1204,3 +1204,32 @@ button.id-card:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 /* A tabela pinta todo <b> de claro; sobre o fundo branco da placa o texto
    sumia. A cor da placa vence aqui. */
 .placa-lida b.placa-txt, .tbl .placa-lida b.placa-txt{color:#0b121a}
+
+/* ---------- Conformidade de EPI ---------- */
+.sw-row .motivo{padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+  background:transparent;color:var(--txt-2);font-size:12px;font-weight:600;cursor:pointer}
+.sw-row .motivo[aria-checked="true"]{border-color:var(--acc);background:rgba(53,167,222,.16);color:var(--txt-1)}
+.epi-grade{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr) minmax(250px,.8fr);gap:14px}
+@media (max-width:1180px){.epi-grade{grid-template-columns:1fr}}
+.epi-palco{position:relative;background:#000;border-radius:var(--r-m);overflow:hidden;aspect-ratio:16/10}
+.epi-palco canvas,.epi-palco img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.epi-corpo{display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center}
+.epi-lista{display:flex;flex-direction:column;gap:9px}
+.epi-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line-soft);border-radius:8px}
+.epi-item .bola{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:13px;font-weight:700}
+.epi-item b{display:block;font-size:13px}
+.epi-item small{font-size:11px;font-weight:600;letter-spacing:.04em}
+.epi-item.ok .bola{background:var(--green-ghost);color:var(--green)} .epi-item.ok small{color:var(--green)}
+.epi-item.falta .bola{background:var(--red-ghost);color:var(--red)} .epi-item.falta small{color:var(--red)}
+.epi-item.nv .bola{background:var(--ink-600);color:var(--txt-3)} .epi-item.nv small{color:var(--txt-3)}
+.epi-item.opc{opacity:.55}
+.epi-res{border-radius:10px;padding:18px;text-align:center;border:1px solid var(--line)}
+.epi-res .ico-g{width:46px;height:46px;border-radius:50%;margin:0 auto 10px;display:grid;place-items:center;font-size:24px;font-weight:700}
+.epi-res.conforme{border-color:var(--green);background:var(--green-ghost)} .epi-res.conforme .ico-g{background:var(--green);color:#06140d}
+.epi-res.fora{border-color:var(--red);background:var(--red-ghost)} .epi-res.fora .ico-g{background:var(--red);color:#fff}
+.epi-res.inconclusivo,.epi-res.vazio{background:var(--ink-600)} .epi-res.inconclusivo .ico-g,.epi-res.vazio .ico-g{background:var(--txt-4);color:var(--txt-1)}
+.epi-res h3{margin:0 0 4px;font-size:17px}
+.epi-res p{margin:0;color:var(--txt-2);font-size:12.5px}
+.epi-stat{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line-soft);font-size:13px}
+.epi-stat b{font-family:var(--f-mono)}
+.epi-pessoas{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}

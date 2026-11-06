@@ -325,6 +325,7 @@ const VIEWS = {
   facial:     {t:'Reconhecimento facial', s:'Registros de identificação biométrica',  perm:'facial'},
   objects:    {t:'Detecção de objetos',   s:'Classificação de objetos por câmera',    perm:'facial'},
   actions:    {t:'Análise de ações',      s:'Eventos comportamentais detectados',     perm:'facial'},
+  epi:        {t:'Conformidade de EPI',   s:'Equipamentos de proteção por pessoa e câmera', perm:'live'},
   biometrics: {t:'Base biométrica',       s:'Registros com identificador permanente', perm:'biometrics'},
   alerts:     {t:'Alertas',               s:'Ocorrências que exigem tratamento',      perm:'alerts'},
   users:      {t:'Usuários e perfis',     s:'Controle de acesso e permissões',        perm:'users'},
@@ -407,7 +408,7 @@ async function irPara(v){
   const render = {
     dash: renderPainel, live: renderAoVivo, cams: renderCameras,
     facial: renderFacial, objects: renderObjetos, actions: renderAcoes,
-    biometrics: renderBiometria, alerts: renderAlertas, users: renderUsuarios,
+    biometrics: renderBiometria, epi: renderEpi, alerts: renderAlertas, users: renderUsuarios,
     audit: renderAuditoria, settings: renderConfiguracoes
   }[v];
 

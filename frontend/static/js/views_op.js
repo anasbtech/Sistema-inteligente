@@ -750,6 +750,10 @@ async function editarCamera(codigo){
     detecta_arma:     c ? !!c.detecta_arma : false
   };
   const chave = k => `<span class="sw ${flags[k]?'on':''}"></span>`;
+  // EPIs exigidos nesta câmera (vazio = conformidade de EPI desligada).
+  const epiSel = new Set(c ? (c.epi_obrigatorios || []) : []);
+  const EPI_OPCOES = [['capacete','Capacete'],['oculos','Óculos'],['mascara','Máscara'],
+                      ['colete','Colete'],['luvas','Luvas'],['botas','Botas']];
 
   /* Capacete e arma de fogo não existem no modelo do parque — dependem de um
      detector próprio, apontado na configuração. Sem ele a chave não liga nada.
@@ -947,6 +951,10 @@ async function editarCamera(codigo){
         <span>Pela espécie. O modelo não tem rótulo para pessoa agachada e escolhe o bicho de silhueta parecida: das 10 detecções deste parque, as 10 eram pessoas. Ligue em pátio, perímetro ou via</span></div>${chave('detecta_animal')}</div>
       <div class="sw-row" data-csw="detecta_celular"><div class="bd"><b>Celular</b>
         <span>Numa sala de trabalho todo mundo tem um na mão. Ligue na revista de entrada, na cela ou onde ele é proibido</span></div>${chave('detecta_celular')}</div>
+      <div class="sw-row" style="cursor:default"><div class="bd"><b>Conformidade de EPI</b>
+        <span>Marque os EPIs obrigatórios nesta câmera. Quem estiver sem um deles gera alerta. Botas não têm detector: aparecem como "não verificado"</span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${EPI_OPCOES.map(([k, l]) =>
+          `<button type="button" class="motivo" role="checkbox" data-epi="${k}" aria-checked="${epiSel.has(k)}">${l}</button>`).join('')}</div></div></div>
       ${linhaDetectorExtra('capacete', 'Capacete', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
       ${linhaDetectorExtra('arma', 'Arma de fogo', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
       <div class="sw-row" data-csw="alerta_presenca"><div class="bd"><b>Alertar toda presença</b>
@@ -1089,6 +1097,12 @@ async function editarCamera(codigo){
     sincronizarAcoes();
   };
 
+  $$('[data-epi]', box).forEach(b => b.onclick = () => {
+    const k = b.dataset.epi;
+    epiSel.has(k) ? epiSel.delete(k) : epiSel.add(k);
+    b.setAttribute('aria-checked', String(epiSel.has(k)));
+  });
+
   $$('[data-csw]', box).forEach(r => r.onclick = () => {
     const k = r.dataset.csw;
     if(k === 'analitico_acao' && catalogoAcoes.length){
@@ -1171,7 +1185,8 @@ async function editarCamera(codigo){
       limiar_objeto: Math.round(num('#cLimObj', 65)) / 100,
       latitude: texto('#cLat') === '' ? null : num('#cLat', null),
       longitude: texto('#cLon') === '' ? null : num('#cLon', null),
-      ...flags
+      ...flags,
+      epi_obrigatorios: [...epiSel]
     };
     // Só vai quando a tela teve o catálogo para desenhar o painel. Sem ele o
     // campo fica de fora do PATCH e o servidor preserva o que já estava.
@@ -1277,7 +1292,7 @@ async function editarCamera(codigo){
     // formulário: não emitem `change`, e sem isto trocar um analítico ou uma
     // ação vigiada passaria por "nada mudou" — e seria perdido em silêncio.
     corpo.addEventListener('click', e => {
-      if(e.target.closest('[data-csw],[data-acao],[data-acoes-todas],[data-acoes-nenhuma],[data-sentido]'))
+      if(e.target.closest('[data-csw],[data-acao],[data-acoes-todas],[data-acoes-nenhuma],[data-sentido],[data-epi]'))
         marcar();
     });
   }
