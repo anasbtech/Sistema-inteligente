@@ -1,0 +1,5 @@
+analisar_triagem.pyw
+  Analisa os rostos da triagem e monta os grupos de "pessoas novas" para
+  aprovação. Dê duplo clique ao final do dia, com o sistema desligado
+  (~2-3 h; com o sistema ligado leva ~18 h). Pode interromper: continua de
+  onde parou. Depois, no sistema: Base biométrica > "Pessoas novas para aprovar".

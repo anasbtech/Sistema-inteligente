@@ -699,6 +699,7 @@ async function renderBiometria(alvo){
         ${['M','F','N'].map(s => `<option value="${s}" ${b.sexo===s?'selected':''}>${ROTULO_SEXO[s]}</option>`).join('')}</select>
       <select class="inp" id="bioStatus"><option value="">Todas as situações</option>
         ${Object.entries(STATUS_PESSOA).map(([k,v]) => `<option value="${k}" ${b.status===k?'selected':''}>${esc(v.lbl)}</option>`).join('')}</select>
+      ${API.pode('edit') ? `<button class="btn btn-soft btn-sm" id="bioNovas" hidden>${ico('users',14)} Pessoas novas para aprovar <b id="bioNovasN"></b></button>` : ''}
       ${API.pode('edit') ? `<button class="btn btn-primary btn-sm" id="bioNovo">${ico('plus',14)} Novo registro</button>` : ''}
     </div></div>
 
@@ -726,6 +727,14 @@ async function renderBiometria(alvo){
     </div></div>
 
   <div class="panel"><div class="panel-bd tight"><div id="bioCorpo">${carregando()}</div></div></div>`;
+
+  if(API.pode('edit')) API.triagemNovas().then(r => {
+    const b = $('#bioNovas');
+    if(!b || !r.total) return;
+    $('#bioNovasN').textContent = `(${r.total})`;
+    b.hidden = false;
+    b.onclick = () => abrirAprovacaoTriagem(r.grupos, 0);
+  }).catch(() => {});
 
   const carregar = async () => {
     const corpo = $('#bioCorpo');
@@ -1161,5 +1170,83 @@ async function editarPessoa(idBio, opcoes){
       }
     }catch(e){ erroToast(e); }
     finally{ btn.disabled = false; }
+  };
+}
+
+
+/* ---------- Aprovação das pessoas novas da triagem ----------
+   Um grupo por vez. O sexo NÃO vem marcado: o motor nunca o deduz da imagem
+   (medido, ele trocou mulheres por homens), então quem aprova escolhe. Foto
+   desmarcada não entra na ficha e continua na triagem. */
+function abrirAprovacaoTriagem(grupos, i){
+  if(i >= grupos.length){
+    fecharModal();
+    toast('Aprovação concluída', 'Não há mais grupos nesta lista.', 'ok');
+    irPara(APP.view);
+    return;
+  }
+  const g = grupos[i];
+  const marcadas = new Set(g.capturas.map(c => c.codigo));
+  let sexo = null;
+  const box = abrirModal(`
+    <div class="modal-hd"><h3>Pessoa nova ${i + 1} de ${grupos.length}</h3>
+      <span class="sp" style="flex:1"></span>
+      <button class="x" id="apX">${ico('x',16)}</button></div>
+    <div class="modal-bd">
+      <p class="hint" style="margin:0 0 10px">${g.capturas.length} capturas · ${esc(g.cameras.join(', '))}.
+        Desmarque as fotos que <b>não</b> forem desta pessoa.</p>
+      <div id="apFotos" style="display:flex;flex-wrap:wrap;gap:6px;max-height:360px;overflow:auto">
+        ${g.capturas.map(c => `<label class="ap-foto" data-cod="${esc(c.codigo)}" title="${esc(c.camera)} · ${fmtDT(c.ocorrido_em)}"
+             style="position:relative;cursor:pointer;border:2px solid var(--acc);border-radius:6px;overflow:hidden;line-height:0">
+          <img src="${API.base}/deteccoes/${encodeURIComponent(c.codigo)}/snapshot?token=${encodeURIComponent(API.access)}"
+               style="height:96px;width:auto;display:block" loading="lazy">
+          <input type="checkbox" checked style="position:absolute;top:4px;left:4px"></label>`).join('')}
+      </div>
+      <div style="display:flex;gap:18px;align-items:end;flex-wrap:wrap;margin-top:14px">
+        <div><div class="hint" style="margin:0 0 6px">Sexo <b style="color:var(--amber)">(obrigatório)</b></div>
+          <div class="segm" id="apSexo"><button data-s="M">Masculino</button><button data-s="F">Feminino</button></div></div>
+        <label style="flex:1;min-width:260px"><div class="hint" style="margin:0 0 6px">Nome (fictício)</div>
+          <input class="inp" id="apNome" style="width:100%" placeholder="escolha o sexo primeiro"></label>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" id="apDesc">Descartar grupo</button>
+      <button class="btn btn-ghost" id="apPular">Pular</button>
+      <span class="sp" style="flex:1"></span>
+      <button class="btn btn-primary" id="apOk" disabled>${ico('check',14)} Aprovar e criar ficha</button>
+    </div>`, true);
+  const atualizar = () => {
+    $('#apOk', box).disabled = !sexo || marcadas.size < 3 || $('#apNome', box).value.trim().length < 5;
+  };
+  $$('.ap-foto', box).forEach(l => {
+    const cb = $('input', l);
+    cb.onchange = () => {
+      cb.checked ? marcadas.add(l.dataset.cod) : marcadas.delete(l.dataset.cod);
+      l.style.borderColor = cb.checked ? 'var(--acc)' : 'var(--line)';
+      l.style.opacity = cb.checked ? '1' : '.35';
+      atualizar();
+    };
+  });
+  $$('#apSexo button', box).forEach(b => b.onclick = () => {
+    sexo = b.dataset.s;
+    $$('#apSexo button', box).forEach(x => x.classList.toggle('on', x === b));
+    $('#apNome', box).value = sexo === 'M' ? g.nome_m : g.nome_f;
+    atualizar();
+  });
+  $('#apNome', box).oninput = atualizar;
+  $('#apX', box).onclick = () => { fecharModal(); irPara(APP.view); };
+  $('#apPular', box).onclick = () => abrirAprovacaoTriagem(grupos, i + 1);
+  $('#apDesc', box).onclick = async () => {
+    try{ await API.triagemDescartar(g.chave); abrirAprovacaoTriagem(grupos, i + 1); }
+    catch(e){ erroToast(e); }
+  };
+  $('#apOk', box).onclick = async () => {
+    $('#apOk', box).disabled = true;
+    try{
+      const r = await API.triagemAprovar({chave: g.chave, sexo, nome: $('#apNome', box).value.trim(),
+                                          codigos: [...marcadas]});
+      toast('Ficha criada', `${esc(r.nome)} — ${esc(r.id_biometrico)} · ${r.capturas} capturas na trajetória.`, 'ok');
+      abrirAprovacaoTriagem(grupos, i + 1);
+    }catch(e){ erroToast(e); atualizar(); }
   };
 }

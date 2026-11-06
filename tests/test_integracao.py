@@ -2690,3 +2690,54 @@ def test_captura_sem_rosto_confirmado_nao_entra_na_ficha(cliente, monkeypatch):
     assert r.json()["match"] is False
     d = cliente.get(f"/deteccoes/{r.json()['codigo']}").json()
     assert d["pessoa"] is None
+
+
+def test_aprovacao_da_triagem_cria_ficha_com_sexo_escolhido(cliente, monkeypatch, tmp_path):
+    """Grupo da triagem só vira ficha aprovado, com o sexo que o operador escolheu."""
+    import asyncio
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from app.database import db_context, engine
+    from app.models import Camera, Deteccao, StatusCamera, TipoDeteccao
+    from app.routers import pessoas as rota, triagem_cadastro as tc
+    from app.services import face_engine
+
+    monkeypatch.setattr(tc, "PASTA", tmp_path)
+    cods = [f"FR-TRI-{i}" for i in range(5)]
+    (tmp_path / "grupos.json").write_text(json.dumps([{
+        "grupo": 1, "nome": "x", "sexo": "M", "sexo_conf": 0.85, "capturas": 5,
+        "coesao": 0.8, "cameras": ["TRI"], "codigos": cods, "parecidos_com": []}]))
+
+    async def preparar():
+        async with db_context() as db:
+            cam = Camera(codigo="CAM-TRI", nome="TRI", setor="TRI",
+                         status=StatusCamera.MANUTENCAO, rtsp_url="")
+            db.add(cam); await db.flush()
+            agora = datetime.now(timezone.utc)
+            for i, c in enumerate(cods):
+                db.add(Deteccao(codigo=c, tipo=TipoDeteccao.FACIAL, camera_id=cam.id,
+                                ocorrido_em=agora - timedelta(minutes=i), snapshot_key="x.jpg",
+                                severidade=1))
+        await engine.dispose()
+    asyncio.run(preparar())
+
+    import numpy as np
+    from types import SimpleNamespace
+    monkeypatch.setattr(rota.evidencias, "ler", lambda k: b"jpeg")
+    monkeypatch.setattr(face_engine, "extrair_confirmado",
+                        lambda j: SimpleNamespace(embedding=np.ones(512, np.float32) / 22.6, qualidade=0.8))
+
+    g = cliente.get("/pessoas/triagem-novas").json()["grupos"]
+    assert len(g) == 1 and g[0]["nome_m"] != g[0]["nome_f"]
+    # Sem escolher sexo não passa; com uma foto desmarcada, ela fica na triagem.
+    r = cliente.post("/pessoas/triagem-novas/aprovar",
+                     json={"chave": g[0]["chave"], "sexo": "N", "nome": g[0]["nome_f"], "codigos": cods})
+    assert r.status_code == 422
+    r = cliente.post("/pessoas/triagem-novas/aprovar",
+                     json={"chave": g[0]["chave"], "sexo": "F", "nome": g[0]["nome_f"], "codigos": cods[:4]})
+    assert r.status_code == 201, r.text
+    assert r.json()["id_biometrico"].startswith("BIO-F") and r.json()["capturas"] == 4
+    assert cliente.get("/pessoas/triagem-novas").json()["total"] == 0
+    p = cliente.get(f"/pessoas/{r.json()['id_biometrico']}").json()
+    assert p["sexo"] == "F" and p["status"] == "FUNCIONARIO"

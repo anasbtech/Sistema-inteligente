@@ -269,6 +269,10 @@ const API = {
   // de conferência pergunta "é ela?"; esta, "quem é?".
   filaDesconhecidos(q){ return this.get('/pessoas/desconhecidos', q || {}); },
   abrirNaoIdentificado(codigos){ return this.post('/pessoas/nao-identificado', codigos); },
+  // Pessoas novas encontradas na triagem, para aprovação humana.
+  triagemNovas(){ return this.get('/pessoas/triagem-novas'); },
+  triagemAprovar(corpo){ return this.post('/pessoas/triagem-novas/aprovar', corpo); },
+  triagemDescartar(chave){ return this.post('/pessoas/triagem-novas/descartar', {chave}); },
   amostrasDeCapturas(id, codigos){
     return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
   },

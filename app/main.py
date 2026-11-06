@@ -23,7 +23,8 @@ from app import web
 from app.config import settings
 from app.database import MemoriaVolatil, close_connections, db_context, engine, get_redis
 from app.routers import (
-    alertas, auditoria, auth, cameras, configuracao, deteccoes, pessoas, stream, usuarios,
+    alertas, auditoria, auth, cameras, configuracao, deteccoes, pessoas, stream,
+    triagem_cadastro, usuarios,
 )
 from app.services import video
 from app.services.configuracao import carregar as carregar_configuracao
@@ -249,6 +250,7 @@ async def erro_validacao(request: Request, exc: RequestValidationError):
 # --- API ---
 app.include_router(auth.router)
 app.include_router(cameras.router)
+app.include_router(triagem_cadastro.router)   # antes de pessoas: /pessoas/{id} engoliria a rota
 app.include_router(pessoas.router)
 app.include_router(deteccoes.router)
 app.include_router(alertas.router)
