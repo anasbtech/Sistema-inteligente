@@ -264,7 +264,16 @@ textarea.inp{resize:vertical;min-height:70px}
 /* Marca AizonVMS: "Aizon" no tom do texto, "VMS" no azul do sistema. */
 .marca{font-family:var(--f-disp);font-weight:700;letter-spacing:.04em;white-space:nowrap;text-transform:none}
 .brand-cell .marca{font-size:21px;letter-spacing:.04em}
-.auth-mark-txt .marca{letter-spacing:.03em}
+/* Bloco da marca no login: escudo, um fio vertical separando, nome grande
+   com espaçamento justo e o subtítulo discreto, em cinza, alinhado embaixo. */
+.auth-mark{gap:18px}
+.auth-mark .shield{width:40px;height:46px;filter:drop-shadow(0 0 10px rgba(53,167,222,.22))}
+.auth-mark-txt{position:relative;padding-left:18px}
+.auth-mark-txt::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:1px;
+  background:linear-gradient(180deg,transparent,var(--line) 20%,var(--line) 80%,transparent)}
+.auth-mark-txt .marca{font-size:clamp(26px,2.6vw,32px);letter-spacing:.01em;line-height:1}
+.auth-mark-txt .marca .marca-b{font-weight:600}
+.auth-mark-txt > span{margin-top:8px;font-size:10px;letter-spacing:.24em;color:var(--txt-3);font-weight:600}
 /* Mais específicas que `.brand-txt span` e `.auth-mark-txt span`, que são do
    subtítulo pequeno em maiúsculas e pegavam as duas partes do nome. */
 .marca .marca-a,.marca .marca-b{display:inline;font-size:inherit;font-weight:inherit;
