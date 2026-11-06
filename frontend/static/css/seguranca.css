@@ -261,6 +261,16 @@ textarea.inp{resize:vertical;min-height:70px}
 .brand-txt span{font-size:9px;font-weight:600;letter-spacing:.17em;
   text-transform:uppercase;color:var(--acc);line-height:1}
 .brand-cell b{font-family:var(--f-disp);font-size:16px;font-weight:700;letter-spacing:.12em;line-height:1;white-space:nowrap}
+/* Marca AizonVMS: "Aizon" no tom do texto, "VMS" no azul do sistema. */
+.marca{font-family:var(--f-disp);font-weight:700;letter-spacing:.04em;white-space:nowrap;text-transform:none}
+.brand-cell .marca{font-size:21px;letter-spacing:.04em}
+.auth-mark-txt .marca{letter-spacing:.03em}
+/* Mais específicas que `.brand-txt span` e `.auth-mark-txt span`, que são do
+   subtítulo pequeno em maiúsculas e pegavam as duas partes do nome. */
+.marca .marca-a,.marca .marca-b{display:inline;font-size:inherit;font-weight:inherit;
+  letter-spacing:inherit;text-transform:none;margin:0;line-height:inherit}
+.marca .marca-a{color:var(--txt-1)}
+.marca .marca-b{color:var(--acc)}
 
 .topbar{
   grid-area:top;display:flex;align-items:center;gap:14px;padding:0 16px;
