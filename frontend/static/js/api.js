@@ -57,7 +57,7 @@ const API = {
   // legítimos. O que ele corta é a chamada que não volta nunca.
   prazoMs: 45000,
 
-  async _bruto(metodo, rota, {corpo, query, formData, texto, arquivo} = {}){
+  async _bruto(metodo, rota, {corpo, query, formData, texto, arquivo, prazoMs} = {}){
     let url = this.base + rota;
     if(query){
       const qs = new URLSearchParams();
@@ -80,7 +80,8 @@ const API = {
     // espera fica no "carregando" para sempre — foi assim que a ficha
     // biométrica parecia "não abrir".
     const relogio = new AbortController();
-    const prazo = setTimeout(() => relogio.abort(), this.prazoMs);
+    const limite = prazoMs || this.prazoMs;
+    const prazo = setTimeout(() => relogio.abort(), limite);
     opts.signal = relogio.signal;
 
     let r;
@@ -89,7 +90,7 @@ const API = {
     }catch(e){
       if(e && e.name === 'AbortError'){
         const estourou = new Error(
-          `O servidor não respondeu em ${Math.round(this.prazoMs / 1000)}s. `
+          `O servidor não respondeu em ${Math.round(limite / 1000)}s. `
           + 'Nada foi gravado — tente de novo.');
         estourou.status = 0;
         estourou.rede = true;
@@ -292,7 +293,8 @@ const API = {
     const fd = new FormData();
     fd.append('imagem', arquivo);
     return this.req('POST', '/epi/analisar',
-      {formData: fd, query: exigidos ? {exigidos: exigidos.join(',')} : {}});
+      {formData: fd, query: exigidos ? {exigidos: exigidos.join(',')} : {},
+       prazoMs: 120000});   // foto com equipe: cada pessoa passa por rosto e mãos ampliados
   },
   async buscarPorImagem(arquivo, limiar){
     const fd = new FormData();

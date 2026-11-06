@@ -33,6 +33,11 @@ def _modelo(achados):
     return M()
 
 
+@pytest.fixture(autouse=True)
+def _sem_detector_de_rosto(monkeypatch):
+    monkeypatch.setattr(epi, "_conferir_mascara", lambda q, b: None)
+
+
 QUADRO = np.zeros((400, 400, 3), np.uint8)
 PESSOA = (100, 50, 200, 380)
 
@@ -52,7 +57,7 @@ def test_regra_de_conformidade(monkeypatch, achados, exigidos, resultado, faltan
 
 
 def test_ausente_so_vence_detectado_se_mais_confiante(monkeypatch):
-    monkeypatch.setattr(epi, "_carregar", lambda: _modelo([(0, .8, [0, 0, 9, 9]), (1, .4, [0, 0, 9, 9])]))
+    monkeypatch.setattr(epi, "_carregar", lambda: _modelo([(0, .8, [50, 0, 80, 20]), (1, .4, [50, 0, 80, 20])]))
     assert epi.analisar_pessoa(QUADRO, PESSOA, ["capacete"])["itens"]["capacete"]["estado"] == "detectado"
 
 
@@ -100,5 +105,31 @@ def test_sem_passada_ampliada_quando_luva_nao_e_exigida(monkeypatch):
     m, vistos = _modelo_luva_so_ampliada()
     monkeypatch.setattr(epi, "_carregar", lambda: m)
     epi.analisar_pessoa(QUADRO, PESSOA, ["capacete"])
-    epi.analisar_quadro(QUADRO, [(PESSOA, .9, 1)], ["luvas"], luvas_ate=0)
+    epi.analisar_quadro(QUADRO, [(PESSOA, .9, 1)], ["luvas"], detalhar_ate=0)
     assert vistos == []
+
+
+def test_mascara_vem_do_rosto_e_cor_do_capacete(monkeypatch):
+    monkeypatch.setattr(epi, "_carregar", lambda: _modelo([(0, .8, [10, 5, 50, 30])]))
+    monkeypatch.setattr(epi, "_conferir_mascara",
+                        lambda q, b: {"estado": "detectado", "confianca": .7, "bbox": [1, 2, 3, 4]})
+    q = QUADRO.copy()
+    q[:, :] = (0, 200, 255)                       # BGR: amarelo
+    r = epi.analisar_pessoa(q, PESSOA, ["capacete", "mascara"])
+    assert r["itens"]["mascara"]["estado"] == "detectado" and r["resultado"] == "conforme"
+    assert r["itens"]["capacete"]["cor"] == "#EBB800"
+
+
+def test_pele_separa_rosto_de_mascara_branca():
+    pele = np.full((20, 20, 3), (110, 140, 200), np.uint8)    # BGR de pele
+    branca = np.full((20, 20, 3), (235, 235, 235), np.uint8)
+    assert epi._pele(pele) > .9 and epi._pele(branca) < .1
+
+
+def test_capacete_do_vizinho_nao_vale(monkeypatch):
+    # Recorte começa em x=82; a pessoa vai de 100 a 200 (eixo em 150).
+    # O capacete mais confiante está no vizinho (x≈210), o próprio no eixo.
+    monkeypatch.setattr(epi, "_carregar", lambda: _modelo([(0, .9, [115, 5, 140, 30]),
+                                                          (0, .6, [55, 5, 80, 30])]))
+    r = epi.analisar_pessoa(QUADRO, PESSOA, ["capacete"])
+    assert r["itens"]["capacete"]["confianca"] == .6

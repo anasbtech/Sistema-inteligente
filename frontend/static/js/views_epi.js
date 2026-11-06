@@ -31,10 +31,11 @@ function epiOrdenar(a){
 }
 
 /* ---------- O trabalhador ilustrado ----------
-   Cada equipamento é um grupo próprio: detectado aparece inteiro com a
-   cantoneira verde; ausente aparece apagado com a cantoneira vermelha; não
-   verificado, com a cantoneira cinza tracejada. Item não exigido fica
-   desenhado, sem marcação. */
+   O boneco veste o que a IA viu na pessoa: item detectado aparece inteiro,
+   na cor que a câmera mostrou, com a cantoneira verde; ausente aparece
+   apagado com a cantoneira vermelha; exigido e não verificado, em contorno
+   fantasma com a cantoneira cinza tracejada. Item não exigido e não visto
+   não é desenhado — o boneco não inventa equipamento. */
 const EPI_AREA = {
   capacete: [[86, 22, 154, 60]],
   oculos:   [[90, 58, 150, 76]],
@@ -45,12 +46,18 @@ const EPI_AREA = {
 };
 function epiTrabalhadorSVG(itens, exigidos){
   const st = k => (itens[k] || {}).estado || 'nao_verificado';
-  const op = k => exigidos.includes(k) && st(k) === 'ausente' ? .16 : 1;
+  const op = k => st(k) === 'detectado' ? 1 : st(k) === 'ausente' ? .16
+    : exigidos.includes(k) ? .22 : 0;
+  // Cor vista pela câmera (capacete, colete), clareada e escurecida para o volume.
+  const tom = (hex, f) => '#' + [1, 3, 5].map(i => Math.max(0, Math.min(255,
+    Math.round(parseInt(hex.slice(i, i + 2), 16) * f))).toString(16).padStart(2, '0')).join('');
+  const corCap = (itens.capacete || {}).estado === 'detectado' && itens.capacete.cor || '#E9EDF1';
+  const corCol = (itens.colete || {}).estado === 'detectado' && itens.colete.cor || '#D2EC1E';
   const cantos = ([x1, y1, x2, y2], cor, tracejado) => {
     const d = 9, a = `stroke="${cor}" stroke-width="2.4" fill="none" stroke-linecap="round"${tracejado ? ' stroke-dasharray="3 3"' : ''}`;
     return `<path ${a} d="M${x1} ${y1 + d}V${y1}H${x1 + d}M${x2 - d} ${y1}H${x2}V${y1 + d}M${x2} ${y2 - d}V${y2}H${x2 - d}M${x1 + d} ${y2}H${x1}V${y2 - d}"/>`;
   };
-  const marcas = EPI_ORDEM.filter(k => exigidos.includes(k)).map(k => {
+  const marcas = EPI_ORDEM.filter(k => exigidos.includes(k) || st(k) !== 'nao_verificado').map(k => {
     const e = st(k), cor = EPI_COR[e], i = itens[k] || {};
     const caixas = EPI_AREA[k].map(b => cantos(b, cor, e !== 'detectado')).join('');
     const [x1, y1] = EPI_AREA[k][0];
@@ -64,8 +71,8 @@ function epiTrabalhadorSVG(itens, exigidos){
   <defs>
     <linearGradient id="eSk" x1="0" x2="1"><stop offset="0" stop-color="#B9805C"/><stop offset=".5" stop-color="#D49A74"/><stop offset="1" stop-color="#A9704F"/></linearGradient>
     <linearGradient id="eNv" x1="0" x2="1"><stop offset="0" stop-color="#1A2A44"/><stop offset=".5" stop-color="#26395A"/><stop offset="1" stop-color="#16243A"/></linearGradient>
-    <linearGradient id="eVe" x1="0" x2="1"><stop offset="0" stop-color="#B9D80F"/><stop offset=".5" stop-color="#DDF52A"/><stop offset="1" stop-color="#AECB0C"/></linearGradient>
-    <linearGradient id="eHe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#C9D1D9"/></linearGradient>
+    <linearGradient id="eVe" x1="0" x2="1"><stop offset="0" stop-color="${tom(corCol, .85)}"/><stop offset=".5" stop-color="${tom(corCol, 1.06)}"/><stop offset="1" stop-color="${tom(corCol, .8)}"/></linearGradient>
+    <linearGradient id="eHe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${tom(corCap, 1.1)}"/><stop offset="1" stop-color="${tom(corCap, .82)}"/></linearGradient>
     <linearGradient id="eRf" x1="0" x2="1"><stop offset="0" stop-color="#AEB7C0"/><stop offset=".5" stop-color="#F2F5F8"/><stop offset="1" stop-color="#9BA5AF"/></linearGradient>
     <radialGradient id="eFu" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="#1B2A38"/><stop offset="1" stop-color="#0D161F" stop-opacity="0"/></radialGradient>
   </defs>
@@ -97,7 +104,7 @@ function epiTrabalhadorSVG(itens, exigidos){
     <path d="M78 126 L106 120 L120 172 L134 120 L162 126 L166 186 L152 268 H88 L74 186 Z" fill="url(#eVe)"/>
     <path d="M76 204h88M79 232h82" stroke="url(#eRf)" stroke-width="9"/>
     <path d="M96 124v80M144 124v80" stroke="url(#eRf)" stroke-width="7" opacity=".9"/>
-    <path d="M120 172v96" stroke="#9DB80B" stroke-width="1.5"/>
+    <path d="M120 172v96" stroke="${tom(corCol, .7)}" stroke-width="1.5"/>
   </g>
   <!-- pescoço e cabeça -->
   <path d="M108 96h24v26q-12 6-24 0z" fill="url(#eSk)"/>
@@ -121,8 +128,8 @@ function epiTrabalhadorSVG(itens, exigidos){
   <!-- capacete -->
   <g opacity="${op('capacete')}">
     <path d="M92 54 Q92 26 120 24 Q148 26 148 54 Z" fill="url(#eHe)"/>
-    <path d="M86 54 H154 Q156 60 150 60 H90 Q84 60 86 54 Z" fill="#E4E9EE"/>
-    <path d="M120 24 V54" stroke="#C3CBD3" stroke-width="5"/>
+    <path d="M86 54 H154 Q156 60 150 60 H90 Q84 60 86 54 Z" fill="${tom(corCap, .95)}"/>
+    <path d="M120 24 V54" stroke="${tom(corCap, .8)}" stroke-width="5"/>
     <path d="M100 52 Q100 34 112 29" stroke="#fff" stroke-width="2" fill="none" opacity=".9"/>
   </g>
   ${marcas}
@@ -301,6 +308,8 @@ async function renderEpi(alvo){
     img.src = URL.createObjectURL(arq);
     await img.decode();
     EPI.imagem = img;
+    EPI.analise = null;
+    epiDesenharCaixas();              // a foto aparece já, as caixas quando a análise voltar
     try{
       EPI.analise = epiOrdenar(await API.epiAnalisar(arq, exig && exig.length ? exig : EPI_PADRAO));
       EPI.pessoa = 0;

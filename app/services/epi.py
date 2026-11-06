@@ -145,8 +145,139 @@ def _procurar_luvas(m, quadro: np.ndarray, bbox) -> List[tuple]:
     return maos[:2]
 
 
+def _pele(img: np.ndarray) -> float:
+    """Fração de pixels com tom de pele (faixa YCrCb clássica, vale para peles
+    claras e escuras: o que muda entre elas é o brilho, não o Cr/Cb)."""
+    import cv2
+
+    if img.size == 0:
+        return 0.0
+    y = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    cr, cb = y[..., 1], y[..., 2]
+    return float(((cr >= 135) & (cr <= 180) & (cb >= 80) & (cb <= 135)).mean())
+
+
+def _conferir_mascara(quadro: np.ndarray, bbox) -> Optional[dict]:
+    """Máscara pelo rosto, não pelo modelo de EPI.
+
+    O SafetyVision não reconhece máscara descartável (medido: zero, mesmo
+    com o rosto ampliado e limiar de 5%). O detector de rosto do sistema
+    marca olhos, nariz e boca; daí compara-se a pele da testa com a da
+    região nariz–queixo. Medido: com máscara a boca dá 0% de pele contra
+    77–100% na testa; sem máscara, 90–100% nas duas. Testa sem pele visível
+    (rosto de lado, sombra) não afirma nada. Barba cheia pode passar por
+    máscara — por isso a confiança fica abaixo da do detector.
+    """
+    import cv2
+
+    try:
+        from app.services import face_engine
+        det = face_engine.obter_modelo().det_model
+    except Exception:  # noqa: BLE001
+        return None
+    alt, larg = quadro.shape[:2]
+    x1, y1, x2, y2 = (float(v) for v in bbox)
+    w, h = x2 - x1, y2 - y1
+    X1, Y1 = max(0, int(x1 - w * .15)), max(0, int(y1 - h * .12))
+    X2, Y2 = min(larg, int(x2 + w * .15)), min(alt, int(y1 + h * .45))
+    cab = quadro[Y1:Y2, X1:X2]
+    if cab.shape[0] < 16 or cab.shape[1] < 16:
+        return None
+    f = min(640 / max(cab.shape[:2]), 6.0)
+    img = cv2.resize(cab, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    try:
+        caixas, pontos = det.detect(img, max_num=0, metric="default")
+    except Exception:  # noqa: BLE001
+        return None
+    if caixas is None or len(caixas) == 0 or pontos is None:
+        return None
+    i = int(np.argmax(caixas[:, 4]))
+    score, k = float(caixas[i, 4]), pontos[i]
+    d = float(np.linalg.norm(k[1] - k[0]))
+    if score < 0.5 or d < 8:
+        return None
+    olhos_y = (k[0][1] + k[1][1]) / 2
+    boca_y = (k[3][1] + k[4][1]) / 2
+    xa, xb = int(min(k[3][0], k[0][0])), int(max(k[4][0], k[1][0]))
+    testa = _pele(img[max(0, int(olhos_y - .55 * d)):max(0, int(olhos_y - .25 * d)), max(0, xa):xb])
+    baixo = _pele(img[int(k[2][1]):int(boca_y + .35 * d), max(0, xa):xb])
+    if testa < 0.4:
+        return None
+    caixa = [X1 + (xa - .25 * d) / f, Y1 + (k[2][1] - .45 * d) / f,
+             X1 + (xb + .25 * d) / f, Y1 + (boca_y + .6 * d) / f]
+    caixa = [round(max(0.0, float(v)), 1) for v in caixa]      # float do numpy não vira JSON
+    if baixo <= 0.25:
+        return {"estado": "detectado", "confianca": round(min(.9, score * (1 - baixo / testa)), 3),
+                "bbox": caixa}
+    if baixo >= 0.6:
+        return {"estado": "ausente", "confianca": round(min(.9, score * min(1.0, baixo / testa)), 3),
+                "bbox": caixa}
+    return None
+
+
+def _cor(quadro: np.ndarray, b, parte: str) -> Optional[str]:
+    """Cor do equipamento, para o boneco vestir o que a IA viu.
+
+    A caixa do capacete pega testa e fundo; a do colete, camisa e braço. Por
+    isso: só a parte onde o equipamento está (copa do capacete, miolo do
+    colete) e, dela, os 35% de pixels mais vivos — capacete e colete são
+    feitos para chamar a atenção, o que está em volta não.
+    """
+    import cv2
+
+    x1, y1, x2, y2 = (int(v) for v in b)
+    w, h = x2 - x1, y2 - y1
+    if parte == "capacete":             # a copa: abaixo dela já é testa
+        m = quadro[max(0, y1 + h // 12):max(0, y1 + h * 3 // 10), max(0, x1 + w // 4):max(0, x2 - w // 4)]
+        if m.size < 12:
+            return None
+        return _hex(np.median(m.reshape(-1, 3), axis=0))
+    else:
+        m = quadro[max(0, y1 + h // 6):max(0, y2 - h // 4), max(0, x1 + w // 8):max(0, x2 - w // 8)]
+    if m.size < 12:
+        return None
+    px = m.reshape(-1, 3)
+    hsv = cv2.cvtColor(m, cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(float)
+    vivo = hsv[:, 1] * .6 + hsv[:, 2] * .4
+    sel = px[vivo >= np.percentile(vivo, 65)]
+    return _hex(np.median(sel, axis=0))
+
+
+def _hex(bgr) -> str:
+    """BGR -> #RRGGBB, clareado como sob luz boa: a sombra da cena não é a cor
+    do equipamento (capacete branco na sombra sai cinza)."""
+    bgr = np.asarray(bgr, float)
+    bgr = np.clip(bgr * (235 / max(1.0, bgr.max())), 0, 255).astype(int)
+    return "#%02X%02X%02X" % (bgr[2], bgr[1], bgr[0])
+
+
+CABECA = {"capacete", "oculos", "mascara"}
+
+
+def _pertence(item: str, caixa, pessoa) -> float:
+    """Quanto um item achado no recorte é *desta* pessoa (0 = não é).
+
+    O recorte tem folga para os lados — é por onde entram capacete inclinado
+    e mão aberta —, mas numa equipe lado a lado essa folga traz o capacete do
+    vizinho, que às vezes sai mais confiante que o da própria pessoa. Item de
+    cabeça precisa estar sobre o eixo do corpo e na parte de cima dele; o
+    colete, sobre o tronco. Luva fica com a mão, que pode estar longe.
+    """
+    x1, y1, x2, y2 = (float(v) for v in pessoa)
+    w, h = max(1.0, x2 - x1), max(1.0, y2 - y1)
+    cx, cy = (caixa[0] + caixa[2]) / 2, (caixa[1] + caixa[3]) / 2
+    meio = (x1 + x2) / 2
+    if item in CABECA:
+        if cy > y1 + h * .45:
+            return 0.0
+        return max(0.0, 1 - abs(cx - meio) / (w * .5))
+    if item == "colete":
+        return max(0.0, 1 - abs(cx - meio) / (w * .75))
+    return 1.0
+
+
 def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str],
-                    procurar_luvas: bool = True) -> dict:
+                    detalhar: bool = True, mascara: Optional[bool] = None) -> dict:
     """EPI de uma pessoa: estado de cada item, caixas e o resultado."""
     m = _carregar()
     itens = {k: {"estado": "nao_verificado", "confianca": None, "bbox": None} for k in ITENS}
@@ -154,26 +285,40 @@ def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str],
         rec, (ox, oy) = recorte_da_pessoa(quadro, bbox)
         if rec.size:
             r = m(rec, conf=settings.EPI_CONF_MIN, imgsz=640, verbose=False)[0]
+            pesos: Dict[str, float] = {}
             for cls, conf, xyxy in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(),
                                        r.boxes.xyxy.tolist()):
                 par = MAPA.get(m.names[int(cls)])
                 if par is None:
                     continue
                 item, estado = par
-                atual = itens[item]
+                caixa = [xyxy[0] + ox, xyxy[1] + oy, xyxy[2] + ox, xyxy[3] + oy]
+                peso = conf * _pertence(item, caixa, bbox)
+                if peso <= 0:
+                    continue            # é do vizinho: a folga do recorte o trouxe junto
                 # "Ausente" só vence "detectado" se for mais confiante.
-                if atual["confianca"] is None or conf > atual["confianca"]:
+                if peso > pesos.get(item, 0):
+                    pesos[item] = peso
                     itens[item] = {"estado": estado, "confianca": round(float(conf), 3),
-                                   "bbox": [xyxy[0] + ox, xyxy[1] + oy, xyxy[2] + ox, xyxy[3] + oy]}
+                                   "bbox": caixa}
         # Luva exigida e não vista: a passada ampliada (custa ~1 s por pedaço
         # com a máquina ocupada, por isso só quando faz diferença).
-        if procurar_luvas and "luvas" in exigidos and itens["luvas"]["estado"] != "detectado":
+        if detalhar and "luvas" in exigidos and itens["luvas"]["estado"] != "detectado":
             maos = _procurar_luvas(m, quadro, bbox)
             if maos:
                 melhor = maos[0]
                 itens["luvas"] = {"estado": melhor[0], "confianca": round(melhor[1], 3),
                                   "bbox": [round(v, 1) for v in melhor[2]],
                                   "caixas": [[round(v, 1) for v in x[2]] for x in maos]}
+        # Máscara: na tela sempre (o boneco mostra o que se vê), no ao vivo só se exigida.
+        olhar_rosto = (detalhar if mascara is None else mascara) or "mascara" in exigidos
+        if olhar_rosto and itens["mascara"]["estado"] != "detectado":
+            masc = _conferir_mascara(quadro, bbox)
+            if masc:
+                itens["mascara"] = masc
+        for k in ("capacete", "colete"):
+            if itens[k]["estado"] == "detectado" and itens[k]["bbox"]:
+                itens[k]["cor"] = _cor(quadro, itens[k]["bbox"], k)
     exig = [e for e in exigidos if e in ITENS]
     estados = [itens[e]["estado"] for e in exig]
     if not exig:
@@ -189,15 +334,17 @@ def analisar_pessoa(quadro: np.ndarray, bbox, exigidos: List[str],
 
 
 def analisar_quadro(quadro: np.ndarray, pessoas: List[tuple], exigidos: List[str],
-                    luvas_ate: int = 2) -> List[dict]:
+                    detalhar_ate: int = 2, mascara_ate: int = 6) -> List[dict]:
     """`pessoas`: lista de (bbox, confiança, track_id), as mais próximas primeiro.
 
-    A passada ampliada das luvas só nas `luvas_ate` primeiras: quem está ao
-    fundo não tem mão com pixels para isso, e o custo cresce por pessoa.
+    A passada ampliada das luvas (~5 s) só nas `detalhar_ate` primeiras; a
+    checagem de máscara (~1 s) nas `mascara_ate` primeiras. Quem está ao
+    fundo não tem mão nem rosto com pixels para isso.
     """
     saida = []
     for n, (bbox, conf, tid) in enumerate(pessoas):
-        r = analisar_pessoa(quadro, bbox, exigidos, procurar_luvas=n < luvas_ate)
+        r = analisar_pessoa(quadro, bbox, exigidos, detalhar=n < detalhar_ate,
+                             mascara=n < mascara_ate)
         r.update({"pessoa_bbox": [float(v) for v in bbox], "pessoa_conf": round(float(conf), 3),
                   "track_id": tid})
         saida.append(r)
