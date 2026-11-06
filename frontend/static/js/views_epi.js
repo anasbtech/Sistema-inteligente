@@ -31,11 +31,11 @@ function epiOrdenar(a){
 }
 
 /* ---------- O trabalhador ilustrado ----------
-   O boneco veste o que a IA viu na pessoa: item detectado aparece inteiro,
-   na cor que a câmera mostrou, com a cantoneira verde; ausente aparece
-   apagado com a cantoneira vermelha; exigido e não verificado, em contorno
-   fantasma com a cantoneira cinza tracejada. Item não exigido e não visto
-   não é desenhado — o boneco não inventa equipamento. */
+   O boneco está sempre vestido com o EPI completo — é a referência do que
+   se espera. O que a IA viu muda a cor (capacete e colete na cor da
+   câmera) e a marcação: cantoneira verde = detectado; vermelha, com o item
+   apagado = ausente; cinza tracejada = não verificado. As etiquetas ficam
+   nas laterais, alinhadas, ligadas ao item por uma linha. */
 const EPI_AREA = {
   capacete: [[86, 22, 154, 60]],
   oculos:   [[90, 58, 150, 76]],
@@ -46,28 +46,36 @@ const EPI_AREA = {
 };
 function epiTrabalhadorSVG(itens, exigidos){
   const st = k => (itens[k] || {}).estado || 'nao_verificado';
-  const op = k => st(k) === 'detectado' ? 1 : st(k) === 'ausente' ? .16
-    : exigidos.includes(k) ? .22 : 0;
+  const op = k => st(k) === 'ausente' ? .28 : 1;
   // Cor vista pela câmera (capacete, colete), clareada e escurecida para o volume.
   const tom = (hex, f) => '#' + [1, 3, 5].map(i => Math.max(0, Math.min(255,
     Math.round(parseInt(hex.slice(i, i + 2), 16) * f))).toString(16).padStart(2, '0')).join('');
-  const corCap = (itens.capacete || {}).estado === 'detectado' && itens.capacete.cor || '#E9EDF1';
+  const corCap = (itens.capacete || {}).estado === 'detectado' && itens.capacete.cor || '#F2C230';
   const corCol = (itens.colete || {}).estado === 'detectado' && itens.colete.cor || '#D2EC1E';
   const cantos = ([x1, y1, x2, y2], cor, tracejado) => {
     const d = 9, a = `stroke="${cor}" stroke-width="2.4" fill="none" stroke-linecap="round"${tracejado ? ' stroke-dasharray="3 3"' : ''}`;
     return `<path ${a} d="M${x1} ${y1 + d}V${y1}H${x1 + d}M${x2 - d} ${y1}H${x2}V${y1 + d}M${x2} ${y2 - d}V${y2}H${x2 - d}M${x1 + d} ${y2}H${x1}V${y2 - d}"/>`;
   };
+  // Etiqueta: lado (e/d), altura e qual caixa do item ela aponta.
+  const ETIQ = {capacete: ['d', 34, 0], oculos: ['e', 67, 0], mascara: ['d', 94, 0],
+                colete: ['e', 160, 0], luvas: ['d', 274, 1], botas: ['e', 420, 0]};
   const marcas = EPI_ORDEM.filter(k => exigidos.includes(k) || st(k) !== 'nao_verificado').map(k => {
     const e = st(k), cor = EPI_COR[e], i = itens[k] || {};
     const caixas = EPI_AREA[k].map(b => cantos(b, cor, e !== 'detectado')).join('');
-    const [x1, y1] = EPI_AREA[k][0];
+    const [lado, y, alvo] = ETIQ[k];
+    const [bx1, by1, bx2, by2] = EPI_AREA[k][alvo];
     const txt = `${EPI_CURTO[k]}${i.confianca != null ? ' ' + Math.round(i.confianca * 100) + '%' : e === 'ausente' ? ' ✕' : ' ?'}`;
-    const w = txt.length * 6.4 + 10;
-    return `${caixas}<g><rect x="${x1}" y="${y1 - 15}" width="${w}" height="14" rx="2.5" fill="${cor}"/>
-      <text x="${x1 + 5}" y="${y1 - 4.5}" font-size="10.5" font-weight="700" fill="#08121A"
+    const w = txt.length * 7.3 + 14;
+    const ly = Math.max(by1 + 3, Math.min(by2 - 3, y));
+    const [rx, lx1, lx2] = lado === 'e' ? [42 - w, 42, bx1] : [210, 210, bx2];
+    return `${caixas}<g>
+      <path d="M${lx1} ${y}H${(lx1 + lx2) / 2}L${lx2} ${ly}" stroke="${cor}" stroke-width="1.2" fill="none" opacity=".85"/>
+      <circle cx="${lx2}" cy="${ly}" r="2.2" fill="${cor}"/>
+      <rect x="${rx}" y="${y - 10}" width="${w}" height="20" rx="3.5" fill="${cor}"/>
+      <text x="${rx + w / 2}" y="${y + 4.3}" text-anchor="middle" font-size="12.5" font-weight="700" fill="#08121A"
             font-family="IBM Plex Sans,system-ui">${esc(txt)}</text></g>`;
   }).join('');
-  return `<svg viewBox="0 0 240 470" width="100%" style="max-width:330px;min-height:430px" aria-label="Trabalhador com EPI">
+  return `<svg viewBox="-70 4 392 462" width="100%" style="max-width:440px;max-height:440px" aria-label="Trabalhador com EPI">
   <defs>
     <linearGradient id="eSk" x1="0" x2="1"><stop offset="0" stop-color="#B9805C"/><stop offset=".5" stop-color="#D49A74"/><stop offset="1" stop-color="#A9704F"/></linearGradient>
     <linearGradient id="eNv" x1="0" x2="1"><stop offset="0" stop-color="#1A2A44"/><stop offset=".5" stop-color="#26395A"/><stop offset="1" stop-color="#16243A"/></linearGradient>
@@ -95,8 +103,8 @@ function epiTrabalhadorSVG(itens, exigidos){
   <path d="M166 124 Q182 132 186 160 L194 256 H174 L164 172 Z" fill="url(#eNv)"/>
   <!-- luvas -->
   <g opacity="${op('luvas')}">
-    <path d="M44 252h24l2 26q0 14-12 15q-14 0-15-13z" fill="#1E1F22"/>
-    <path d="M172 252h24l-1 28q-1 13-15 13q-12-1-12-15z" fill="#1E1F22"/>
+    <path d="M44 252h24l2 26q0 14-12 15q-14 0-15-13z" fill="#E6E1D3" stroke="#B9B2A0" stroke-width="1"/>
+    <path d="M172 252h24l-1 28q-1 13-15 13q-12-1-12-15z" fill="#E6E1D3" stroke="#B9B2A0" stroke-width="1"/>
     <path d="M44 258h24M172 258h24" stroke="#F0A02A" stroke-width="3"/>
   </g>
   <!-- colete refletivo -->
