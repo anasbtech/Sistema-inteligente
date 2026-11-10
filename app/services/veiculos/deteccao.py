@@ -57,7 +57,12 @@ def _carregar():
     global _modelo, MOTOR, _falhou
     if _modelo is not None or _falhou:
         return _modelo
-    with _trava:
+    # A mesma trava do detector geral: os dois compilando para o vídeo
+    # integrado ao mesmo tempo carregam o compilador (LLVM) duas vezes no
+    # processo, e ele derruba o servidor inteiro ("Option 'h' registered more
+    # than once") — aconteceu duas vezes seguidas na partida de 10/11/2026.
+    from app.services import vision
+    with _trava, vision._trava_carga:
         if _modelo is not None or _falhou:
             return _modelo
         try:
