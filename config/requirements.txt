@@ -25,6 +25,9 @@ openvino==2026.4.1
 # primeira leitura. Rodam sobre o onnxruntime acima — não trazem torch.
 open-image-models==0.6.0     # localiza a placa dentro do recorte do veículo
 fast-plate-ocr==1.1.0        # lê os caracteres
+# Inteligência veicular: vetor CLIP do veículo, base das sondas de cor e de
+# marca/modelo (docs/INTELIGENCIA_VEICULAR.md). Traz o timm; usa o torch acima.
+open_clip_torch==4.2.1
 
 # --- Integrações -------------------------------------------------------
 httpx==0.28.1

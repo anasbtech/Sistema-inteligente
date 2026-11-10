@@ -22,7 +22,7 @@ if os.name == "nt" or not sys.stdout.isatty():
 
 def faixa(texto: str = "") -> None:
     print(f"{CINZA}{'─' * 64}{FIM}")
-    if texto:
+    if texto: 
         print(f"  {NEGRITO}{texto}{FIM}")
         print(f"{CINZA}{'─' * 64}{FIM}")
 
@@ -98,6 +98,15 @@ def _colunas_novas() -> list[tuple[str, str, str, str | None]]:
         # nelas — mudá-lo depois deixaria de valer justamente para quem nunca
         # quis decidir.
         ("cameras", "limite_aglomeracao", "INTEGER", None),
+        # Nula nas antigas: o vínculo com a captura de origem não foi guardado.
+        ("amostras_faciais", "deteccao_id", "CHAR(36)", None),
+        # Desligada em todas: a câmera passa a ter os veículos registrados
+        # pelo módulo veicular, e isso é decisão de quem a conhece.
+        ("cameras", "inteligencia_veicular", "BOOLEAN DEFAULT 0", None),
+        # Vazio nos rótulos antigos: quem rotulou não foi perguntado do tipo.
+        ("rotulos_veiculo", "tipo", "VARCHAR(20) DEFAULT ''", None),
+        # Nulo nas antigas: o analisador de marca/modelo as pega na fila.
+        ("passagens_veiculo", "vetor_modelo", "JSON", None),
     ]
 
 

@@ -461,6 +461,26 @@ async def recalcular_template(db: AsyncSession, pessoa: Pessoa) -> None:
     pessoa.amostras = len(amostras)
 
 
+async def remover_amostras_da_captura(db: AsyncSession, deteccao_id) -> int:
+    """Apaga as amostras que nasceram desta captura e refaz o template de quem as tinha.
+
+    Chamada quando a captura é declarada de outra pessoa: o rosto dela no
+    template seguiria reconhecendo essa outra pessoa como se fosse o dono.
+    """
+    amostras = (
+        await db.execute(select(AmostraFacial).where(AmostraFacial.deteccao_id == deteccao_id))
+    ).scalars().all()
+    donos = {a.pessoa_id for a in amostras}
+    for a in amostras:
+        await db.delete(a)
+    await db.flush()
+    for pid in donos:
+        pessoa = await db.get(Pessoa, pid)
+        if pessoa is not None:
+            await recalcular_template(db, pessoa)
+    return len(amostras)
+
+
 async def amostras_por_camera(db: AsyncSession, pessoa_id) -> dict:
     """Quantas amostras o template tem de cada câmera. Nulo = foto de cadastro."""
     linhas = (
@@ -474,7 +494,7 @@ async def amostras_por_camera(db: AsyncSession, pessoa_id) -> dict:
 
 
 async def acolher_amostra(db: AsyncSession, pessoa: Pessoa, embedding: Sequence[float],
-                          qualidade: float, camera_id) -> bool:
+                          qualidade: float, camera_id, deteccao_id=None) -> bool:
     """Guarda a captura como amostra, se ela acrescentar um ângulo novo.
 
     É o que faz o template crescer sozinho depois do primeiro acerto numa
@@ -492,6 +512,10 @@ async def acolher_amostra(db: AsyncSession, pessoa: Pessoa, embedding: Sequence[
       descobertas;
     * **parecida demais com uma que já existe** — não acrescenta ângulo
       nenhum e gastaria a cota que a próxima posição precisa.
+    * **sem segunda opinião** — com duas ou mais amostras, a captura precisa
+      se parecer (FACE_AUTO_SAMPLE_APOIO) com pelo menos duas. Acerto
+      sustentado por uma amostra só é justamente o que uma amostra errada
+      produz, e acolhê-lo multiplicaria o erro.
 
     Devolve se a amostra entrou, para quem chamou poder registrar o fato.
     """
@@ -514,10 +538,20 @@ async def acolher_amostra(db: AsyncSession, pessoa: Pessoa, embedding: Sequence[
         if similaridade_cosseno(outro, vetor) >= settings.FACE_SAMPLE_DISTINTA:
             return False
 
+    todas = (
+        await db.execute(
+            select(AmostraFacial.embedding).where(AmostraFacial.pessoa_id == pessoa.id)
+        )
+    ).scalars().all()
+    if len(todas) >= 2:
+        apoios = sorted((similaridade_cosseno(e, vetor) for e in todas), reverse=True)
+        if apoios[1] < settings.FACE_AUTO_SAMPLE_APOIO:
+            return False
+
     db.add(AmostraFacial(
         pessoa_id=pessoa.id, embedding=vetor.tolist(),
         qualidade=round(float(qualidade or 0.0), 4),
-        origem="captura", camera_id=camera_id,
+        origem="captura", camera_id=camera_id, deteccao_id=deteccao_id,
     ))
     await db.flush()
     # O template médio deixou de ser o que a busca consulta, mas segue valendo

@@ -263,6 +263,7 @@ class CameraBase(BaseModel):
     horario_fim: Optional[str] = None
     alerta_presenca: bool = False
     detecta_veiculo: bool = False
+    inteligencia_veicular: bool = False
     detecta_bagagem: bool = False
     detecta_animal: bool = False
     detecta_celular: bool = False
@@ -331,6 +332,7 @@ class CameraUpdate(BaseModel):
     horario_fim: Optional[str] = None
     alerta_presenca: Optional[bool] = None
     detecta_veiculo: Optional[bool] = None
+    inteligencia_veicular: Optional[bool] = None
     detecta_bagagem: Optional[bool] = None
     detecta_animal: Optional[bool] = None
     detecta_celular: Optional[bool] = None
@@ -382,6 +384,7 @@ class CameraOut(ORMModel):
     alerta_presenca: bool = False
     limite_aglomeracao: Optional[int] = None
     detecta_veiculo: bool
+    inteligencia_veicular: bool = False
     detecta_bagagem: bool
     detecta_animal: bool
     detecta_celular: bool = False

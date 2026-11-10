@@ -2741,3 +2741,129 @@ def test_aprovacao_da_triagem_cria_ficha_com_sexo_escolhido(cliente, monkeypatch
     assert cliente.get("/pessoas/triagem-novas").json()["total"] == 0
     p = cliente.get(f"/pessoas/{r.json()['id_biometrico']}").json()
     assert p["sexo"] == "F" and p["status"] == "FUNCIONARIO"
+
+
+def test_amostra_errada_nao_se_multiplica_e_sai_com_o_falso_positivo(cliente):
+    """O caso da Thais (06/11/2026): uma amostra que era de um homem ficou na
+    ficha dela, puxou o mesmo homem na Produção 02, a captura virou amostra
+    automática e o erro se repetiu todo dia. Marcar "Falso positivo" tirava a
+    captura da ficha, mas o rosto seguia no template.
+
+    Duas travas: amostra automática precisa se parecer com DUAS amostras da
+    pessoa, e o "Falso positivo" apaga a amostra que nasceu da captura.
+    """
+    from sqlalchemy import func, select
+    from app.models import AmostraFacial, Pessoa
+    from app.services import face_engine
+
+    cam = cliente.post("/cameras", json={
+        "nome": "Câmera Amostras", "setor": "Centro", "cena": "rua",
+        "rtsp_url": "rtsp://10.0.0.9:554/s1",
+        "limiar_facial": 0.60, "analitico_facial": True,
+    }).json()["codigo"]
+    pessoa = cliente.post("/pessoas", json={"nome": "Dona Das Amostras", "sexo": "F"}).json()
+    dela, errada = np.array(vetor(301)), np.array(vetor(302))
+
+    async def montar():
+        async with db_context() as db:
+            p = (await db.execute(select(Pessoa).where(
+                Pessoa.id_biometrico == pessoa["id_biometrico"]))).scalar_one()
+            for v in (dela, errada):
+                db.add(AmostraFacial(pessoa_id=p.id, embedding=v.tolist(),
+                                     qualidade=0.8, origem="teste"))
+            await db.flush()
+            await face_engine.recalcular_template(db, p)
+            return p.id
+
+    pid = cliente.portal.call(montar)
+
+    async def contar():
+        async with db_context() as db:
+            return (await db.execute(select(func.count()).select_from(AmostraFacial)
+                                     .where(AmostraFacial.pessoa_id == pid))).scalar_one()
+
+    def ingerir(v):
+        r = cliente.post("/deteccoes/ingest", json={
+            "tipo": "FACIAL", "camera_codigo": cam,
+            "ocorrido_em": datetime.now(timezone.utc).isoformat(),
+            "embedding": (v / np.linalg.norm(v)).tolist(), "qualidade_face": 0.8,
+        })
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    # Quem só se parece com a amostra errada: ainda casa, mas não vira amostra.
+    d = ingerir(errada + 0.3 * np.array(vetor(303)))
+    assert d["match"] is True
+    assert cliente.portal.call(contar) == 2, "sem segunda amostra parecida, não acolhe"
+
+    # Parecida com as duas: vira amostra, ligada à captura de origem.
+    d = ingerir(dela + errada)
+    assert d["match"] is True
+    assert cliente.portal.call(contar) == 3
+
+    # O operador diz que não é ela: a captura e a amostra saem juntas.
+    rev = cliente.post(f"/deteccoes/{d['codigo']}/revisao", json={"veredito": "Falso positivo"})
+    assert rev.status_code == 200, rev.text
+    assert cliente.portal.call(contar) == 2, "a amostra da captura errada fica no template"
+
+
+def test_grupo_da_triagem_se_vincula_a_ficha_existente(cliente, monkeypatch, tmp_path):
+    """Rosto que já tem ficha, mas não foi reconhecido naquele ângulo: vincular
+    junta as capturas à ficha, e só as compatíveis com ela viram amostra."""
+    import asyncio
+    import json
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    import numpy as np
+    from app.database import db_context, engine
+    from app.models import Camera, Deteccao, StatusCamera, TipoDeteccao
+    from app.routers import pessoas as rota, triagem_cadastro as tc
+    from app.services import face_engine
+
+    e = lambda k: np.eye(512, dtype=np.float32)[k]
+    monkeypatch.setattr(tc, "PASTA", tmp_path)
+    tc._cache_vetores.clear()
+    monkeypatch.setattr(rota.evidencias, "ler", lambda k: b"jpeg")
+    monkeypatch.setattr(face_engine, "extrair_confirmado",
+                        lambda j: SimpleNamespace(embedding=e(7), qualidade=0.8))
+    a = [f"FR-VA-{i}" for i in range(3)]
+    b = [f"FR-VB-{i}" for i in range(5)]
+    (tmp_path / "grupos.json").write_text(json.dumps([
+        {"sexo": "M", "codigos": a}, {"sexo": "M", "codigos": b}]))
+    np.savez(tmp_path / "vetores.npz", codigos=np.array(a + b),
+             vet=np.stack([e(7)] * 3 + [e(7)] * 3 + [e(300)] * 2))
+
+    async def preparar():
+        async with db_context() as db:
+            cam = Camera(codigo="CAM-VIN", nome="VIN", setor="VIN",
+                         status=StatusCamera.MANUTENCAO, rtsp_url="")
+            db.add(cam); await db.flush()
+            agora = datetime.now(timezone.utc)
+            for i, c in enumerate(a + b):
+                db.add(Deteccao(codigo=c, tipo=TipoDeteccao.FACIAL, camera_id=cam.id,
+                                ocorrido_em=agora - timedelta(minutes=i), snapshot_key="x.jpg",
+                                severidade=1))
+        await engine.dispose()
+    asyncio.run(preparar())
+
+    grupos = cliente.get("/pessoas/triagem-novas").json()["grupos"]
+    ga = next(g for g in grupos if g["chave"] == a[0])
+    criada = cliente.post("/pessoas/triagem-novas/aprovar", json={
+        "chave": a[0], "sexo": "M", "nome": ga["nome_m"], "codigos": a}).json()
+    amostras_antes = cliente.get(f"/pessoas/{criada['id_biometrico']}").json()["amostras"]
+
+    sug = cliente.get(f"/pessoas/triagem-novas/{b[0]}/parecidas").json()["sugestoes"]
+    assert sug[0]["id_biometrico"] == criada["id_biometrico"], "a ficha da pessoa vem primeiro"
+
+    r = cliente.post("/pessoas/triagem-novas/vincular", json={
+        "chave": b[0], "id_biometrico": criada["id_biometrico"], "codigos": b, "incluir_amostras": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["capturas"] == 5
+    assert r.json()["amostras_novas"] == 3, "só as 3 compatíveis viram amostra"
+    p = cliente.get(f"/pessoas/{criada['id_biometrico']}").json()
+    assert p["amostras"] == amostras_antes + 3
+    assert cliente.get("/pessoas/triagem-novas").json()["total"] == 0, "o grupo sai da fila"
+    r = cliente.post("/pessoas/triagem-novas/vincular", json={
+        "chave": b[0], "id_biometrico": criada["id_biometrico"], "codigos": b})
+    assert r.status_code == 404

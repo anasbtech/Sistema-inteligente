@@ -24,12 +24,14 @@ from app.config import settings
 from app.database import MemoriaVolatil, close_connections, db_context, engine, get_redis
 from app.routers import (
     alertas, auditoria, auth, cameras, configuracao, deteccoes, pessoas, stream,
-    triagem_cadastro, usuarios, epi as rotas_epi,
+    triagem_cadastro, usuarios, epi as rotas_epi, veiculos as rotas_veiculos,
+    mapa_calor,
 )
 from app.services import video
 from app.services.configuracao import carregar as carregar_configuracao
 from app.services.events import gerenciador
 from app.services.inferencia import inferencia
+from app.services.veiculos.servico import servico as servico_veicular
 from app.services.retencao import retencao
 from app.services.simulador import simulador
 
@@ -65,6 +67,11 @@ async def ciclo_de_vida(app: FastAPI):
         await inferencia.iniciar()
     elif settings.SIMULADOR:
         await simulador.iniciar()
+    # Veículos: módulo independente, com laço próprio, só nas câmeras com o
+    # interruptor ligado. Não depende da análise geral, mas não roda junto
+    # com o simulador: veículo real misturado a sorteado não se distingue.
+    if settings.VEICULO_ATIVO and (settings.INFERENCIA or not settings.SIMULADOR):
+        await servico_veicular.iniciar()
 
     # Depois dos motores: ele consulta o banco e, se estiver ligado, apaga.
     # Mesmo desligado avisa quanto já passou do prazo — material vencido
@@ -110,6 +117,7 @@ async def ciclo_de_vida(app: FastAPI):
     log.info("Encerrando…")
     await retencao.parar()
     await simulador.parar()
+    await servico_veicular.parar()
     await inferencia.parar()
     # Depois dos motores e antes do banco: cada leitor RTSP é uma thread com
     # uma conexão aberta na câmera, e `video.encerrar_todos` existia sem
@@ -259,6 +267,8 @@ app.include_router(auditoria.router)
 app.include_router(configuracao.router)
 app.include_router(stream.router)
 app.include_router(rotas_epi.router)
+app.include_router(rotas_veiculos.router)
+app.include_router(mapa_calor.router)
 
 # --- Interface ---
 web.montar_estaticos(app)

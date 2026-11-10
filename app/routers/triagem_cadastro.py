@@ -7,6 +7,13 @@ deduz da imagem — medido, ele errou mulheres como homens em 2 de 3 grupos),
 desmarca o que não for a pessoa e aprova. Só então nasce a ficha, como
 funcionário, com amostras do rosto e as capturas na trajetória.
 
+Quando o grupo é de alguém que **já tem ficha** (o rosto não chegou ao
+limiar de reconhecimento nesta câmera ou neste ângulo), o operador vincula
+em vez de aprovar: as capturas entram na trajetória da ficha existente e,
+se ele quiser, as compatíveis viram amostras — é isso que faz o sistema
+passar a reconhecer a pessoa naquele ângulo. As sugestões vêm das fichas
+mais parecidas com o grupo; a decisão é sempre de quem olha.
+
 Registrado antes de `pessoas.router`: senão `/pessoas/{id_biometrico}`
 capturaria `/pessoas/triagem-novas`.
 """
@@ -35,6 +42,61 @@ router = APIRouter(prefix="/pessoas/triagem-novas", tags=["Base biométrica"])
 PASTA = Path(__file__).resolve().parents[2] / "data" / "cadastro_triagem"
 MIN_CAPTURAS = 3        # depois de o operador desmarcar, abaixo disto não é grupo
 AMOSTRAS_MAX = 8        # as melhores viram amostra; as demais só trajetória
+# Ao vincular a uma ficha existente, só vira amostra a captura que se parece
+# com alguma amostra da ficha pelo menos isto. É o mesmo apoio exigido da
+# amostra automática (FACE_AUTO_SAMPLE_APOIO): pessoas diferentes quase nunca
+# passam de 0,30 nesta base (p99,9), e amostra errada contamina a ficha.
+VINCULO_AMOSTRA_MIN = 0.30
+SUGESTOES = 6
+
+_cache_vetores: dict = {}
+
+
+def _vetores() -> dict:
+    """código da captura → vetor do rosto, do que a extração já calculou."""
+    import numpy as np
+    arq = PASTA / "vetores.npz"
+    if not arq.exists():
+        return {}
+    marca = arq.stat().st_mtime
+    if _cache_vetores.get("marca") != marca:
+        with np.load(arq, allow_pickle=False) as d:
+            V = d["vet"].astype(np.float32)
+            V /= np.maximum(np.linalg.norm(V, axis=1, keepdims=True), 1e-9)
+            _cache_vetores.update(marca=marca, mapa=dict(zip(d["codigos"].tolist(), V)))
+    return _cache_vetores["mapa"]
+
+
+async def _amostras_ativas(db: AsyncSession):
+    """(matriz de amostras normalizadas, dono de cada linha, dados de cada dono)."""
+    import numpy as np
+    from app.models import AmostraFacial
+    linhas = (await db.execute(
+        select(Pessoa.id, Pessoa.id_biometrico, Pessoa.nome, Pessoa.sexo, Pessoa.status,
+               AmostraFacial.embedding)
+        .join(AmostraFacial, AmostraFacial.pessoa_id == Pessoa.id)
+        .where(Pessoa.ativo.is_(True)))).all()
+    if not linhas:
+        return None, [], {}
+    A = np.array([json.loads(e) if isinstance(e, str) else e for *_, e in linhas], np.float32)
+    A /= np.maximum(np.linalg.norm(A, axis=1, keepdims=True), 1e-9)
+    donos = [r[0] for r in linhas]
+    dados = {r[0]: {"id_biometrico": r[1], "nome": r[2],
+                    "sexo": r[3].value if hasattr(r[3], "value") else str(r[3]),
+                    "status": r[4].value if hasattr(r[4], "value") else str(r[4])} for r in linhas}
+    return A, donos, dados
+
+
+def _por_pessoa(S, donos: list):
+    """S: capturas × amostras. Devolve {pessoa: vetor com a melhor amostra
+    dela para cada captura} — o máximo por amostra, como na busca 1:N."""
+    import numpy as np
+    saida: dict = {}
+    donos_arr = np.array([str(d) for d in donos])
+    for pid in set(donos):
+        cols = donos_arr == str(pid)
+        saida[pid] = S[:, cols].max(1)
+    return saida
 
 
 def _grupos_brutos() -> list:
@@ -182,6 +244,101 @@ async def aprovar(dados: AprovarIn, request: Request, db: AsyncSession = Depends
     )
     return {"id_biometrico": pessoa.id_biometrico, "nome": pessoa.nome,
             "capturas": len(ligadas), "amostras": pessoa.amostras}
+
+
+@router.get("/{chave}/parecidas", summary="Fichas existentes mais parecidas com o grupo")
+async def parecidas(chave: str, db: AsyncSession = Depends(get_db),
+                    usuario: Usuario = Depends(exige("biometrics"))):
+    """Sugestão para quem confere: de quem este grupo pode ser. A nota de cada
+    ficha é a média, entre as capturas do grupo, da melhor amostra dela."""
+    import numpy as np
+    grupo = next((g for g in await _pendentes(db) if g["chave"] == chave), None)
+    if grupo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Grupo não encontrado ou já decidido.")
+    mapa = _vetores()
+    V = [mapa[c["codigo"]] for c in grupo["capturas"] if c["codigo"] in mapa]
+    A, donos, dados = await _amostras_ativas(db)
+    if not V or A is None:
+        return {"sugestoes": []}
+    S = np.stack(V) @ A.T
+    notas = sorted(((float(v.mean()), float(v.max()), pid) for pid, v in _por_pessoa(S, donos).items()),
+                   reverse=True)[:SUGESTOES]
+    return {"sugestoes": [dict(dados[pid], similaridade=round(media, 3), melhor=round(melhor, 3))
+                          for media, melhor, pid in notas]}
+
+
+class VincularIn(BaseModel):
+    chave: str
+    id_biometrico: str
+    codigos: List[str] = Field(..., min_length=1)
+    incluir_amostras: bool = True
+
+
+@router.post("/vincular", summary="Juntar o grupo a uma ficha que já existe")
+async def vincular(dados: VincularIn, request: Request, db: AsyncSession = Depends(get_db),
+                   usuario: Usuario = Depends(exige("biometrics", "edit"))):
+    import numpy as np
+    from app.routers.pessoas import _capturas_viram_amostras
+
+    grupo = next((g for g in await _pendentes(db) if g["chave"] == dados.chave), None)
+    if grupo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Grupo não encontrado ou já decidido.")
+    pessoa = (await db.execute(select(Pessoa).where(Pessoa.id_biometrico == dados.id_biometrico,
+                                                    Pessoa.ativo.is_(True)))).scalars().first()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ficha não encontrada.")
+    do_grupo = [c["codigo"] for c in grupo["capturas"]]
+    codigos = [c for c in do_grupo if c in set(dados.codigos)]
+    if len(codigos) != len(set(dados.codigos)):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Há capturas que não pertencem a este grupo.")
+
+    # Quais se parecem com a ficha o bastante para virar amostra.
+    compativeis: list = []
+    if dados.incluir_amostras:
+        A, donos, _ = await _amostras_ativas(db)
+        mapa = _vetores()
+        cols = [k for k, d in enumerate(donos) if d == pessoa.id]
+        if A is not None and cols:
+            Ap = A[cols]
+            notas = [(float((mapa[c] @ Ap.T).max()), c) for c in codigos if c in mapa]
+            compativeis = [c for s, c in sorted(notas, reverse=True)
+                           if s >= VINCULO_AMOSTRA_MIN][:AMOSTRAS_MAX]
+        else:
+            # Ficha sem amostra nenhuma: as capturas conferidas são o rosto dela.
+            compativeis = codigos[:AMOSTRAS_MAX]
+
+    amostras_antes = pessoa.amostras or 0
+    aceitas: list = []
+    if compativeis:
+        aceitas, _ = await _capturas_viram_amostras(db, pessoa, compativeis, exigir_amostra=False)
+    resto = [c for c in codigos if c not in set(aceitas)]
+    dets = (await db.execute(select(Deteccao).where(Deteccao.codigo.in_(resto)))).scalars().unique().all()
+    for det in dets:
+        det.pessoa_id = pessoa.id
+        det.similaridade = 1.0
+        det.expurgo_em = None
+    await db.flush()
+    await db.refresh(pessoa)
+
+    ligadas = (await db.execute(select(Deteccao).where(Deteccao.pessoa_id == pessoa.id)
+                                .order_by(Deteccao.ocorrido_em.desc()))).scalars().unique().all()
+    pessoa.total_deteccoes = len(ligadas)
+    if ligadas:
+        pessoa.ultima_deteccao = ligadas[0].ocorrido_em
+        cam = await db.get(Camera, ligadas[0].camera_id)
+        pessoa.ultima_camera = cam.nome if cam else ""
+    novas = max(0, (pessoa.amostras or 0) - amostras_antes)
+
+    await audit.registrar(
+        db, acao="BIO_TRIAGEM", severidade="warn", usuario=usuario, alvo=pessoa.id_biometrico,
+        descricao="Grupo da triagem vinculado a ficha existente, por conferência humana",
+        finalidade="Cadastro da triagem", request=request,
+        metadados={"chave": dados.chave, "capturas": len(codigos), "amostras_novas": novas,
+                   "incluir_amostras": dados.incluir_amostras,
+                   "desmarcadas": len(do_grupo) - len(codigos)})
+    return {"id_biometrico": pessoa.id_biometrico, "nome": pessoa.nome,
+            "capturas": len(codigos), "amostras_novas": novas}
 
 
 @router.post("/descartar", summary="Não cadastrar este grupo")

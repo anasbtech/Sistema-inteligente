@@ -79,6 +79,9 @@ const ROTULO_OBJ = {
   epi_sem_mascara:'Sem máscara', epi_sem_colete:'Sem colete', epi_sem_luvas:'Sem luvas',
   pessoa:'Pessoa', carro:'Carro', caminhao:'Caminhão', onibus:'Ônibus',
   motocicleta:'Motocicleta', bicicleta:'Bicicleta',
+  // Tipos do módulo veicular (identificacao.TIPOS).
+  picape:'Picape', kombi:'Kombi', van:'Van', caminhao_pequeno:'Caminhão pequeno',
+  caminhao_grande:'Caminhão grande',
   // Animais pela espécie; `animal` fica para os registros de antes.
   cachorro:'Cachorro', gato:'Gato', passaro:'Pássaro', cavalo:'Cavalo',
   boi:'Boi / vaca', ovelha:'Ovelha', animal:'Animal',

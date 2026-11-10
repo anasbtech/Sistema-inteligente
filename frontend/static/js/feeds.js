@@ -46,6 +46,7 @@ const COR_CLASSE={
   epi_luvas:'#2FB67C', epi_sem_capacete:'#E8474D', epi_sem_oculos:'#E8474D',
   epi_sem_mascara:'#E8474D', epi_sem_colete:'#E8474D', epi_sem_luvas:'#E8474D',
   pessoa:'#2FC27A', carro:'#35A7DE', caminhao:'#E8712C', onibus:'#D9C13A',
+  picape:'#35A7DE', kombi:'#4FC1E9', van:'#4FC1E9', caminhao_pequeno:'#F09A4A', caminhao_grande:'#E8712C',
   motocicleta:'#F0A02A', bicicleta:'#8C6FE0', animal:'#4ED1C5',
   cachorro:'#4ED1C5', gato:'#4ED1C5', passaro:'#4ED1C5', cavalo:'#4ED1C5',
   boi:'#4ED1C5', ovelha:'#4ED1C5',
@@ -306,7 +307,11 @@ function pintarCaixasReais(ctx,lista,W,H,k){
     const base=ident?c.pessoa_nome:(c.classe?(ROTULO_OBJ[c.classe]||c.classe):'Rosto');
     const pct=c.confianca!=null?` ${Math.round(c.confianca*100)}%`:'';
     // A placa vale mais que a classe: "carro" o operador já vê na imagem.
-    const rot=(c.placa?`${base} · ${c.placa}`:`${base}${pct}`).toUpperCase();
+    // Veículo do módulo veicular: o número do rastreio e o que já se sabe dele.
+    const rot=(c.veiculo
+      ?[`#${c.track_id} ${base}${c.placa?'':pct}`,c.cor,
+        c.marca?`${c.marca} ${c.modelo||''}`.trim():'',c.placa].filter(Boolean).join(' · ')
+      :(c.placa?`${base} · ${c.placa}`:`${base}${pct}`)).toUpperCase();
     // Tarja também em pixel de tela: com `s` ela encolhia junto com o tile e
     // o texto saía do retângulo que deveria contê-lo.
     const pad=3.5*e, alt=(fonte+4)*e, larg=ctx.measureText(rot).width+pad*2;
@@ -408,7 +413,14 @@ const FEED={
     if(!em)return 1;
     return Math.min(1,(Date.now()-em)/TRANSICAO_MS);
   },
+  /* As caixas gerais e, por cima, as do módulo veicular (publicadas à parte,
+     com o rastreio próprio). Uma camada não apaga a outra. */
   caixasDe(codigo){
+    const veic=this._caixasDaChave(codigo+'|veic');
+    const gerais=this._caixasDaChave(codigo);
+    return veic.length?gerais.concat(veic):gerais;
+  },
+  _caixasDaChave(codigo){
     const reg=this.caixas.get(codigo);
     // Se o worker parar de publicar, as caixas somem. Melhor nenhuma caixa
     // que uma caixa parada sobre um objeto que já saiu de cena.

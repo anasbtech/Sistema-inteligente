@@ -274,6 +274,8 @@ const API = {
   triagemNovas(){ return this.get('/pessoas/triagem-novas'); },
   triagemAprovar(corpo){ return this.post('/pessoas/triagem-novas/aprovar', corpo); },
   triagemDescartar(chave){ return this.post('/pessoas/triagem-novas/descartar', {chave}); },
+  triagemParecidas(chave){ return this.get('/pessoas/triagem-novas/' + encodeURIComponent(chave) + '/parecidas'); },
+  triagemVincular(corpo){ return this.post('/pessoas/triagem-novas/vincular', corpo); },
   amostrasDeCapturas(id, codigos){
     return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
   },
@@ -288,6 +290,23 @@ const API = {
     return this.post(`/pessoas/${id}/amostras-de-capturas`, codigos);
   },
   epiEstado(){ return this.get('/epi/estado'); },
+  veicEstado(){ return this.get('/veiculos/estado'); },
+  veicCatalogo(){ return this.get('/veiculos/catalogo'); },
+  calorMapa(q){ return this.get('/mapa-calor', q); },
+  calorRanking(q){ return this.get('/mapa-calor/ranking', q); },
+  veicPassagens(f){
+    const q = {};
+    Object.entries(f || {}).forEach(([k, v]) => { if(v !== undefined && v !== null && v !== '') q[k] = v; });
+    return this.get('/veiculos/passagens', q);
+  },
+  veicPassagem(id){ return this.get('/veiculos/passagens/' + encodeURIComponent(id)); },
+  veicRotular(id, corpo){ return this.post('/veiculos/passagens/' + encodeURIComponent(id) + '/rotulo', corpo); },
+  veicExcluirPassagem(id){ return this.del('/veiculos/passagens/' + encodeURIComponent(id)); },
+  veicExcluirRotulo(id){ return this.del('/veiculos/passagens/' + encodeURIComponent(id) + '/rotulo'); },
+  veicImagem(id, tipo){
+    return this.base + '/veiculos/passagens/' + encodeURIComponent(id) + '/imagem/' + tipo
+      + '?token=' + encodeURIComponent(this.access);
+  },
   epiCamera(codigo){ return this.get('/epi/camera/' + encodeURIComponent(codigo)); },
   async epiAnalisar(arquivo, exigidos){
     const fd = new FormData();

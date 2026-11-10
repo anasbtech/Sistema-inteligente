@@ -326,6 +326,8 @@ const VIEWS = {
   objects:    {t:'Detecção de objetos',   s:'Classificação de objetos por câmera',    perm:'facial'},
   actions:    {t:'Análise de ações',      s:'Eventos comportamentais detectados',     perm:'facial'},
   epi:        {t:'Conformidade de EPI',   s:'Equipamentos de proteção por pessoa e câmera', perm:'live'},
+  vehicles:   {t:'Inteligência veicular', s:'Veículos rastreados, cor, marca/modelo e placa', perm:'objects'},
+  heatmap:    {t:'Mapa de calor',         s:'Onde e quando há movimento em cada câmera', perm:'live'},
   biometrics: {t:'Base biométrica',       s:'Registros com identificador permanente', perm:'biometrics'},
   alerts:     {t:'Alertas',               s:'Ocorrências que exigem tratamento',      perm:'alerts'},
   users:      {t:'Usuários e perfis',     s:'Controle de acesso e permissões',        perm:'users'},
@@ -408,7 +410,8 @@ async function irPara(v){
   const render = {
     dash: renderPainel, live: renderAoVivo, cams: renderCameras,
     facial: renderFacial, objects: renderObjetos, actions: renderAcoes,
-    biometrics: renderBiometria, epi: renderEpi, alerts: renderAlertas, users: renderUsuarios,
+    biometrics: renderBiometria, epi: renderEpi, vehicles: renderVeiculos, heatmap: renderMapaCalor,
+    alerts: renderAlertas, users: renderUsuarios,
     audit: renderAuditoria, settings: renderConfiguracoes
   }[v];
 
@@ -744,6 +747,11 @@ EventosAoVivo.ao(msg => {
   if(msg.tipo === 'quadro_ao_vivo'){
     // Sobreposição do mosaico: a cena atual, que não vira registro.
     FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas, msg.dados.validade_s);
+  }
+  if(msg.tipo === 'veiculos_ao_vivo'){
+    // Camada própria do módulo veicular, por cima da sobreposição geral.
+    FEED.definirCaixas(msg.dados.camera_codigo + '|veic', msg.dados.caixas, msg.dados.validade_s);
+    if(APP.view === 'vehicles') veicAoVivo(msg.dados);
   }
   /* Todo alerta — de detecção ou de sala — entra na fila do painel. */
   if(msg.tipo === 'alerta'){

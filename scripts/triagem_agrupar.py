@@ -33,7 +33,15 @@ import numpy as np  # noqa: E402
 from app.config import settings  # noqa: E402
 
 PASTA = RAIZ / "data" / "cadastro_triagem"
-LIGA, CENTRO, MIN_GRUPO, DET_MIN, ALT_MIN = 0.55, 0.50, 5, 0.60, 40.0
+# Ligação por MÉDIA (09/11/2026). A ligação por um único par parecido, com
+# piso 0,55, quase não juntava ninguém: nestas câmeras duas fotos da mesma
+# pessoa passam de 0,55 em só 8% dos pares. Baixar o piso dela emendava todo
+# mundo numa corrente (268 capturas num grupo só). Pela média, um par parecido
+# por acaso não emenda duas pessoas. Calibrado nas 205 amostras das 20 pessoas
+# cadastradas: média >= 0,30 dá 25 grupos, 23 de uma pessoa só, 3 capturas de
+# outra pessoa no total, 19 das 20 pessoas encontradas. Pessoa repartida em
+# dois grupos é inofensiva: aprovado um, o outro passa a "parecer cadastrado".
+MEDIA, CENTRO, MIN_GRUPO, DET_MIN, ALT_MIN = 0.30, 0.40, 3, 0.60, 40.0
 JA_CADASTRADO = 0.45
 
 NOMES_M = ["Adriano", "Alexandre", "Anderson", "Antônio", "Arthur", "Bruno", "Carlos", "César",
@@ -92,7 +100,10 @@ def raiz(pai, i):
 
 
 def main():
-    d = dict(np.load(PASTA / "vetores.npz", allow_pickle=True))
+    # Fechado logo após ler: a extração pode estar rodando e precisa trocar
+    # este arquivo; aberto, o Windows recusa a troca e a extração cai.
+    with np.load(PASTA / "vetores.npz", allow_pickle=True) as arq:
+        d = {k: arq[k] for k in arq.files}
     ok = (d["sexo"] >= 0) & (d["det"] >= DET_MIN) & (d["alt"] >= ALT_MIN)
     idx = np.where(ok)[0]
     V = d["vet"][idx].astype(np.float32)
@@ -100,19 +111,16 @@ def main():
     n = len(idx)
     print(f"{len(d['codigos'])} analisadas; {n} com rosto bom")
 
-    # Ligações por semelhança, em blocos (a matriz inteira não cabe).
-    pai = list(range(n))
-    for i0 in range(0, n, 2000):
-        S = V[i0:i0 + 2000] @ V.T
-        for a, b in zip(*np.where(S >= LIGA)):
-            a += i0
-            if a < b:
-                ra, rb = raiz(pai, a), raiz(pai, b)
-                if ra != rb:
-                    pai[ra] = rb
+    # Agrupamento hierárquico por ligação média (ver MEDIA acima).
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import pdist
     brutos = {}
-    for i in range(n):
-        brutos.setdefault(raiz(pai, i), []).append(i)
+    if n >= 2:
+        rotulo = fcluster(linkage(pdist(V, "cosine"), "average"), 1 - MEDIA, "distance")
+        for i, k in enumerate(rotulo):
+            brutos.setdefault(int(k), []).append(i)
+    elif n == 1:
+        brutos[0] = [0]
 
     # Cadastrados: amostras de quem já tem ficha.
     c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1])
@@ -180,7 +188,12 @@ def main():
             "codigos": [str(x) for x in d["codigos"][ordem]],
             "parecidos_com": g["parecidos"],
         })
-    (PASTA / "grupos.json").write_text(json.dumps(saida, ensure_ascii=False, indent=1), encoding="utf-8")
+    # Troca atômica: a tela de aprovação lê este arquivo a qualquer momento, e
+    # gravá-lo por cima deixava uma janela em que ela leria metade.
+    from scripts.triagem_extrair import trocar
+    tmp = PASTA / "grupos.tmp.json"
+    tmp.write_text(json.dumps(saida, ensure_ascii=False, indent=1), encoding="utf-8")
+    trocar(tmp, PASTA / "grupos.json")
     print(f"{len(saida)} grupos; {sum(g['capturas'] for g in saida)} capturas; "
           f"M {sum(g['sexo'] == 'M' for g in saida)} / F {sum(g['sexo'] == 'F' for g in saida)}")
     print("descartados:", dict(motivos))

@@ -73,6 +73,10 @@ def _classes_barradas(cam) -> set:
     return fora
 
 
+# O que o módulo veicular assume nas câmeras em que está ligado.
+VEICULOS_MODULO = frozenset({"carro", "motocicleta", "caminhao", "onibus"})
+
+
 # Ações que acusam uma pessoa: só alertam com uma pessoa confirmada no quadro
 # (ver `Inferencia._pessoa_real`). Aglomeração, fogo, fumaça, arma, veículo e
 # abandono de objeto têm evidência própria e ficam de fora.
@@ -1734,7 +1738,16 @@ class Inferencia:
                 await self._registrar_acoes(db, cam, objetos, quadro,
                                             largura, altura, agora)
 
+            # Câmera com inteligência veicular: os veículos são do módulo
+            # veicular (caixa com rastreio, cor, placa e registro por
+            # passagem). Aqui eles só servem às ações, já analisadas acima —
+            # sem isto cada carro teria duas caixas e dois registros.
+            from app.services.veiculos.servico import servico as _veic
+            veiculos_do_modulo = (getattr(cam, "inteligencia_veicular", False)
+                                  and _veic.camera_ativa(cam.codigo))
             for obj in objetos:
+                if veiculos_do_modulo and obj.classe in VEICULOS_MODULO:
+                    continue
                 # A sobreposição mostra o que a câmera está vendo agora, no
                 # limiar que o operador configurou nela. Sai antes das podas:
                 # a caixa acompanha o objeto enquanto ele está em cena, e o

@@ -1177,7 +1177,13 @@ async function editarPessoa(idBio, opcoes){
 /* ---------- Aprovação das pessoas novas da triagem ----------
    Um grupo por vez. O sexo NÃO vem marcado: o motor nunca o deduz da imagem
    (medido, ele trocou mulheres por homens), então quem aprova escolhe. Foto
-   desmarcada não entra na ficha e continua na triagem. */
+   desmarcada não entra na ficha e continua na triagem.
+
+   Se o grupo é de alguém que já tem ficha, "Vincular" junta as capturas a
+   ela em vez de criar outra. As sugestões são as fichas mais parecidas; a
+   busca acha qualquer outra. Com "incluir rostos compatíveis", as capturas
+   que se parecem com as amostras da ficha viram amostras também — é o que
+   faz o sistema passar a reconhecer a pessoa naquele ângulo. */
 function abrirAprovacaoTriagem(grupos, i){
   if(i >= grupos.length){
     fecharModal();
@@ -1188,6 +1194,7 @@ function abrirAprovacaoTriagem(grupos, i){
   const g = grupos[i];
   const marcadas = new Set(g.capturas.map(c => c.codigo));
   let sexo = null;
+  let ficha = null;          // ficha existente escolhida para vincular
   const box = abrirModal(`
     <div class="modal-hd"><h3>Pessoa nova ${i + 1} de ${grupos.length}</h3>
       <span class="sp" style="flex:1"></span>
@@ -1202,8 +1209,16 @@ function abrirAprovacaoTriagem(grupos, i){
                style="height:96px;width:auto;display:block" loading="lazy">
           <input type="checkbox" checked style="position:absolute;top:4px;left:4px"></label>`).join('')}
       </div>
+      <div class="ap-vinc">
+        <div class="ap-vinc-hd"><b>Esta pessoa já tem ficha?</b>
+          <span class="hint" style="margin:0">Escolha a ficha para vincular as fotos marcadas a ela, em vez de criar outra.</span></div>
+        <div class="ap-vinc-busca"><input class="inp" id="apBusca" placeholder="Buscar outra ficha por nome ou ID"></div>
+        <div class="ap-vinc-lista" id="apSug"><span class="hint">Procurando fichas parecidas…</span></div>
+        <label class="ap-vinc-amostra"><input type="checkbox" id="apAmostras" checked>
+          Incluir os rostos compatíveis como amostras da ficha (o sistema passa a reconhecê-la nesse ângulo)</label>
+      </div>
       <div style="display:flex;gap:18px;align-items:end;flex-wrap:wrap;margin-top:14px">
-        <div><div class="hint" style="margin:0 0 6px">Sexo <b style="color:var(--amber)">(obrigatório)</b></div>
+        <div><div class="hint" style="margin:0 0 6px">Sexo <b style="color:var(--amber)">(obrigatório para ficha nova)</b></div>
           <div class="segm" id="apSexo"><button data-s="M">Masculino</button><button data-s="F">Feminino</button></div></div>
         <label style="flex:1;min-width:260px"><div class="hint" style="margin:0 0 6px">Nome (fictício)</div>
           <input class="inp" id="apNome" style="width:100%" placeholder="escolha o sexo primeiro"></label>
@@ -1213,10 +1228,47 @@ function abrirAprovacaoTriagem(grupos, i){
       <button class="btn btn-ghost" id="apDesc">Descartar grupo</button>
       <button class="btn btn-ghost" id="apPular">Pular</button>
       <span class="sp" style="flex:1"></span>
+      <button class="btn btn-soft" id="apVinc" disabled title="Escolha uma ficha acima">${ico('users',14)} Vincular à ficha</button>
       <button class="btn btn-primary" id="apOk" disabled>${ico('check',14)} Aprovar e criar ficha</button>
     </div>`, true);
   const atualizar = () => {
     $('#apOk', box).disabled = !sexo || marcadas.size < 3 || $('#apNome', box).value.trim().length < 5;
+    const v = $('#apVinc', box);
+    v.disabled = !ficha || marcadas.size < 1;
+    v.innerHTML = `${ico('users',14)} ${ficha ? 'Vincular a ' + esc(ficha.nome.split(' ')[0]) : 'Vincular à ficha'}`;
+  };
+  const cartao = (p, nota) => `
+    <button type="button" class="ap-ficha ${ficha && ficha.id_biometrico === p.id_biometrico ? 'on' : ''}"
+            data-id="${esc(p.id_biometrico)}" data-nome="${esc(p.nome)}">
+      <img src="${API.base}/pessoas/${encodeURIComponent(p.id_biometrico)}/face?token=${encodeURIComponent(API.access)}"
+           alt="" onerror="this.style.visibility='hidden'">
+      <span><b>${esc(p.nome)}</b><small>${esc(p.id_biometrico)}${nota != null ? ` · ${Math.round(nota * 100)}% parecido` : ''}</small></span>
+    </button>`;
+  const mostrar = (lista, vazio) => {
+    const alvo = $('#apSug', box);
+    alvo.innerHTML = lista.length ? lista.map(x => cartao(x, x.similaridade)).join('')
+                                  : `<span class="hint">${vazio}</span>`;
+    $$('.ap-ficha', alvo).forEach(b => b.onclick = () => {
+      ficha = ficha && ficha.id_biometrico === b.dataset.id ? null : {id_biometrico: b.dataset.id, nome: b.dataset.nome};
+      $$('.ap-ficha', alvo).forEach(x => x.classList.toggle('on', !!ficha && x.dataset.id === ficha.id_biometrico));
+      atualizar();
+    });
+  };
+  let sugestoes = [];
+  API.triagemParecidas(g.chave)
+    .then(r => { sugestoes = r.sugestoes || []; if(!$('#apBusca', box).value.trim()) mostrar(sugestoes, 'Nenhuma ficha com amostras para comparar.'); })
+    .catch(() => mostrar([], 'Não foi possível buscar fichas parecidas; use a busca.'));
+  let tBusca = null;
+  $('#apBusca', box).oninput = () => {
+    clearTimeout(tBusca);
+    const q = $('#apBusca', box).value.trim();
+    if(!q){ mostrar(sugestoes, 'Nenhuma ficha com amostras para comparar.'); return; }
+    tBusca = setTimeout(async () => {
+      try{
+        const r = await API.pessoas({q, por_pagina: 8});
+        mostrar((r.itens || []).map(p => ({id_biometrico: p.id_biometrico, nome: p.nome})), 'Nenhuma ficha com esse nome ou ID.');
+      }catch(e){ erroToast(e); }
+    }, 300);
   };
   $$('.ap-foto', box).forEach(l => {
     const cb = $('input', l);
@@ -1239,6 +1291,17 @@ function abrirAprovacaoTriagem(grupos, i){
   $('#apDesc', box).onclick = async () => {
     try{ await API.triagemDescartar(g.chave); abrirAprovacaoTriagem(grupos, i + 1); }
     catch(e){ erroToast(e); }
+  };
+  $('#apVinc', box).onclick = async () => {
+    if(!ficha) return;
+    $('#apVinc', box).disabled = true;
+    try{
+      const r = await API.triagemVincular({chave: g.chave, id_biometrico: ficha.id_biometrico,
+                                           codigos: [...marcadas], incluir_amostras: $('#apAmostras', box).checked});
+      toast('Vinculado à ficha', `${r.capturas} captura(s) em ${r.nome} — ${r.id_biometrico}` +
+            (r.amostras_novas ? ` · ${r.amostras_novas} rosto(s) novo(s) como amostra.` : '.'), 'ok');
+      abrirAprovacaoTriagem(grupos, i + 1);
+    }catch(e){ erroToast(e); atualizar(); }
   };
   $('#apOk', box).onclick = async () => {
     $('#apOk', box).disabled = true;

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SequenciaCodigo
@@ -35,11 +35,21 @@ async def proximo_numero(
     passa a falhar por unicidade, sem nada além de um aviso no log. Quando
     isso é detectado, o contador é ressincronizado pela semente.
     """
+    # SQLite: a leitura do contador acontece fora da transação de escrita, e
+    # duas sessões ao mesmo tempo liam o mesmo número. Foi assim que, em
+    # 09/11/2026, o módulo de veículos e o laço geral pegaram o mesmo código
+    # OD: o segundo gravou o recorte de uma pessoa por cima do do carro e só
+    # então falhou no UNIQUE — a passagem ficou com a foto de outra câmera.
+    # Um UPDATE neutro antes da leitura toma a trava de escrita do arquivo:
+    # a leitura seguinte já vê o valor mais novo, e ninguém escreve no meio.
+    if db.bind.dialect.name == "sqlite":
+        await db.execute(update(SequenciaCodigo).where(SequenciaCodigo.chave == chave)
+                         .values(proximo=SequenciaCodigo.proximo))
     linha = (
         await db.execute(
             travar_linha(
                 select(SequenciaCodigo).where(SequenciaCodigo.chave == chave), db
-            )
+            ).execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
 

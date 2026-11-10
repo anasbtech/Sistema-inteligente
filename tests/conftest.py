@@ -19,8 +19,15 @@ for sufixo in ("", "-wal", "-shm"):
         arq.unlink()
 
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{BANCO_TESTE}"
+# Recortes também em pasta própria: a suíte gravava na `evidencias/` real, e
+# um teste recomeçava a numeração e caía sobre o arquivo de outra rodada.
+EVIDENCIAS_TESTE = Path(tempfile.mkdtemp(prefix="seguranca_evid_"))
+os.environ["SNAPSHOT_DIR"] = str(EVIDENCIAS_TESTE)
 os.environ["SECRET_KEY"] = "chave-de-teste-com-mais-de-32-caracteres-ok"
 os.environ["SIMULADOR"] = "false"
+# O laço veicular abriria RTSP e carregaria o detector para as câmeras de
+# teste; os testes de veículos exercitam as partes dele diretamente.
+os.environ["VEICULO_ATIVO"] = "false"
 # Os testes medem o comportamento do detector, não a velocidade: no PyTorch
 # eles não pagam a compilação do vídeo integrado e não dependem da máquina.
 os.environ["OBJECT_MOTOR"] = "pytorch"

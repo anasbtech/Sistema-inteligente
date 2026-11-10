@@ -435,6 +435,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     similaridade: Optional[float] = None
     limiar: Optional[float] = None
     sugerido_id = None
+    virar_amostra = False
     severidade = 1
 
     if dados.tipo == TipoDeteccao.FACIAL:
@@ -486,13 +487,10 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
                 # fica com a melhor, então o ângulo novo passa a responder por
                 # si. Quem decide se cabe é `acolher_amostra` — cota por
                 # câmera e recusa de parecida demais vivem lá.
-                if (origem != "seed" and dados.embedding
-                        and similaridade >= settings.FACE_AUTO_SAMPLE_MIN):
-                    if await face_engine.acolher_amostra(
-                            db, pessoa, dados.embedding,
-                            dados.qualidade_face or 0.0, cam.id):
-                        log.info("%s: captura de %s virou amostra (%.0f%%)",
-                                 cam.codigo, pessoa.nome, similaridade * 100)
+                # Só depois de a captura existir: a amostra guarda de qual
+                # captura nasceu, para o "Falso positivo" poder desfazê-la.
+                virar_amostra = (origem != "seed" and bool(dados.embedding)
+                                 and similaridade >= settings.FACE_AUTO_SAMPLE_MIN)
         # Sem match: severidade 1 e pessoa_id nulo — nenhuma identidade atribuída.
         # Perto do limiar, porém, guarda-se quem o motor apontou: é o que a
         # fila de conferência mostra para alguém decidir. Continua não sendo
@@ -571,9 +569,11 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     chave = ""
     if dados.snapshot_jpeg:
         try:
+            # Nunca por cima: arquivo existente é de outro registro.
             chave = evidencias.gravar(
                 codigo, dados.ocorrido_em,
                 base64.b64decode(dados.snapshot_jpeg, validate=True),
+                sobrescrever=False,
             )
         except (ValueError, OSError) as exc:
             log.warning("Recorte de %s descartado: %s", codigo, exc)
@@ -583,6 +583,7 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
             chave_placa = evidencias.gravar(
                 f"{codigo}-placa", dados.ocorrido_em,
                 base64.b64decode(dados.placa_jpeg, validate=True),
+                sobrescrever=False,
             )
         except (ValueError, OSError) as exc:
             log.warning("Recorte da placa de %s descartado: %s", codigo, exc)
@@ -613,6 +614,13 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
     )
     db.add(det)
     await db.flush()
+
+    if virar_amostra and pessoa is not None:
+        if await face_engine.acolher_amostra(
+                db, pessoa, dados.embedding, dados.qualidade_face or 0.0,
+                cam.id, deteccao_id=det.id):
+            log.info("%s: captura de %s virou amostra (%.0f%%)",
+                     cam.codigo, pessoa.nome, (similaridade or 0) * 100)
 
     alerta = await _criar_alerta(db, det, cam, pessoa,
                                  notificar=publicar_evento,
@@ -1036,6 +1044,7 @@ async def revisar(codigo: str, dados: RevisaoIn, request: Request,
     # registro, e a pessoa com quem foi confundida vai para a sugerida — é
     # o que a reavaliação do limiar precisa saber sobre o erro.
     desvinculada = None
+    amostras_removidas = 0
     if (dados.veredito == "Falso positivo" and det.tipo == TipoDeteccao.FACIAL
             and det.pessoa_id is not None):
         pessoa = await db.get(Pessoa, det.pessoa_id)
@@ -1045,6 +1054,10 @@ async def revisar(codigo: str, dados: RevisaoIn, request: Request,
         det.pessoa_sugerida_id = det.pessoa_id
         det.pessoa_id = None
         det.pessoa = None        # a resposta não pode devolver a pessoa antiga
+        # E o rosto dela sai do template: amostra que nasceu desta captura
+        # (automática ou confirmada na fila) é de outra pessoa, e ficaria
+        # puxando essa outra pessoa para a ficha errada todo dia.
+        amostras_removidas = await face_engine.remover_amostras_da_captura(db, det.id)
 
     await audit.registrar(
         db, acao="DET_REVISAO", descricao=f"Detecção revisada: {dados.veredito}"
@@ -1053,7 +1066,8 @@ async def revisar(codigo: str, dados: RevisaoIn, request: Request,
         usuario=usuario, alvo=det.codigo, finalidade=dados.observacao or "Revisão operacional",
         request=request,
         metadados={"similaridade": det.similaridade, "limiar": det.limiar_aplicado,
-                   "desvinculada_de": desvinculada},
+                   "desvinculada_de": desvinculada,
+                   "amostras_removidas": amostras_removidas},
     )
     return DeteccaoOut.model_validate(det)
 

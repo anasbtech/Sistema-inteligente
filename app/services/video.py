@@ -248,6 +248,9 @@ class Leitor:
         # Idem para a exibição: o worker tocando a câmera não conta como tela
         # aberta, e é essa diferença que decide o ritmo de decodificação.
         self._ultimo_uso_exibicao = 0.0
+        # Análise contínua (rastreio de veículos): pede o ritmo cheio sem
+        # contar como tela aberta.
+        self._ultimo_uso_analise = 0.0
         self._parar = threading.Event()
         # Se este leitor chegou a entregar imagem: é o que separa a câmera
         # que caiu por um instante (reconecta já) da que nunca funcionou.
@@ -278,6 +281,16 @@ class Leitor:
         self._ultimo_uso = agora
         self._ultimo_uso_exibicao = agora
         self._ultimo_uso_detalhe = agora
+
+    def tocar_analise(self) -> None:
+        """Marca que um módulo precisa de quadros seguidos (rastreio)."""
+        agora = time.monotonic()
+        self._ultimo_uso = agora
+        self._ultimo_uso_analise = agora
+
+    @property
+    def analisando(self) -> bool:
+        return (time.monotonic() - self._ultimo_uso_analise) <= EXIBINDO_S
 
     @property
     def detalhe_ativo(self) -> bool:
@@ -358,7 +371,8 @@ class Leitor:
                 if not self.exibindo:
                     time.sleep(0.2)
                 continue
-            proximo = agora + 1.0 / (FPS_SAIDA if self.exibindo else FPS_OCIOSO)
+            proximo = agora + 1.0 / (FPS_SAIDA if self.exibindo or self.analisando
+                                     else FPS_OCIOSO)
 
             ok, quadro = cap.retrieve()
             if not ok or quadro is None:
@@ -470,6 +484,17 @@ def obter(codigo: str, url: str) -> Leitor:
             _leitores[codigo] = leitor
         leitor.tocar()
         return leitor
+
+
+def quadro_continuo(codigo: str, url: str):
+    """Quadro nativo para quem analisa em sequência (rastreio): mantém o leitor
+    no ritmo cheio enquanto for chamado. Mesma conexão de todos os outros."""
+    try:
+        leitor = obter(codigo, url)
+    except LeitorIndisponivel:
+        return None
+    leitor.tocar_analise()
+    return leitor.bgr_nativo
 
 
 def quadro_bgr(codigo: str, url: str, detalhe: bool = False):

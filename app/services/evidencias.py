@@ -40,13 +40,20 @@ def _caminho(chave: str) -> Optional[Path]:
     return alvo
 
 
-def gravar(codigo: str, quando: datetime, jpeg: bytes) -> str:
+def gravar(codigo: str, quando: datetime, jpeg: bytes, sobrescrever: bool = True) -> str:
+    """Grava o recorte sob o código. Com `sobrescrever=False`, um arquivo que
+    já existe é de outro registro com o mesmo código, e não é tocado:
+    levanta FileExistsError (subclasse de OSError)."""
     chave = chave_de(codigo, quando)
     alvo = _caminho(chave)
     if alvo is None:
         return ""
     alvo.parent.mkdir(parents=True, exist_ok=True)
-    alvo.write_bytes(jpeg)
+    if sobrescrever:
+        alvo.write_bytes(jpeg)
+    else:
+        with open(alvo, "xb") as f:
+            f.write(jpeg)
     return chave
 
 

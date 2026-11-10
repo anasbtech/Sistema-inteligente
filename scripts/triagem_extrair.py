@@ -63,6 +63,32 @@ def analisar(apps, jpeg: bytes):
             int(f.gender), float(getattr(f, "age", 0) or 0))
 
 
+def trocar(tmp: Path, destino: Path) -> None:
+    """Substitui o arquivo, insistindo se outro processo o tiver aberto naquele
+    instante (o agrupamento lendo, o antivírus olhando). No Windows a troca
+    de arquivo aberto falha com "Acesso negado"."""
+    for tentativa in range(30):
+        try:
+            tmp.replace(destino)
+            return
+        except PermissionError:
+            time.sleep(2)
+    tmp.replace(destino)
+
+
+def manter_acordado() -> None:
+    """Pede ao Windows para não suspender por inatividade enquanto este
+    processo vive. Em 06/11/2026 o notebook suspendeu 15 min depois do último
+    uso e a análise ficou parada o fim de semana inteiro. Tampa fechada e
+    bateria acabando ainda suspendem."""
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+    except Exception:
+        pass
+
+
 def _trava():
     """Uma análise por vez: duas gravando vetores.npz se atropelariam."""
     import msvcrt
@@ -78,27 +104,40 @@ def _trava():
 
 def main():
     trava = _trava()  # noqa: F841 — mantém a trava até o fim
+    manter_acordado()
     p = argparse.ArgumentParser()
     p.add_argument("--limite", type=int, default=0)
+    p.add_argument("--prioridade", choices=["baixa", "normal"], default="baixa",
+                   help="normal: disputa a CPU com o sistema ao vivo (mais rápido)")
     args = p.parse_args()
     PASTA.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1])
     linhas = c.execute("""select codigo, snapshot_key, camera_id, ocorrido_em, qualidade_face
                           from deteccoes where tipo='FACIAL' and pessoa_id is null
                             and snapshot_key != '' and coalesce(veredito,'') != 'Falso positivo'
-                          order by ocorrido_em desc""").fetchall()   # recentes primeiro: rostos melhores
+                          order by (coalesce(qualidade_face, 0) >= 0.60) desc,
+                                   ocorrido_em desc""").fetchall()
+    # Boas primeiro: qualidade >= 0,60 rende rosto aproveitável em 58% das
+    # capturas, contra 28% abaixo disso (medido em 09/11/2026). É o que faz os
+    # grupos aparecerem cedo; dentro de cada faixa, as recentes primeiro.
     feito = {}
     if ARQ.exists():
-        d = np.load(ARQ, allow_pickle=True)
-        feito = {k: True for k in d["codigos"]}
+        # Fechado logo após ler: no Windows, arquivo aberto não pode ser
+        # substituído, e o primeiro salvamento falhava com "Acesso negado"
+        # (06/11/2026, a análise parou nas primeiras 500).
+        with np.load(ARQ, allow_pickle=True) as d:
+            feito = {k: True for k in d["codigos"]}
     pend = [l for l in linhas if l[0] not in feito]
     if args.limite:
         pend = pend[:args.limite]
     print(f"{len(linhas)} capturas na triagem; {len(feito)} já analisadas; {len(pend)} a fazer",
           flush=True)
     app = modelo()
-    # Prioridade mínima: o sistema ao vivo vem primeiro.
+    # Prioridade abaixo do normal: o sistema ao vivo vem primeiro — a não ser
+    # que se peça `--prioridade normal`.
     try:
+        if args.prioridade == "normal":
+            raise RuntimeError("prioridade normal pedida")
         import ctypes
         k = ctypes.windll.kernel32
         k.GetCurrentProcess.restype = ctypes.c_void_p
@@ -111,7 +150,10 @@ def main():
     t0 = time.time()
 
     def salvar():
-        antigos = dict(np.load(ARQ, allow_pickle=True)) if ARQ.exists() else None
+        antigos = None
+        if ARQ.exists():
+            with np.load(ARQ, allow_pickle=True) as d:
+                antigos = {k: d[k] for k in d.files}
         lote = {k: np.array(v) for k, v in novos.items()}
         if antigos is not None and len(lote["codigos"]):
             lote = {k: np.concatenate([antigos[k], lote[k]]) for k in lote}
@@ -119,7 +161,7 @@ def main():
             lote = antigos
         tmp = PASTA / "vetores.tmp.npz"
         np.savez(tmp, **lote)
-        tmp.replace(ARQ)
+        trocar(tmp, ARQ)
         for v in novos.values():
             v.clear()
 
@@ -133,7 +175,7 @@ def main():
         vet, det, alt, sexo, idade = r
         for k, v in zip(novos, (cod, vet, det, alt, sexo, idade, cam, str(quando), qual or 0.0)):
             novos[k].append(v)
-        if n % 500 == 0 or n == len(pend):
+        if n % 100 == 0 or n == len(pend):
             salvar()
             ritmo = (time.time() - t0) / n
             print(f"  {n}/{len(pend)}  {ritmo:.2f}s cada  sem rosto {sem}  "

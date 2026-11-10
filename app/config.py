@@ -237,6 +237,13 @@ class Settings(BaseSettings):
     # o limiar de propósito: o maior falso candidato já visto nesta base deu
     # 0,452, e aqui nenhum operador confere antes.
     FACE_AUTO_SAMPLE_MIN: float = 0.65
+    # E a captura precisa se parecer com DUAS amostras da pessoa, não só com
+    # aquela que deu o acerto. Uma amostra errada atrai o rosto de quem ela
+    # realmente é; sem esta segunda opinião, esse rosto virava amostra nova e
+    # o erro se multiplicava. Medido em 06/11/2026: as amostras erradas da
+    # Thais tinham 0,17 e 0,18 com a segunda mais parecida; 90% das amostras
+    # legítimas da base passam de 0,30.
+    FACE_AUTO_SAMPLE_APOIO: float = 0.30
     # Cota por câmera. A busca é força bruta contra todas as amostras, então
     # o custo cresce com elas; e sem cota a câmera movimentada enche o
     # cadastro sozinha. Medido: 508 capturas passariam de 0,65, e 257 delas
@@ -1003,6 +1010,44 @@ class Settings(BaseSettings):
     # assim — `OO006` saiu de uma placa de 13x4 px.
     PLACA_MIN_LARGURA_PX: int = 40
     PLACA_MIN_ALTURA_PX: int = 15
+
+    # --- Inteligência veicular (app/services/veiculos) -------------------
+    # Liga o laço próprio de veículos. Cada câmera ainda precisa do
+    # interruptor `inteligencia_veicular` — desligado em todas por padrão.
+    VEICULO_ATIVO: bool = True
+    # Detector só de veículos, com rastreio ByteTrack por câmera.
+    VEICULO_MODELO: str = str(RAIZ / "models" / "yolo11s.pt")
+    VEICULO_MODELO_SEG: str = str(RAIZ / "models" / "yolo11s-seg.pt")
+    # auto: OpenVINO na GPU integrada se houver, senão CPU (CUDA se houver).
+    VEICULO_MOTOR: str = "auto"
+    # 480 e não 640: na portaria o carro ocupa boa parte da imagem, e medido
+    # na GPU integrada (06/11/2026) caiu de 713 para 390 ms por quadro
+    # achando a mesma proporção de veículos.
+    VEICULO_IMGSZ: int = 480
+    VEICULO_CONF_MIN: float = 0.35          # caixa na tela
+    VEICULO_REGISTRO_CONF_MIN: float = 0.50  # passagem no registro
+    VEICULO_FPS: float = 2.0                 # quadros por segundo por câmera
+    # Passagem encerrada quando o veículo some por este tempo.
+    VEICULO_SUMIU_S: float = 4.0
+    # Veículo parado não fica aberto para sempre: registra e segue rastreando.
+    VEICULO_PASSAGEM_MAX_S: float = 120.0
+    VEICULO_LADO_MIN_PX: int = 48            # menor que isto não é registrado
+    # Veículo parado já registrado: uma trilha nova no mesmo lugar dentro deste
+    # tempo é o mesmo veículo (ver passagem.Passagens).
+    VEICULO_PARADO_MEMORIA_S: float = 1800.0
+    # Cor e marca/modelo: sondas treinadas sobre o vetor CLIP do veículo
+    # (services/veiculos/identificacao.py). Threads do CLIP: ele roda uma vez
+    # por passagem e não pode tomar a CPU do reconhecimento facial.
+    VEICULO_CLIP_THREADS: int = 2
+    # Placa só afirmada com este número de leituras iguais na passagem (ou
+    # uma leitura acima de 0,90).
+    VEICULO_PLACA_VOTOS: int = 2
+    # Precisão mínima, medida na validação, para uma classe ser afirmada.
+    VEICULO_PRECISAO_ALVO: float = 0.95
+    VEICULO_EXEMPLOS_MIN: int = 5
+    # Marca e modelo: só com modelo treinado e validado (scripts/veiculos_*).
+    # A pasta guarda o modelo exportado, os rótulos e o piso por classe.
+    VEICULO_MARCA_MODELO_DIR: str = str(RAIZ / "models" / "veiculos" / "marca_modelo")
 
     # --- Retenção / privacidade -----------------------------------------
     RETENTION_DAYS_UNMATCHED: int = 90

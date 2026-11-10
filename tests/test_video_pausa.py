@@ -22,6 +22,13 @@ class _CapFechado:
 
 @pytest.fixture(autouse=True)
 def _limpo():
+    # Leitores que outros módulos de teste deixaram tentando abrir endereços
+    # de teste (10.0.0.x) ocupam a fila de abertura, e o leitor daqui esperava
+    # a vez além dos 5 s do teste — falhava conforme a ordem e o tempo da suíte.
+    video.encerrar_todos()
+    with video._fila_abertura:
+        video._senha_atendida = video._senha_proxima
+        video._fila_abertura.notify_all()
     video._pausa_ate.clear()
     video._falhas_seguidas.clear()
     video._leitores.pop("CAM-TESTE", None)

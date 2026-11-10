@@ -223,6 +223,9 @@ python -m worker.run --todas --token <ACCESS_TOKEN>
 O worker lê o RTSP, roda os modelos e envia para `POST /deteccoes/ingest` — a
 mesma rota que o simulador usava.
 
+**5. Inteligência veicular** (rastreio, cor, marca/modelo e placa por passagem):
+ver [docs/INTELIGENCIA_VEICULAR.md](docs/INTELIGENCIA_VEICULAR.md).
+
 ---
 
 ## Decisões de segurança

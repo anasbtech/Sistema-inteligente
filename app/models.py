@@ -273,6 +273,11 @@ class Camera(Base):
     # janela, e o registro diria que havia um carro dentro da sala.
     # Padrão desligado: o parque é interno, e a exceção é quem vê veículo.
     detecta_veiculo: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Inteligência veicular (services/veiculos): laço próprio, com rastreio
+    # ByteTrack, cor, marca/modelo e placa por passagem. Ligada, os veículos
+    # desta câmera passam a ser dela — o laço geral deixa de registrá-los, e
+    # um carro não vira dois registros. Exige `detecta_veiculo`.
+    inteligencia_veicular: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Bagagem — mochila, bolsa, mala. Desligado, porque numa câmera de teto o
     # que tem essa silhueta é saco de lixo e caixa de papelão: em seis semanas
@@ -454,6 +459,13 @@ class AmostraFacial(Base):
     camera_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # A captura que virou esta amostra. É o que deixa o "Falso positivo"
+    # desfazer o erro por inteiro: sem este vínculo a captura saía da ficha,
+    # mas o rosto dela seguia no template e voltava a puxar a mesma pessoa
+    # errada todo dia (06/11/2026: um homem na ficha da Thais, três vezes).
+    deteccao_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("deteccoes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
     pessoa: Mapped[Pessoa] = relationship(back_populates="amostras_rel")
@@ -538,6 +550,71 @@ class Deteccao(Base):
         Index("ix_deteccoes_cam_data", "camera_id", "ocorrido_em"),
         CheckConstraint("severidade BETWEEN 1 AND 4", name="ck_severidade"),
     )
+
+
+class PassagemVeiculo(Base):
+    """Um veículo, do momento em que entrou em cena até sair (ou parar por
+    VEICULO_PASSAGEM_MAX_S). Cada atributo vem com a sua confiança; vazio é
+    "não identificado", nunca um palpite."""
+    __tablename__ = "passagens_veiculo"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
+    # O registro geral da mesma passagem (lista de objetos, alertas, retenção).
+    deteccao_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("deteccoes.id", ondelete="SET NULL"), nullable=True, index=True)
+    camera_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), index=True)
+    trilha: Mapped[int] = mapped_column(Integer)                 # id do ByteTrack na câmera
+    inicio: Mapped[datetime] = mapped_column(DataHora(), index=True)
+    fim: Mapped[datetime] = mapped_column(DataHora())
+    quadros: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Tipo (identificacao.TIPOS): carro | picape | van | caminhao_pequeno |
+    # caminhao_grande | onibus | motocicleta | veiculo (sem convicção).
+    categoria: Mapped[str] = mapped_column(String(20), index=True)
+    categoria_conf: Mapped[float] = mapped_column(Float, default=0.0)
+    cor: Mapped[str] = mapped_column(String(20), default="", index=True)
+    cor_conf: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    marca: Mapped[str] = mapped_column(String(40), default="", index=True)
+    modelo: Mapped[str] = mapped_column(String(60), default="")
+    marca_modelo_conf: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ano: Mapped[str] = mapped_column(String(12), default="")
+    placa: Mapped[str] = mapped_column(String(16), default="", index=True)
+    placa_conf: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Por que um atributo ficou vazio ("modelo não treinado", "imagem sem
+    # cor"...): é o que separa "não sei" de "não olhei".
+    observacoes: Mapped[Optional[dict]] = mapped_column(JSONPortatil, nullable=True)
+
+    bbox: Mapped[Optional[list]] = mapped_column(JSONPortatil, nullable=True)  # [x, y, w, h] no quadro
+    recorte_key: Mapped[str] = mapped_column(String(300), default="")
+    quadro_key: Mapped[str] = mapped_column(String(300), default="")
+    placa_key: Mapped[str] = mapped_column(String(300), default="")
+    # Vetor da imagem (CLIP), guardado para treinar e medir sem depender de a
+    # imagem ainda existir: a retenção apaga o recorte, o vetor não identifica
+    # ninguém sozinho.
+    vetor: Mapped[Optional[list]] = mapped_column(JSONPortatil, nullable=True)
+    # Vetor do CLIP grande (modelo_fino), só de carro: é sobre ele que a marca
+    # e o modelo são treinados e afirmados. Nulo = ainda não analisado.
+    vetor_modelo: Mapped[Optional[list]] = mapped_column(JSONPortatil, nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
+
+    camera: Mapped[Camera] = relationship(lazy="joined")
+
+
+class RotuloVeiculo(Base):
+    """O que uma pessoa disse que o veículo é. Base de treino e de medição da
+    cor e da marca/modelo — nunca altera a passagem sozinho."""
+    __tablename__ = "rotulos_veiculo"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
+    passagem_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("passagens_veiculo.id", ondelete="CASCADE"), unique=True, index=True)
+    tipo: Mapped[str] = mapped_column(String(20), default="")         # "" = não sei
+    cor: Mapped[str] = mapped_column(String(20), default="")          # "" = não sei
+    marca: Mapped[str] = mapped_column(String(40), default="")
+    modelo: Mapped[str] = mapped_column(String(60), default="")
+    usuario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
 
 class Alerta(Base):

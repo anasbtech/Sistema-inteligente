@@ -743,6 +743,7 @@ async function editarCamera(codigo){
     analitico_acao:   c ? !!c.analitico_acao : false,
     alerta_presenca:  c ? !!c.alerta_presenca : false,
     detecta_veiculo:  c ? !!c.detecta_veiculo : false,
+    inteligencia_veicular: c ? !!c.inteligencia_veicular : false,
     detecta_bagagem:  c ? !!c.detecta_bagagem : false,
     detecta_animal:   c ? !!c.detecta_animal : false,
     detecta_celular:  c ? !!c.detecta_celular : false,
@@ -945,6 +946,8 @@ async function editarCamera(codigo){
         <span>Pessoas sempre; veículo só com o item abaixo ligado</span></div>${chave('analitico_objeto')}</div>
       <div class="sw-row" data-csw="detecta_veiculo"><div class="bd"><b>Alcança via, pátio ou garagem</b>
         <span>Desligado, veículo é ignorado — num hall ele só vem da janela. Ligado, carro, caminhão, ônibus, moto e bicicleta contam, e a placa é lida</span></div>${chave('detecta_veiculo')}</div>
+      <div class="sw-row" data-csw="inteligencia_veicular"><div class="bd"><b>Inteligência veicular</b>
+        <span>Rastreia cada veículo (ByteTrack) e registra uma passagem por veículo, com cor, marca/modelo e placa quando identificados. Usa a GPU integrada; exige o item acima ligado</span></div>${chave('inteligencia_veicular')}</div>
       <div class="sw-row" data-csw="detecta_bagagem"><div class="bd"><b>Bagagem — mochila, bolsa, mala</b>
         <span>Vista do teto, essa silhueta costuma ser saco de lixo ou caixa: em seis semanas, dos 15 registros nenhum era bagagem. Ligue na revista de entrada ou no guarda-volumes</span></div>${chave('detecta_bagagem')}</div>
       <div class="sw-row" data-csw="detecta_animal"><div class="bd"><b>Animais — cachorro e gato</b>

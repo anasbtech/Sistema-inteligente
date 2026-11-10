@@ -667,6 +667,10 @@ async def _capturas_viram_amostras(db: AsyncSession, pessoa: Pessoa,
     aceitas = []
     sem_amostra: list = []
     for det in deteccoes:
+        # Captura que estava na ficha de outra pessoa e mudou de dono: o rosto
+        # dela não pode continuar no template de quem ela não é.
+        if det.pessoa_id is not None and det.pessoa_id != pessoa.id:
+            await face_engine.remover_amostras_da_captura(db, det.id)
         jpeg = evidencias.ler(det.snapshot_key)
         if jpeg is None:
             recusadas.append({"codigo": det.codigo, "motivo": "recorte não está mais em disco"})
@@ -693,6 +697,7 @@ async def _capturas_viram_amostras(db: AsyncSession, pessoa: Pessoa,
             # calculada, e era justamente a confirmação humana que abria a
             # câmera nova — o registro mais importante de todos para a cota.
             camera_id=det.camera_id,
+            deteccao_id=det.id,
         ))
         # A captura passa a apontar para a pessoa: ela deixa de ser uma
         # passagem anônima e some do expurgo curto das não identificadas.
