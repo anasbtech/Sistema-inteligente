@@ -1,5 +1,5 @@
 ﻿/* ==========================================================
-   SEGURANÇA — Telas operacionais: painel, mosaico ao vivo e câmeras
+   AizonVMS — Telas operacionais: painel, mosaico ao vivo e câmeras
    ========================================================== */
 'use strict';
 
@@ -35,6 +35,196 @@ function seriePeriodo(resumo, inicio, fim){
 }
 
 
+/* Minigráfico de linha para o cartão de indicador: só a forma, sem eixos. */
+function dashSpark(dados, cor){
+  const v = dados.length ? dados : [0];
+  const W = 120, H = 30, max = Math.max(1, ...v), n = Math.max(1, v.length - 1);
+  const pts = v.map((x, i) => `${(i / n * W).toFixed(1)},${(H - 2.5 - x / max * (H - 5)).toFixed(1)}`).join(' ');
+  return `<svg class="kpi-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <rect x="0" y="${H - 5}" width="${W}" height="5" rx="2.5" fill="var(--ink-700)"/>
+    <polygon points="0,${H - 2.5} ${pts} ${W},${H - 2.5}" fill="${cor}" opacity=".14"/>
+    <polyline points="${pts}" fill="none" stroke="${cor}" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const dashBarra = (frac, cor) => `<div class="kpi-barra"><i style="width:${Math.max(0, Math.min(100, frac * 100)).toFixed(1)}%;background:${cor}"></i></div>`;
+
+/* ---------- Gráficos do dashboard ---------- */
+
+/* Topo do eixo em número redondo (1; 1,5; 2; 2,5; 3; 4; 5; 6; 8 × 10ⁿ): 251 vira 300, e as
+   linhas de grade caem em 50, 100, 150 — valores que se leem de relance. */
+function dashTopoRedondo(max){
+  if(max <= 4) return 4;
+  const e = Math.pow(10, Math.floor(Math.log10(max)));
+  for(const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if(m * e >= max) return m * e;
+  return 10 * e;
+}
+
+/* Curva suave que não passa do dado (monotônica, Fritsch–Carlson): uma
+   hora com zero continua desenhada no zero, sem "barriga" abaixo do eixo. */
+function dashCurva(pts){
+  if(pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : '';
+  const n = pts.length, d = [], m = new Array(n);
+  for(let i = 0; i < n - 1; i++) d.push((pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0]));
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for(let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+  for(let i = 0; i < n - 1; i++){
+    if(d[i] === 0){ m[i] = m[i + 1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+    if(s > 9){ const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+  }
+  let c = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for(let i = 0; i < n - 1; i++){
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], h = (x1 - x0) / 3;
+    c += `C${(x0 + h).toFixed(1)},${(y0 + m[i] * h).toFixed(1)} ${(x1 - h).toFixed(1)},${(y1 - m[i + 1] * h).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return c;
+}
+
+/* Fluxo de detecções: áreas empilhadas (objetos, rostos, ações), de modo que
+   o contorno de cima é o total da hora. Marca o pico e o "agora", e mostra o
+   detalhe da hora sob o ponteiro. */
+function dashFluxo(camadas, rotulos, opts){
+  const o = Object.assign({w: 900, h: 270, pad: {t: 26, r: 18, b: 30, l: 42}}, opts || {});
+  const {w, h, pad} = o, iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const n = Math.max(1, camadas[0].data.length);
+  const soma = Array.from({length: n}, (_, i) => camadas.reduce((a, c) => a + (c.data[i] || 0), 0));
+  const topo = dashTopoRedondo(Math.max(1, ...soma));
+  const X = i => pad.l + (n === 1 ? iw / 2 : i * iw / (n - 1));
+  const Y = v => pad.t + ih - v / topo * ih;
+
+  let svg = `<defs>${camadas.map((c, k) => `<linearGradient id="dashG${k}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${c.cor}" stop-opacity=".55"/><stop offset="1" stop-color="${c.cor}" stop-opacity=".06"/></linearGradient>`).join('')}</defs>`;
+  for(let k = 0; k <= 4; k++){
+    const v = topo * k / 4, y = Y(v);
+    svg += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--line-soft)" ${k ? 'stroke-dasharray="3 4"' : ''}/>
+      <text x="${pad.l - 10}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" class="dg-eixo">${fmtNum(Math.round(v))}</text>`;
+  }
+  // Empilha de baixo para cima.
+  const base = new Array(n).fill(0);
+  camadas.forEach((c, k) => {
+    const de = base.map((b, i) => [X(i), Y(b)]);
+    const ate = base.map((b, i) => [X(i), Y(b + (c.data[i] || 0))]);
+    const linha = dashCurva(ate);
+    const volta = dashCurva([...de].reverse()).replace(/^M/, 'L');
+    svg += `<path d="${linha}${volta}Z" fill="url(#dashG${k})"/>
+      <path d="${linha}" fill="none" stroke="${c.cor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    for(let i = 0; i < n; i++) base[i] += c.data[i] || 0;
+  });
+  rotulos.forEach((r, i) => { if(r.curto) svg += `<text x="${X(i).toFixed(1)}" y="${h - 9}" text-anchor="middle" class="dg-eixo">${esc(r.curto)}</text>`; });
+
+  // Pico do período.
+  const ip = soma.indexOf(Math.max(...soma));
+  if(soma[ip] > 0){
+    const px = X(ip), py = Y(soma[ip]), txt = `pico ${fmtNum(soma[ip])} · ${rotulos[ip].longo}`;
+    const tw = txt.length * 6.1 + 14, lx = Math.min(w - pad.r - tw, Math.max(pad.l, px - tw / 2));
+    svg += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="var(--ink-900)" stroke="#fff" stroke-width="1.8"/>
+      <rect x="${lx.toFixed(1)}" y="${Math.max(2, py - 26).toFixed(1)}" width="${tw.toFixed(1)}" height="18" rx="9" fill="var(--ink-750)" stroke="var(--line)"/>
+      <text x="${(lx + tw / 2).toFixed(1)}" y="${(Math.max(2, py - 26) + 12.5).toFixed(1)}" text-anchor="middle" class="dg-pico">${esc(txt)}</text>`;
+  }
+  // "Agora": o último ponto, quando o período chega até a hora atual.
+  if(o.agora){
+    const ax = X(n - 1);
+    svg += `<line x1="${ax.toFixed(1)}" x2="${ax.toFixed(1)}" y1="${pad.t - 6}" y2="${pad.t + ih}" stroke="var(--acc)" stroke-opacity=".55" stroke-dasharray="2 3"/>
+      <text x="${(ax - 4).toFixed(1)}" y="${pad.t - 10}" text-anchor="end" class="dg-agora">agora</text>`;
+  }
+  // Camada do ponteiro (preenchida pelo dashLigarFluxo).
+  svg += `<g class="dg-mira" visibility="hidden"><line y1="${pad.t}" y2="${pad.t + ih}" stroke="var(--txt-3)" stroke-dasharray="3 3"/></g>
+    <rect class="dg-alvo" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  const dados = {n, w, pad, iw, rotulos: rotulos.map(r => r.longo), camadas: camadas.map(c => ({nome: c.nome, cor: c.cor, data: c.data})), soma};
+  return `<div class="dg-caixa" data-fluxo='${esc(JSON.stringify(dados))}'>
+    <svg viewBox="0 0 ${w} ${h}" class="dg-svg" role="img" aria-label="Fluxo de detecções">${svg}</svg>
+    <div class="dg-dica" hidden></div></div>`;
+}
+
+function dashLigarFluxo(raiz){
+  const caixa = $('.dg-caixa', raiz);
+  if(!caixa) return;
+  const d = JSON.parse(caixa.dataset.fluxo), svg = $('svg', caixa), alvo = $('.dg-alvo', caixa);
+  const mira = $('.dg-mira', caixa), linha = $('line', mira), dica = $('.dg-dica', caixa);
+  const sair = () => { mira.setAttribute('visibility', 'hidden'); dica.hidden = true; };
+  alvo.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(), esc_ = d.w / r.width;
+    const x = (ev.clientX - r.left) * esc_;
+    const i = Math.max(0, Math.min(d.n - 1, Math.round((x - d.pad.l) / (d.iw / Math.max(1, d.n - 1)))));
+    const xi = d.pad.l + (d.n === 1 ? d.iw / 2 : i * d.iw / (d.n - 1));
+    linha.setAttribute('x1', xi); linha.setAttribute('x2', xi); mira.setAttribute('visibility', 'visible');
+    dica.innerHTML = `<b>${esc(d.rotulos[i])}</b>${[...d.camadas].reverse().map(c => `<span><i style="background:${c.cor}"></i>${esc(c.nome)}<em>${fmtNum(c.data[i] || 0)}</em></span>`).join('')}
+      <span class="dg-tot">Total<em>${fmtNum(d.soma[i])}</em></span>`;
+    dica.hidden = false;
+    const px = xi / esc_, cw = caixa.clientWidth;
+    dica.style.left = (px + 14 + 170 > cw ? px - 184 : px + 14) + 'px';
+  };
+  alvo.onmouseleave = sair;
+}
+
+/* Detecções por setor: ranking em duas colunas, com barra, valor e fatia. */
+function dashSetores(itens){
+  if(!itens.length) return vazio('cam', 'Sem detecções no período.');
+  const max = Math.max(1, itens[0].v), tot = itens.reduce((a, x) => a + x.v, 0) || 1;
+  // Desce por coluna: 1 a 9 na primeira, o resto na segunda.
+  return `<div class="ds-grade" style="--linhas:${Math.ceil(itens.length / 2)}">${itens.map((x, i) => `
+    <div class="ds-linha" title="${esc(x.k)} — ${fmtNum(x.v)} detecções">
+      <span class="ds-pos">${pad(i + 1)}</span>
+      <span class="ds-nome">${esc(x.k)}</span>
+      <span class="ds-barra"><i style="width:${(x.v / max * 100).toFixed(1)}%"></i></span>
+      <b class="ds-v">${fmtNum(x.v)}</b>
+      <em class="ds-p">${pctCurto(x.v, tot)}</em>
+    </div>`).join('')}</div>`;
+}
+
+/* Rótulos do eixo: o longo para a dica ("09h–10h", "12/11"), o curto só a
+   cada poucos pontos, para o eixo não encavalar. */
+function dashRotulos(inicio, n, porHora){
+  const passo = porHora ? 36e5 : 864e5;
+  const base = porHora
+    ? new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate(), inicio.getHours())
+    : new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate());
+  const cada = n <= 12 ? 1 : n <= 26 ? 2 : Math.ceil(n / 12);
+  return Array.from({length: n}, (_, i) => {
+    const d = new Date(base.getTime() + i * passo);
+    const longo = porHora ? `${pad(d.getHours())}h–${pad((d.getHours() + 1) % 24)}h` : `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+    const curto = i % cada ? '' : (porHora ? `${pad(d.getHours())}h` : `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`);
+    return {longo, curto};
+  });
+}
+
+/* Composição: medidor semicircular com um segmento por tipo (separados por
+   um respiro, pontas arredondadas) e o total no centro; abaixo, uma linha
+   por tipo com ícone, o que ele conta, quantidade, fatia e barra. */
+function dashComposicao(partes, total){
+  const cx = 120, cy = 112, r = 92, larg = 15, vao = total ? 2.2 : 0;
+  const ponto = a => [cx + r * Math.cos(a), cy - r * Math.sin(a)];
+  const arco = (a0, a1, cor, extra) => {
+    const [x0, y0] = ponto(a0), [x1, y1] = ponto(a1);
+    return `<path d="M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 0 1 ${x1.toFixed(2)},${y1.toFixed(2)}"
+      fill="none" stroke="${cor}" stroke-width="${larg}" stroke-linecap="round" ${extra || ''}/>`;
+  };
+  // Da esquerda (180°) para a direita (0°).
+  let svg = arco(Math.PI, 0, 'var(--ink-700)', 'opacity=".55"');
+  const comValor = partes.filter(x => x.v > 0);
+  const graus = Math.PI / 180, util = Math.PI - vao * graus * Math.max(0, comValor.length - 1);
+  let a = Math.PI;
+  comValor.forEach(x => {
+    // Piso de 3°: a fatia pequena (ações) continua visível no medidor.
+    const fatia = Math.max(3 * graus, util * x.v / total);
+    const fim = Math.max(0, a - fatia);
+    const enc = larg / 2 / r;  // a ponta arredondada avança meia espessura
+    if(a - enc > fim + enc) svg += arco(a - enc, fim + enc, x.cor);
+    else svg += arco(a, fim, x.cor);
+    a = fim - vao * graus;
+  });
+  svg += `<text x="${cx}" y="${cy - 16}" text-anchor="middle" class="dc-total">${fmtNum(total)}</text>
+    <text x="${cx}" y="${cy + 2}" text-anchor="middle" class="dc-sub">EVENTOS NO PERÍODO</text>`;
+  const linhas = partes.map(x => `
+    <div class="dc-linha">
+      <span class="dc-ico" style="color:${x.cor};background:color-mix(in srgb, ${x.cor} 14%, transparent)">${ico(x.icone, 15)}</span>
+      <div class="dc-nome"><b>${esc(x.nome)}</b><small>${esc(x.desc)}</small>
+        <span class="dc-barra"><i style="width:${total ? (x.v / total * 100).toFixed(1) : 0}%;background:${x.cor}"></i></span></div>
+      <div class="dc-num"><b class="mono">${fmtNum(x.v)}</b><em class="mono">${pctCurto(x.v, total)}</em></div>
+    </div>`).join('');
+  return `<div class="dc-caixa"><svg viewBox="0 0 240 124" class="dc-medidor" role="img" aria-label="Composição">${svg}</svg>
+    <div class="dc-lista">${linhas}</div></div>`;
+}
+
 async function renderPainel(alvo){
   const hojeStr = diaISO(new Date());
   const dataDesdeStr = APP.periodoDesde || hojeStr;
@@ -53,33 +243,45 @@ async function renderPainel(alvo){
     // Só rosto: é o rosto que identifica. O corpo chegava aqui porque o
     // worker costurava identidade à caixa do corpo, e o painel anunciava
     // como identificação algo que nenhum reconhecimento havia lido.
-    API.deteccoes({apenas_match:true, tipo:'FACIAL', por_pagina:6}),
-    API.pode('alerts') ? API.alertas({status:'ABERTO', por_pagina:6}) : Promise.resolve({itens:[]})
+    API.deteccoes({apenas_match:true, tipo:'FACIAL', por_pagina:8}),
+    API.pode('alerts') ? API.alertas({status:'ABERTO', por_pagina:12}) : Promise.resolve({itens:[]})
   ]);
 
   const t = resumo.por_tipo || {};
   const fac = t.FACIAL || 0, obj = t.OBJETO || 0, act = t.ACAO || 0;
   const total = resumo.total || 0;
-  const {series, labels} = seriePeriodo(resumo, inicio, fim);
-  const rotuloPeriodo = dataDesdeStr === dataAteStr
-    ? fmtDate(inicio)
-    : `${fmtDate(inicio)} – ${fmtDate(fim)}`;
+  // O gráfico para na hora atual: desenhar as horas que ainda não chegaram
+  // como zero dizia "parou tudo ao meio-dia".
+  const ateAgora = new Date(Math.min(fim.getTime(), Date.now()));
+  const {series} = seriePeriodo(resumo, inicio, ateAgora);
+  const porHora = (ateAgora - inicio) <= 2 * 864e5;
+  const rotulosFluxo = dashRotulos(inicio, series.FACIAL.length, porHora);
+  const somaSerie = series.FACIAL.map((v, i) => v + series.OBJETO[i] + series.ACAO[i]);
+  const rotuloPeriodo = dataDesdeStr === dataAteStr ? fmtDate(inicio) : `${fmtDate(inicio)} – ${fmtDate(fim)}`;
+  const nCams = APP.cameras.length;
   const online = APP.cameras.filter(c => c.status === 'ONLINE').length;
+  const foraDoAr = APP.cameras.filter(c => c.status !== 'ONLINE');
   const abertos = (resumoAlertas.abertos || 0) + (resumoAlertas.em_andamento || 0);
+  const criticos = resumoAlertas.criticos_pendentes || 0;
+  const ident = resumo.identificacoes_positivas || 0;
   const pref = esquema.prefixos || {};
 
-  const maxTop = Math.max(1, ...(resumo.top_cameras || []).map(c => c.total));
+  const tops = resumo.top_cameras || [];
   const porSetor = {};
-  (resumo.top_cameras || []).forEach(c => { porSetor[c.setor] = (porSetor[c.setor] || 0) + c.total; });
-  const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1])
-    .map(([k,v]) => ({k, v, cor:'var(--acc)'}));
+  tops.forEach(c => { porSetor[c.setor] = (porSetor[c.setor] || 0) + c.total; });
+  const setores = Object.entries(porSetor).sort((a,b) => b[1]-a[1]).map(([k,v]) => ({k, v, cor:'var(--acc)'}));
 
   const diasAtras = d => diaISO(new Date(Date.now() - d * 864e5));
   const atalhoAtivo = dataAteStr !== hojeStr ? ''
     : {[hojeStr]:'hoje', [diasAtras(6)]:'7d', [diasAtras(29)]:'30d'}[dataDesdeStr] || '';
+  const agora = new Date();
+
+  const kpi = (cls, lbl, icone, val, sub, extra) => `<div class="kpi ${cls}">
+      <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+      <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></div>`;
 
   alvo.innerHTML = `
-  <div class="toolbar" style="margin-bottom:14px">
+  <div class="dash-topo">
     <div class="periodo">
       <label for="inpDesde">Período</label>
       <input class="inp" id="inpDesde" type="date" value="${dataDesdeStr}" min="${minStr}" max="${dataAteStr}">
@@ -90,130 +292,103 @@ async function renderPainel(alvo){
       ${[['hoje','Hoje'],['7d','7 dias'],['30d','30 dias']].map(([k,l]) =>
         `<button data-atalho="${k}" class="${atalhoAtivo === k ? 'on' : ''}">${l}</button>`).join('')}
     </div>
+    <span class="sp"></span>
+    ${foraDoAr.length ? `<button class="dash-aviso" data-ir="cams" title="${esc(foraDoAr.map(c => `${c.codigo} · ${c.nome}`).join('\n'))}">
+      ${ico('alert',13)} ${foraDoAr.length} câmera(s) fora do ar</button>` : ''}
+    <span class="dash-sync"><span class="cv-pulso"></span> Ao vivo · atualizado às ${pad(agora.getHours())}:${pad(agora.getMinutes())}</span>
   </div>
 
-  <div class="grid cols-4" style="margin-bottom:14px">
-    <div class="kpi k-green">
-      <div class="kpi-top"><span class="kpi-lbl">Câmeras on-line</span><span class="kpi-ico">${ico('cam',15)}</span></div>
-      <div class="kpi-val">${online}<span style="font-size:15px;color:var(--txt-3)">/${APP.cameras.length}</span></div>
-      <div class="kpi-delta ${online === APP.cameras.length ? 'up' : 'nt'}">${APP.cameras.length ? fmtPct(online/APP.cameras.length*100) : '—'} de disponibilidade</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-top"><span class="kpi-lbl">Detecções no período</span><span class="kpi-ico">${ico('box',15)}</span></div>
-      <div class="kpi-val" id="kpiTotal">${fmtNum(total)}</div>
-      <div class="kpi-delta up">${ico('up',11)} ${fmtNum(fac)} faciais · ${fmtNum(obj)} objetos · ${fmtNum(act)} ações</div>
-    </div>
-    <div class="kpi k-violet">
-      <div class="kpi-top"><span class="kpi-lbl">Identificações positivas</span><span class="kpi-ico">${ico('face',15)}</span></div>
-      <div class="kpi-val">${fmtNum(resumo.identificacoes_positivas || 0)}</div>
-      <div class="kpi-delta nt">de ${fmtNum(fac)} capturas faciais</div>
-    </div>
-    <div class="kpi ${abertos > 8 ? 'k-red' : 'k-amber'}">
-      <div class="kpi-top"><span class="kpi-lbl">Alertas em aberto</span><span class="kpi-ico">${ico('bell',15)}</span></div>
-      <div class="kpi-val">${abertos}</div>
-      <div class="kpi-delta ${resumoAlertas.criticos_pendentes ? 'dn' : 'nt'}">${resumoAlertas.criticos_pendentes || 0} de severidade crítica</div>
-    </div>
+  <div class="dash-grid dash-kpis">
+    ${kpi('k-green', 'Câmeras on-line', 'cam',
+      `${online}<small>/${nCams}</small>`,
+      `${nCams ? fmtPct(online / nCams * 100) : '—'} de disponibilidade`,
+      dashBarra(nCams ? online / nCams : 0, 'var(--green)'))}
+    ${kpi('', 'Detecções no período', 'box',
+      `<span id="kpiTotal">${fmtNum(total)}</span>`,
+      `${fmtNum(fac)} faciais · ${fmtNum(obj)} objetos · ${fmtNum(act)} ações`,
+      // Barra dividida, como a dos outros cartões: objetos, faciais e ações,
+      // nas cores do gráfico de fluxo logo abaixo.
+      `<div class="kpi-barra dupla">${[[obj, 'var(--green)', 'Objetos'], [fac, 'var(--acc)', 'Faciais'], [act, 'var(--violet)', 'Ações']]
+        .filter(([v]) => v > 0).map(([v, cor, nome]) =>
+          `<i title="${nome}: ${fmtNum(v)}" style="flex:${v} 1 0;min-width:6px;background:${cor}"></i>`).join('')
+        || '<i style="flex:1;background:var(--ink-700)"></i>'}</div>`)}
+    ${kpi('k-violet', 'Identificações positivas', 'face',
+      fmtNum(ident),
+      `${fac ? fmtPct(ident / fac * 100) : '—'} das ${fmtNum(fac)} capturas faciais`,
+      dashBarra(fac ? ident / fac : 0, 'var(--violet)'))}
+    ${kpi(abertos > 8 ? 'k-red' : 'k-amber', 'Alertas em aberto', 'bell',
+      fmtNum(abertos),
+      `<b class="dash-crit">${fmtNum(criticos)} críticos</b> · ${fmtNum(Math.max(0, abertos - criticos))} demais`,
+      `<div class="kpi-barra dupla"><i style="width:${abertos ? (criticos / abertos * 100).toFixed(1) : 0}%;background:var(--red)"></i><i style="flex:1;background:var(--amber)"></i></div>`)}
   </div>
 
-  <div class="grid" style="grid-template-columns:${window.innerWidth < 1100 ? '1fr' : '1.55fr 1fr'};gap:14px;margin-bottom:14px" id="dashRow1">
-    <div class="panel">
+  <div class="dash-grid dash-linha1">
+    <div class="panel s8">
       <div class="panel-hd"><h3>Fluxo de detecções</h3><span class="sub">${rotuloPeriodo}</span><span class="sp"></span>
         <div class="legend">
-          <span><i style="background:var(--acc)"></i>Facial</span>
-          <span><i style="background:var(--green)"></i>Objetos</span>
-          <span><i style="background:var(--violet)"></i>Ações</span>
+          <span><i style="background:var(--green)"></i>Objetos <b class="mono">${fmtNum(obj)}</b></span>
+          <span><i style="background:var(--acc)"></i>Facial <b class="mono">${fmtNum(fac)}</b></span>
+          <span><i style="background:var(--violet)"></i>Ações <b class="mono">${fmtNum(act)}</b></span>
         </div></div>
-      <div class="panel-bd">${areaChart([
-        {data: series.OBJETO, cor:'var(--green)'},
-        {data: series.FACIAL, cor:'var(--acc)'},
-        {data: series.ACAO,   cor:'var(--violet)'}
-      ], {labels, h:214})}</div>
+      <div class="panel-bd dash-grafico">${dashFluxo([
+        {data: series.OBJETO, cor:'#2FBF7A', nome:'Objetos'},
+        {data: series.FACIAL, cor:'#35A7DE', nome:'Facial'},
+        {data: series.ACAO,   cor:'#8B6CF0', nome:'Ações'}
+      ], rotulosFluxo, {w: window.innerWidth < 1500 ? 720 : 900, h: window.innerWidth < 1500 ? 250 : 270,
+                        agora: fim.getTime() >= Date.now()})}</div>
     </div>
-    <div class="panel">
+    <div class="panel s4">
       <div class="panel-hd"><h3>Composição</h3><span class="sub">${rotuloPeriodo}</span></div>
-      <div class="panel-bd" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;justify-content:center">
-        ${donut([
-          {v:obj, cor:'var(--green)', nome:'Objetos'},
-          {v:fac, cor:'var(--acc)',   nome:'Facial'},
-          {v:act, cor:'var(--violet)', nome:'Ações'}
-        ], {centro: fmtNum(total), sub:'EVENTOS'})}
-        <div style="display:flex;flex-direction:column;gap:9px;min-width:146px">
-          ${[['Objetos',obj,'var(--green)'],['Facial',fac,'var(--acc)'],['Ações',act,'var(--violet)']].map(([k,v,c]) => `
-            <div style="display:flex;align-items:center;gap:8px">
-              <i style="width:9px;height:9px;border-radius:2px;background:${c};flex:none"></i>
-              <span style="flex:1;font-size:12.5px;color:var(--txt-2)">${k}</span>
-              <b class="mono" style="font-size:13px">${fmtNum(v)}</b>
-              <span class="mono" style="font-size:10.5px;color:var(--txt-4);width:46px;text-align:right">${pctCurto(v, total)}</span>
-            </div>`).join('')}
-          <!-- O que a rosca não diz sozinha: das 1.207 leituras do dia, quantas
-               foram comportamento e não só "a câmera viu alguém". É o número
-               que decide se a vigilância rendeu alguma coisa. -->
-          <div class="comp-destaque">
-            <span>Eventos de comportamento</span>
-            <b class="mono">${fmtNum(act)}</b>
-          </div>
-        </div>
-      </div>
+      <div class="panel-bd">${dashComposicao([
+        {nome:'Objetos', desc:'pessoas, veículos e itens', v:obj, cor:'#2FBF7A', icone:'box'},
+        {nome:'Facial',  desc:'capturas de rosto',          v:fac, cor:'#35A7DE', icone:'face'},
+        {nome:'Ações',   desc:'comportamentos detectados',  v:act, cor:'#8B6CF0', icone:'run'}
+      ], total)}</div>
     </div>
   </div>
 
-  <div class="grid cols-3" style="margin-bottom:14px">
-    <div class="panel">
-      <div class="panel-hd"><h3>Câmeras mais acionadas</h3><span class="sub">${rotuloPeriodo}</span>
-        <span class="sp" style="flex:1"></span>
-        <span class="chip c-gray">${(resumo.top_cameras || []).length} de ${APP.cameras.length}</span></div>
-      <div class="rank rank-rolavel">
-        ${(resumo.top_cameras || []).map((c, i) => `
-          <div class="rank-row">
-            <span class="rank-n">${pad(i+1)}</span>
-            <div class="rank-bd"><b>${esc(c.nome)}</b>
-              <span class="sub">${esc(c.codigo)} · ${esc(c.setor)}</span>
-              <div class="rank-track"><i style="width:${c.total/maxTop*100}%;background:var(--acc)"></i></div>
-            </div>
-            <span class="rank-val">${c.total}</span>
-          </div>`).join('') || vazio('cam','Sem detecções no período.')}
-      </div>
+  <div class="dash-grid dash-linha2">
+    <div class="panel s8">
+      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${rotuloPeriodo}</span><span class="sp"></span>
+        <span class="chip c-gray">${setores.length} setor(es) · ${tops.length} de ${nCams} câmeras</span></div>
+      <div class="panel-bd dash-rola">${dashSetores(setores)}</div>
     </div>
-    <div class="panel">
-      <div class="panel-hd"><h3>Detecções por setor</h3><span class="sub">${rotuloPeriodo}</span>
-        <span class="sp" style="flex:1"></span>
-        <span class="chip c-gray">${setores.length} setor(es)</span></div>
-      <div class="panel-bd rank-rolavel">${barrasH(setores)}</div>
+    <div class="panel s4">
+      <div class="panel-hd"><h3>Alertas prioritários</h3>
+        <span class="chip ${criticos ? 'c-red' : 'c-gray'}">${fmtNum(abertos)} em aberto</span><span class="sp"></span>
+        ${API.pode('alerts') ? `<button class="btn btn-ghost btn-sm" data-ir="alerts">Ver todos ${ico('chev',12)}</button>` : ''}</div>
+      <div class="panel-bd tight dash-rola" id="dashAlerts"></div>
     </div>
-    <div class="panel">
+  </div>
+
+  <div class="dash-grid dash-linha3">
+    <div class="panel s8">
+      <div class="panel-hd"><h3>Identificações recentes</h3><span class="sub">só por rosto</span><span class="sp"></span>
+        <button class="btn btn-ghost btn-sm" data-ir="facial">Ver todas ${ico('chev',12)}</button></div>
+      <div class="panel-bd tight" id="dashFacial"></div>
+    </div>
+    <div class="panel s4">
       <div class="panel-hd"><h3>Base biométrica</h3><span class="sp"></span>
         ${API.pode('biometrics') ? `<button class="btn btn-ghost btn-sm" data-ir="biometrics">Abrir ${ico('chev',12)}</button>` : ''}</div>
       <div class="panel-bd">
-        <div class="id-scheme" style="margin-bottom:13px">
+        <div class="dash-bio">
           ${['M','F','N'].map(s => {
             const p = pref[s] || {};
             return `<button type="button" class="id-card ${s.toLowerCase()}" data-dash-pfx="${s}"
                       title="Listar os registros ${esc(p.prefixo || ('BIO-'+s))} na Base biométrica">
               <div class="pfx">${esc(p.prefixo || ('BIO-'+s))}</div>
-              <div class="lbl">${esc(p.rotulo || '')}</div>
-              <div class="cnt">${fmtNum(p.registros || 0)} registros</div>
-              ${s === 'N' ? linhaTriagem(esquema.aguardando_triagem) : ''}</button>`;
+              <div class="cnt"><b>${fmtNum(p.registros || 0)}</b> ${esc((p.rotulo || '').toLowerCase())}</div></button>`;
           }).join('')}
         </div>
-        <div class="note">${ico('info',15)}<div>O sexo é atributo <b>do cadastro</b>, informado no registro da pessoa — nunca inferido pelo modelo a partir da imagem. O identificador não muda entre capturas, exceto na saída de BIO-N: quem entrou sem identificação recebe o prefixo definitivo quando a pessoa for cadastrada.</div></div>
+        ${linhaTriagem(esquema.aguardando_triagem)}
+        <p class="dash-nota" title="O identificador não muda entre capturas, exceto na saída de BIO-N: quem entrou sem identificação recebe o prefixo definitivo quando a pessoa for cadastrada.">
+          ${ico('info',13)} O sexo vem do cadastro, nunca é inferido da imagem.</p>
       </div>
-    </div>
-  </div>
-
-  <div class="split">
-    <div class="panel">
-      <div class="panel-hd"><h3>Identificações recentes</h3><span class="sp"></span>
-        <button class="btn btn-ghost btn-sm" data-ir="facial">Ver todas ${ico('chev',12)}</button></div>
-      <div class="panel-bd tight" id="dashFacial"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-hd"><h3>Alertas prioritários</h3><span class="sp"></span>
-        ${API.pode('alerts') ? `<button class="btn btn-ghost btn-sm" data-ir="alerts">Ver todos ${ico('chev',12)}</button>` : ''}</div>
-      <div class="panel-bd tight" id="dashAlerts"></div>
     </div>
   </div>`;
 
   $$('[data-ir]', alvo).forEach(b => b.onclick = () => irPara(b.dataset.ir));
+  dashLigarFluxo(alvo);
   // Cartão do prefixo: abre a Base biométrica já filtrada por ele.
   $$('[data-dash-pfx]', alvo).forEach(c => c.onclick = e => {
     if(e.target.closest('[data-triagem]') || !API.pode('biometrics')) return;
@@ -238,22 +413,22 @@ async function renderPainel(alvo){
 
   // Identificações recentes — rosto, e só.
   const itens = ultimas.itens || [];
-  $('#dashFacial').innerHTML = itens.length ? `<div class="rank">${itens.map(d => {
+  $('#dashFacial').innerHTML = itens.length ? `<div class="rank dash-duas">${itens.map(d => {
     const p = d.pessoa;
     const metrica = d.similaridade ? pct100(d.similaridade) : '—';
     return `<div class="rank-row clickable" data-det="${esc(d.codigo)}" style="cursor:pointer">
       <canvas class="bioface" data-face="${esc(p.id_biometrico)}" data-sexo="${esc(p.sexo)}" width="38" height="38"></canvas>
       <div class="rank-bd"><b>${esc(p.nome)}</b>
         <span class="sub">${esc(p.id_biometrico)} · ${esc((d.camera ? d.camera.nome : '').slice(0,26))}</span></div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        <span class="mono" style="font-size:10.5px;color:var(--txt-3)">${relTime(d.ocorrido_em)} · ${metrica}</span>
-      </div></div>`;
+      <div class="dash-ident-meta"><span class="chip c-violet">${metrica}</span>
+        <span class="mono">${relTime(d.ocorrido_em)}</span></div></div>`;
   }).join('')}</div>` : vazio('face','Nenhuma identificação positiva recente.');
   pintarFaces($('#dashFacial'));
   $$('#dashFacial .rank-row').forEach(r => r.onclick = () => abrirDeteccao(r.dataset.det));
 
-  // Alertas prioritários
-  const alr = (alertasAbertos.itens || []).sort((a,b) => b.severidade - a.severidade);
+  // Alertas prioritários: os mais graves primeiro, depois os mais novos.
+  const alr = (alertasAbertos.itens || []).sort((a,b) => b.severidade - a.severidade
+    || new Date(b.disparado_em) - new Date(a.disparado_em));
   $('#dashAlerts').innerHTML = alr.length ? `<div class="rank">${alr.map(a => `
     <div class="rank-row clickable" data-alr="${esc(a.codigo)}" style="cursor:pointer">
       <span class="sev sev-${a.severidade}" style="min-height:30px"></span>
@@ -277,32 +452,55 @@ function painelNovoEvento(){
    MONITORAMENTO AO VIVO
    ========================================================== */
 async function renderAoVivo(alvo){
+  const onl = APP.cameras.filter(c => c.status === 'ONLINE').length, nCam = APP.cameras.length;
+  // Miniatura da grade no botão do arranjo: lê-se o formato sem ler o número.
+  const grade = n => { const k = Math.sqrt(n), t = 14 / k;
+    return `<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">${Array.from({length: n}, (_, i) =>
+      `<rect x="${(i % k) * t + .6}" y="${Math.floor(i / k) * t + .6}" width="${t - 1.2}" height="${t - 1.2}" rx=".8" fill="currentColor"/>`).join('')}</svg>`; };
+  APP.filtroEvt = APP.filtroEvt || '';
   alvo.innerHTML = `
   <div class="live-shell">
     <div class="live-bar">
-      <div class="segm" id="layoutSeg">
+      <div class="segm lv-arranjo" id="layoutSeg">
         ${[[1,'1×1'],[4,'2×2'],[9,'3×3'],[16,'4×4']].map(([n,l]) =>
-          `<button data-n="${n}" class="${APP.mosaico === n ? 'on' : ''}">${l}</button>`).join('')}
+          `<button data-n="${n}" class="${APP.mosaico === n ? 'on' : ''}" title="Mosaico ${l}">${grade(n)}<span>${l}</span></button>`).join('')}
       </div>
-      <div style="display:flex;align-items:center;gap:5px">
+      <div class="lv-pag">
         <button class="btn btn-ghost btn-sm btn-icon" id="pgPrev" aria-label="Página anterior">${ico('lt',14)}</button>
-        <span class="mono" id="pgInfo" style="font-size:11.5px;color:var(--txt-3);min-width:56px;text-align:center"></span>
+        <span id="pgInfo"></span>
         <button class="btn btn-ghost btn-sm btn-icon" id="pgNext" aria-label="Próxima página">${ico('chev',14)}</button>
       </div>
+      <div class="lv-status">
+        <span><i class="lv-pt ok"></i><b>${onl}</b> on-line</span>
+        ${nCam - onl ? `<span class="lv-off"><i class="lv-pt off"></i><b>${nCam - onl}</b> fora do ar</span>` : ''}
+      </div>
       <span class="sp"></span>
+      <label class="lv-tog"><input type="checkbox" id="lvZonas" ${FEED.mostrarZonas ? 'checked' : ''}><span>Zonas</span></label>
+      <label class="lv-tog"><input type="checkbox" id="lvCaixas" ${FEED.mostrarCaixas ? 'checked' : ''}><span>Marcações</span></label>
+      <span class="lv-sep"></span>
       <button class="btn btn-ghost btn-sm" id="btnPause">${ico('pause',13)} <span>Pausar</span></button>
-      <button class="btn btn-ghost btn-sm" id="btnFs">${ico('expand',13)} Tela cheia</button>
+      <button class="btn btn-soft btn-sm" id="btnFs">${ico('expand',13)} Tela cheia</button>
     </div>
     <div class="live-main">
       <div class="live-col"><div class="mosaic g${APP.mosaico}" id="mosaic"></div></div>
       <aside class="live-side">
-        <div class="side-hd"><h4>Eventos ao vivo</h4><span class="dot g pulse" id="wsDot"></span></div>
+        <div class="side-hd"><h4>Eventos ao vivo</h4><span class="lv-cont" id="evtCont"></span><span class="dot g pulse" id="wsDot" title="Conectado"></span></div>
+        <div class="lv-filtro" id="evtFiltro">${[['','Todos'],['FACIAL','Facial'],['OBJETO','Objetos'],['ACAO','Ações']].map(([k,l]) =>
+          `<button data-k="${k}" class="${APP.filtroEvt === k ? 'on' : ''}">${l}</button>`).join('')}</div>
         <div class="evt-stream" id="evtStream">${carregando('Aguardando eventos…')}</div>
-        <div class="side-hd" style="border-top:1px solid var(--line-soft);border-bottom:0"><h4>Controle PTZ</h4></div>
-        <div style="padding:0 13px 14px" id="ptzBox"></div>
+        <div class="side-hd lv-cam-hd"><h4>Câmera selecionada</h4></div>
+        <div class="lv-cam" id="ptzBox"></div>
       </aside>
     </div>
   </div>`;
+
+  $('#lvZonas').onchange = e => { FEED.mostrarZonas = e.target.checked; };
+  $('#lvCaixas').onchange = e => { FEED.mostrarCaixas = e.target.checked; };
+  $$('#evtFiltro button').forEach(b => b.onclick = () => {
+    APP.filtroEvt = b.dataset.k;
+    $$('#evtFiltro button').forEach(x => x.classList.toggle('on', x === b));
+    aplicarFiltroEventos();
+  });
 
   $$('#layoutSeg button').forEach(b => b.onclick = () => {
     APP.mosaico = +b.dataset.n; APP.paginaMosaico = 0;
@@ -445,7 +643,7 @@ function montarMosaico(){
   m.style.gridTemplateRows = '';
 
   const paginas = Math.max(1, Math.ceil(todas.length / APP.mosaico));
-  $('#pgInfo').textContent = `${APP.paginaMosaico+1} / ${paginas}`;
+  $('#pgInfo').innerHTML = `Página <b>${APP.paginaMosaico+1}</b> de ${paginas}`;
   $('#pgPrev').disabled = APP.paginaMosaico === 0;
   $('#pgNext').disabled = APP.paginaMosaico >= paginas - 1;
 
@@ -463,6 +661,9 @@ function montarMosaico(){
       ${off ? `<div class="tile-off">${ico('alert',22)}<span>${c.status === 'OFFLINE' ? 'Offline' : 'Em manutenção'}</span>
                <span style="color:var(--txt-4);font-size:9.5px">${esc(c.codigo)}</span></div>`
             : `<canvas data-feed="${esc(c.codigo)}"></canvas>`}
+      ${off ? '' : `<div class="tile-acoes">
+        <button data-acao="foco" title="Ver só esta câmera">${ico('expand',13)}</button>
+        <button data-acao="ficha" title="Abrir a ficha da câmera">${ico('info',13)}</button></div>`}
     </div>`;
   }).join('');
 
@@ -487,6 +688,16 @@ function montarMosaico(){
     };
     t.ondblclick = () => abrirCamera(t.dataset.cam);
   });
+  $$('#mosaic .tile-acoes button').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    const cod = b.closest('.tile').dataset.cam;
+    if(b.dataset.acao === 'ficha'){ abrirCamera(cod); return; }
+    // Foco: mosaico 1×1 já na página desta câmera.
+    APP.mosaico = 1; APP.paginaMosaico = Math.max(0, APP.cameras.findIndex(c => c.codigo === cod));
+    APP.camSelecionada = cod;
+    $$('#layoutSeg button').forEach(x => x.classList.toggle('on', +x.dataset.n === 1));
+    montarMosaico();
+  });
 
   if(!APP.pausado) FEED.start();
   // A câmera em foco pode ter mudado acima. Em 1×1 ela muda a cada página,
@@ -501,12 +712,20 @@ function renderPTZ(){
   const c = camPorCodigo(APP.camSelecionada);
   if(!c){ box.innerHTML = '<p class="hint">Selecione uma câmera no mosaico.</p>'; return; }
 
+  const off = c.status !== 'ONLINE';
   box.innerHTML = `
-    <div style="font-size:11.5px;color:var(--txt-2);margin-bottom:9px">
-      <b style="display:block;color:var(--txt-1);font-size:12.5px">${esc(c.nome)}</b>
-      <span class="mono" style="color:var(--txt-3)">${esc(c.codigo)} · ${esc(c.resolucao)} · ${c.fps}fps · ${esc(c.codec)}</span>
+    <div class="lv-cam-topo">
+      <div><b>${esc(c.nome)}</b><span class="mono">${esc(c.codigo)} · ${esc(c.setor || '')}</span></div>
+      <span class="chip ${off ? 'c-red' : 'c-green'}">${off ? (c.status === 'OFFLINE' ? 'Offline' : 'Manutenção') : 'On-line'}</span>
     </div>
-    ${c.ptz ? `<div style="display:flex;gap:12px;align-items:center;margin-bottom:11px">
+    <div class="lv-cam-spec mono">${esc(c.resolucao)} · ${c.fps} fps · ${esc(c.codec)}</div>
+    <div class="lv-metricas">
+      <div><span>Latência</span><b>${textoLatencia(c)}</b></div>
+      <div><span>Bitrate</span><b>${fmtNum(c.bitrate_kbps)} kbps</b></div>
+      <div><span>Limiar facial</span><b>${Math.round(c.limiar_facial*100)}%</b></div>
+      <div><span>Zonas</span><b>${(c.zonas||[]).length}</b></div>
+    </div>
+    ${c.ptz ? `<div class="lv-ptz">
       <div class="ptz">
         <button data-ptz="up" style="transform:rotate(-45deg)">${ico('up',13)}</button>
         <button data-ptz="up">${ico('up',13)}</button>
@@ -522,16 +741,10 @@ function renderPTZ(){
         <button class="btn btn-soft btn-sm" data-ptz="zoom_in">${ico('zin',13)} Zoom +</button>
         <button class="btn btn-soft btn-sm" data-ptz="zoom_out">${ico('zout',13)} Zoom −</button>
       </div>
-    </div>` : `<div class="note" style="margin-bottom:11px;padding:9px 11px;font-size:11.5px">${ico('info',14)}<div>Câmera fixa — sem controle PTZ.</div></div>`}
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
+    </div>` : `<div class="lv-fixa">${ico('info',13)} Câmera fixa — sem controle PTZ</div>`}
+    <div class="lv-cam-btns">
       <button class="btn btn-soft btn-sm" id="ptzCfg">${ico('cog',13)} Configurar</button>
       <button class="btn btn-soft btn-sm" id="ptzFicha">${ico('info',13)} Ficha</button>
-    </div>
-    <div style="margin-top:12px;display:grid;gap:6px">
-      <div class="sys-row"><span>Latência</span><b>${textoLatencia(c)}</b></div>
-      <div class="sys-row"><span>Bitrate</span><b>${fmtNum(c.bitrate_kbps)} kbps</b></div>
-      <div class="sys-row"><span>Limiar facial</span><b>${Math.round(c.limiar_facial*100)}%</b></div>
-      <div class="sys-row"><span>Zonas</span><b>${(c.zonas||[]).length}</b></div>
     </div>`;
 
   $$('[data-ptz]', box).forEach(b => b.onclick = async () => {
@@ -551,6 +764,14 @@ function renderPTZ(){
   $('#ptzFicha').onclick = () => abrirCamera(c.codigo);
 }
 
+/* Filtro por tipo na lista de eventos, e o contador do que está à vista. */
+function aplicarFiltroEventos(){
+  const s = $('#evtStream'); if(!s) return;
+  let n = 0;
+  $$('.evt', s).forEach(e => { const ver = !APP.filtroEvt || e.dataset.tipo === APP.filtroEvt; e.hidden = !ver; n += ver; });
+  const c = $('#evtCont'); if(c) c.textContent = n ? fmtNum(n) : '';
+}
+
 async function carregarStreamDeEventos(){
   const s = $('#evtStream'); if(!s) return;
   try{
@@ -559,6 +780,7 @@ async function carregarStreamDeEventos(){
       vazio('live','Nenhum evento ainda.','As detecções aparecem aqui assim que ocorrem.');
     pintarSnaps(s);
     $$('.evt', s).forEach(e => e.onclick = () => abrirDeteccao(e.dataset.det));
+    aplicarFiltroEventos();
   }catch(e){ s.innerHTML = erroBloco(e); }
 }
 
@@ -574,15 +796,14 @@ function eventoHTML(d){
     titulo = rotuloClasse(d); sub = `${duracao(d.duracao_s)} · ${d.envolvidos || 1} pessoa(s)`;
   }
   const codCam = d.camera ? d.camera.codigo : '';
-  return `<div class="evt" data-det="${esc(d.codigo)}">
-    <canvas data-snap="${snapAttr(d)}" width="50" style="border-radius:3px;flex:none"></canvas>
+  const nomeTipo = {FACIAL: 'Facial', OBJETO: 'Objeto', ACAO: 'Ação'}[d.tipo] || d.tipo;
+  const oculto = APP.filtroEvt && APP.filtroEvt !== d.tipo ? ' hidden' : '';
+  return `<div class="evt" data-det="${esc(d.codigo)}" data-tipo="${esc(d.tipo)}" style="--evt-cor:${cor}"${oculto}>
+    <canvas data-snap="${snapAttr(d)}" width="46"></canvas>
     <div class="evt-bd">
-      <b>${esc(titulo)}</b>
+      <div class="evt-l1"><b>${esc(titulo)}</b><time class="mono">${fmtTime(d.ocorrido_em)}</time></div>
       <p>${esc(sub)}</p>
-      <div class="row">
-        <span class="osd-tag" style="color:${cor};border-color:${cor};background:transparent">${d.tipo}</span>
-        <span class="mono" style="font-size:10px;color:var(--txt-4)">${esc(codCam)} · ${fmtTime(d.ocorrido_em)}</span>
-      </div>
+      <div class="row"><span class="evt-tipo">${esc(nomeTipo)}</span><span class="mono evt-cam">${esc(codCam)}</span></div>
     </div></div>`;
 }
 
@@ -602,7 +823,8 @@ function aoVivoNovoEvento(d){
   pintarSnaps(s);
   const el = s.firstElementChild;
   if(el) el.onclick = () => abrirDeteccao(el.dataset.det);
-  while(s.children.length > 20) s.lastElementChild.remove();
+  while(s.children.length > 30) s.lastElementChild.remove();
+  aplicarFiltroEventos();
 }
 
 /* ==========================================================
@@ -634,85 +856,150 @@ function renderOnce(canvas, cam){
   ctx.fillRect(0, 0, w, h);
 }
 
-let CAM_FILTRO = {q:'', setor:'', status:''};
+let CAM_FILTRO = {q:'', setor:'', status:'', vista:'lista', ordem:'codigo', desc:false};
+
+/* Latência com cor: até 300 ms é boa, até 1 s aceitável, acima disso lenta. */
+function camLatenciaHTML(c){
+  if(!(c && c.status === 'ONLINE' && c.latencia_ms > 0)) return '<span class="cm-lat">—</span>';
+  const n = c.latencia_ms, cls = n <= 300 ? 'ok' : n <= 1000 ? 'medio' : 'lento';
+  return `<span class="cm-lat ${cls}"><i></i>${fmtNum(n)} ms</span>`;
+}
+function camAnaliticosHTML(c){
+  const a = [[c.analitico_facial, 'face', 'Facial', 'f'], [c.analitico_objeto, 'box', 'Objetos', 'o'],
+             [c.analitico_acao, 'run', 'Ações', 'a'], [c.ptz, 'expand', 'PTZ', 'p']].filter(x => x[0]);
+  return a.length ? `<div class="cm-anal">${a.map(([, i, l, k]) => `<span class="cm-pill ${k}">${ico(i, 11)}${l}</span>`).join('')}</div>`
+                  : '<span class="cm-lat">nenhum</span>';
+}
 
 async function renderCameras(alvo){
   const setores = [...new Set(APP.cameras.map(c => c.setor))].sort();
   const cont = s => APP.cameras.filter(c => c.status === s).length;
+  const n = APP.cameras.length, onl = cont('ONLINE');
+  const nf = APP.cameras.filter(c => c.analitico_facial).length;
+  const no = APP.cameras.filter(c => c.analitico_objeto).length;
+  const na = APP.cameras.filter(c => c.analitico_acao).length;
+  const kpi = (cls, st, lbl, icone, val, sub, extra) => `<button type="button" class="kpi ${cls} cm-kpi ${CAM_FILTRO.status === st && st ? 'on' : ''}" ${st != null ? `data-st="${st}"` : ''}>
+      <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+      <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></button>`;
+  const ordem = [['nome','Câmera'],['setor','Setor'],['status','Status'],[null,'Stream'],[null,'Analíticos'],['latencia_ms','Latência']];
 
   alvo.innerHTML = `
   <div class="sec-hd">
-    <h2>Parque de câmeras</h2><span class="sp"></span>
+    <h2>Parque de câmeras</h2><span class="cm-sub">${n} dispositivos · ${setores.length} setores</span><span class="sp"></span>
     <div class="toolbar">
-      <div class="search">${ico('search',14)}<input class="inp" id="camQ" value="${esc(CAM_FILTRO.q)}" placeholder="Buscar por nome, código, IP ou setor…"></div>
-      <select class="inp" id="camSetor"><option value="">Todos os setores</option>${setores.map(s => `<option ${CAM_FILTRO.setor===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
-      <select class="inp" id="camStatus">
-        <option value="">Todos os status</option>
-        <option value="ONLINE" ${CAM_FILTRO.status==='ONLINE'?'selected':''}>On-line</option>
-        <option value="OFFLINE" ${CAM_FILTRO.status==='OFFLINE'?'selected':''}>Offline</option>
-        <option value="MANUTENCAO" ${CAM_FILTRO.status==='MANUTENCAO'?'selected':''}>Manutenção</option>
-      </select>
       ${API.pode('edit') && API.pode('cams') ? `<button class="btn btn-primary btn-sm" id="camNova">${ico('plus',14)} Nova câmera</button>` : ''}
     </div>
   </div>
-  <div class="grid cols-4" style="margin-bottom:14px">
-    <div class="kpi k-green"><div class="kpi-top"><span class="kpi-lbl">On-line</span><span class="kpi-ico">${ico('cam',15)}</span></div><div class="kpi-val">${cont('ONLINE')}</div><div class="kpi-delta nt">transmitindo agora</div></div>
-    <div class="kpi k-red"><div class="kpi-top"><span class="kpi-lbl">Offline</span><span class="kpi-ico">${ico('alert',15)}</span></div><div class="kpi-val">${cont('OFFLINE')}</div><div class="kpi-delta dn">requer verificação em campo</div></div>
-    <div class="kpi k-amber"><div class="kpi-top"><span class="kpi-lbl">Manutenção</span><span class="kpi-ico">${ico('cog',15)}</span></div><div class="kpi-val">${cont('MANUTENCAO')}</div><div class="kpi-delta nt">fora de operação programada</div></div>
-    <div class="kpi k-violet"><div class="kpi-top"><span class="kpi-lbl">Com análise facial</span><span class="kpi-ico">${ico('face',15)}</span></div><div class="kpi-val">${APP.cameras.filter(c => c.analitico_facial).length}</div><div class="kpi-delta nt">de ${APP.cameras.length} dispositivos</div></div>
+  <div class="dash-grid dash-kpis">
+    ${kpi('k-green', 'ONLINE', 'On-line', 'cam', `${onl}<small>/${n}</small>`, `${n ? fmtPct(onl / n * 100) : '—'} de disponibilidade`,
+          dashBarra(n ? onl / n : 0, 'var(--green)'))}
+    ${kpi('k-red', 'OFFLINE', 'Offline', 'alert', cont('OFFLINE'), cont('OFFLINE') ? 'requer verificação em campo' : 'nenhuma câmera sem sinal',
+          dashBarra(n ? cont('OFFLINE') / n : 0, 'var(--red)'))}
+    ${kpi('k-amber', 'MANUTENCAO', 'Manutenção', 'cog', cont('MANUTENCAO'), 'fora de operação programada',
+          dashBarra(n ? cont('MANUTENCAO') / n : 0, 'var(--amber)'))}
+    ${kpi('k-violet', null, 'Analíticos ativos', 'gauge', `${APP.cameras.filter(c => c.analitico_facial || c.analitico_objeto || c.analitico_acao).length}<small>/${n}</small>`, `facial ${nf} · objetos ${no} · ações ${na}`,
+          `<div class="cm-cob"><i style="width:${n ? nf / n * 100 : 0}%;background:var(--amber)"></i><i style="width:${n ? no / n * 100 : 0}%;background:var(--green)"></i><i style="width:${n ? na / n * 100 : 0}%;background:var(--violet)"></i></div>`)}
   </div>
-  <div class="panel"><div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl" id="camTbl">
-    <thead><tr><th style="width:96px">Pré-visualização</th><th>Câmera</th><th>Setor</th><th>Status</th><th>Stream</th><th>Analíticos</th><th>Latência</th><th style="width:90px"></th></tr></thead>
-    <tbody></tbody></table></div></div></div>`;
+  <div class="cm-barra">
+    <div class="search">${ico('search',14)}<input class="inp" id="camQ" value="${esc(CAM_FILTRO.q)}" placeholder="Buscar por nome, código, IP ou setor…"></div>
+    <select class="inp" id="camSetor"><option value="">Todos os setores</option>${setores.map(s => `<option ${CAM_FILTRO.setor===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
+    <div class="segm" id="camStatus">${[['','Todos',n],['ONLINE','On-line',onl],['OFFLINE','Offline',cont('OFFLINE')],['MANUTENCAO','Manutenção',cont('MANUTENCAO')]].map(([k,l,q]) =>
+      `<button data-st="${k}" class="${CAM_FILTRO.status === k ? 'on' : ''}">${l} <em>${q}</em></button>`).join('')}</div>
+    <span class="sp"></span>
+    <span class="cm-cont" id="camCont"></span>
+    <div class="segm" id="camVista">
+      <button data-v="lista" class="${CAM_FILTRO.vista === 'lista' ? 'on' : ''}" title="Lista">${ico('menu',13)} Lista</button>
+      <button data-v="grade" class="${CAM_FILTRO.vista === 'grade' ? 'on' : ''}" title="Grade">${ico('grid',13)} Grade</button>
+    </div>
+  </div>
+  <div id="camCorpo"></div>`;
+
+  const miniaturas = () => requestAnimationFrame(() => $$('#camCorpo [data-prev]').forEach(cv => {
+    const cam = camPorCodigo(cv.dataset.prev);
+    if(!cam) return;
+    renderOnce(cv, cam);                       // algo visível enquanto o quadro real não chega
+    const url = FEED.fonteSnapshot ? FEED.fonteSnapshot(cam) : null;
+    if(!url) return;
+    const img = new Image();
+    img.onload = () => pintarAoVivo(cv.getContext('2d', {alpha: false}), img, cv.width, cv.height);
+    img.onerror = () => {};                    // câmera muda: a miniatura fica preta
+    img.src = url;
+  }));
+  const podeEditar = API.pode('edit') && API.pode('cams');
 
   const aplicar = () => {
     const q = $('#camQ').value.toLowerCase().trim();
-    CAM_FILTRO = {q, setor: $('#camSetor').value, status: $('#camStatus').value};
-    const lista = APP.cameras.filter(c =>
+    CAM_FILTRO.q = q; CAM_FILTRO.setor = $('#camSetor').value;
+    let lista = APP.cameras.filter(c =>
       (!q || [c.nome, c.codigo, c.ip, c.setor, c.fabricante, c.modelo].join(' ').toLowerCase().includes(q)) &&
       (!CAM_FILTRO.setor || c.setor === CAM_FILTRO.setor) &&
       (!CAM_FILTRO.status || c.status === CAM_FILTRO.status));
+    const k = CAM_FILTRO.ordem, sinal = CAM_FILTRO.desc ? -1 : 1;
+    lista = [...lista].sort((a, b) => {
+      const va = a[k] ?? '', vb = b[k] ?? '';
+      return (typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'pt-BR', {numeric: true})) * sinal;
+    });
+    $('#camCont').textContent = `${lista.length} de ${n}`;
+    $$('#camStatus button').forEach(b => b.classList.toggle('on', b.dataset.st === CAM_FILTRO.status));
+    $$('.cm-kpi[data-st]').forEach(b => b.classList.toggle('on', !!CAM_FILTRO.status && b.dataset.st === CAM_FILTRO.status));
 
-    $('#camTbl tbody').innerHTML = lista.map(c => {
-      const st = STATUS_CAMERA[c.status] || {};
-      return `<tr class="clickable" data-cam="${esc(c.codigo)}">
-        <td><div style="width:84px;aspect-ratio:16/9;border-radius:3px;overflow:hidden;border:1px solid var(--line-soft);background:#000">
-          <canvas data-prev="${esc(c.codigo)}" style="width:100%;height:100%;display:block"></canvas></div></td>
-        <td><b>${esc(c.nome)}</b><br><span class="td-id">${esc(identCamera(c))}</span></td>
-        <td>${esc(c.setor)}</td>
-        <td><span class="chip ${st.cls}">${esc(st.lbl)}</span></td>
-        <td class="mono" style="font-size:11px">${esc(c.resolucao)}<br><span style="color:var(--txt-4)">${c.fps}fps · ${esc(c.codec)}</span></td>
-        <td style="padding-top:13px"><div style="display:flex;gap:3px;flex-wrap:wrap">
-          ${c.analitico_facial ? '<span class="chip c-amber">Facial</span>' : ''}
-          ${c.analitico_objeto ? '<span class="chip c-green">Objetos</span>' : ''}
-          ${c.analitico_acao ? '<span class="chip c-violet">Ações</span>' : ''}
-          ${c.ptz ? '<span class="chip c-blue">PTZ</span>' : ''}</div></td>
-        <td class="mono">${textoLatencia(c)}</td>
-        <td style="text-align:right;white-space:nowrap">
-          <button class="btn btn-ghost btn-sm btn-icon" data-ver="${esc(c.codigo)}" title="Ficha">${ico('eye',14)}</button>
-          ${API.pode('edit') && API.pode('cams') ? `<button class="btn btn-ghost btn-sm btn-icon" data-edit="${esc(c.codigo)}" title="Configurar">${ico('edit',14)}</button>` : ''}
-        </td></tr>`;
-    }).join('') || `<tr><td colspan="8">${vazio('cam','Nenhuma câmera corresponde aos filtros.')}</td></tr>`;
+    const corpo = $('#camCorpo');
+    if(!lista.length){ corpo.innerHTML = `<div class="panel"><div class="panel-bd">${vazio('cam','Nenhuma câmera corresponde aos filtros.')}</div></div>`; return; }
+    const acoes = c => `<button class="btn btn-ghost btn-sm btn-icon" data-ver="${esc(c.codigo)}" title="Ficha">${ico('eye',14)}</button>
+      ${podeEditar ? `<button class="btn btn-ghost btn-sm btn-icon" data-edit="${esc(c.codigo)}" title="Configurar">${ico('edit',14)}</button>` : ''}`;
 
-    requestAnimationFrame(() => $$('#camTbl [data-prev]').forEach(cv => {
-      const cam = camPorCodigo(cv.dataset.prev);
-      if(!cam) return;
-      renderOnce(cv, cam);                       // algo visível enquanto o quadro real não chega
-      const url = FEED.fonteSnapshot ? FEED.fonteSnapshot(cam) : null;
-      if(!url) return;
-      const img = new Image();
-      img.onload = () => pintarAoVivo(cv.getContext('2d', {alpha: false}), img, cv.width, cv.height);
-      img.onerror = () => {};                    // câmera muda: a miniatura fica preta
-      img.src = url;
-    }));
-    $$('#camTbl [data-ver]').forEach(b => b.onclick = e => { e.stopPropagation(); abrirCamera(b.dataset.ver); });
-    $$('#camTbl [data-edit]').forEach(b => b.onclick = e => { e.stopPropagation(); editarCamera(b.dataset.edit); });
-    $$('#camTbl tr[data-cam]').forEach(t => t.onclick = () => abrirCamera(t.dataset.cam));
+    if(CAM_FILTRO.vista === 'grade'){
+      corpo.innerHTML = `<div class="cm-grade">${lista.map(c => {
+        const st = STATUS_CAMERA[c.status] || {};
+        return `<div class="cm-card" data-cam="${esc(c.codigo)}">
+          <div class="cm-prev"><canvas data-prev="${esc(c.codigo)}"></canvas>
+            <span class="cm-st ${c.status === 'ONLINE' ? 'ok' : c.status === 'OFFLINE' ? 'off' : 'man'}">${esc(st.lbl || c.status)}</span></div>
+          <div class="cm-card-bd">
+            <div class="cm-card-l1"><div><b>${esc(c.nome)}</b><span class="mono">${esc(c.codigo)} · ${esc(c.setor)}</span></div>
+              <div class="cm-card-acoes">${acoes(c)}</div></div>
+            <div class="cm-card-l2">${camAnaliticosHTML(c)}${camLatenciaHTML(c)}</div>
+          </div></div>`;
+      }).join('')}</div>`;
+    }else{
+      corpo.innerHTML = `<div class="panel"><div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl cm-tbl" id="camTbl">
+        <thead><tr><th style="width:132px"></th>${ordem.map(([k, l]) => k
+          ? `<th class="cm-ord ${CAM_FILTRO.ordem === k ? 'on' : ''}" data-ord="${k}">${l}<i>${CAM_FILTRO.ordem === k ? (CAM_FILTRO.desc ? '▼' : '▲') : ''}</i></th>`
+          : `<th>${l}</th>`).join('')}<th style="width:96px"></th></tr></thead>
+        <tbody>${lista.map(c => {
+          const st = STATUS_CAMERA[c.status] || {};
+          const pt = c.status === 'ONLINE' ? 'ok' : c.status === 'OFFLINE' ? 'off' : 'man';
+          return `<tr class="clickable" data-cam="${esc(c.codigo)}">
+            <td><div class="cm-mini"><canvas data-prev="${esc(c.codigo)}"></canvas><i class="lv-pt ${pt}"></i></div></td>
+            <td><b class="cm-nome">${esc(c.nome)}</b><span class="cm-id mono">${esc(identCamera(c))}</span></td>
+            <td class="cm-setor">${esc(c.setor)}</td>
+            <td><span class="chip ${st.cls}">${esc(st.lbl)}</span></td>
+            <td class="mono cm-stream">${esc(c.resolucao)}<span>${c.fps} fps · ${esc(c.codec)}</span></td>
+            <td>${camAnaliticosHTML(c)}</td>
+            <td>${camLatenciaHTML(c)}</td>
+            <td class="cm-acoes">${acoes(c)}</td></tr>`;
+        }).join('')}</tbody></table></div></div></div>`;
+      $$('#camTbl th[data-ord]').forEach(th => th.onclick = () => {
+        if(CAM_FILTRO.ordem === th.dataset.ord) CAM_FILTRO.desc = !CAM_FILTRO.desc;
+        else { CAM_FILTRO.ordem = th.dataset.ord; CAM_FILTRO.desc = false; }
+        aplicar();
+      });
+    }
+    miniaturas();
+    $$('#camCorpo [data-ver]').forEach(b => b.onclick = e => { e.stopPropagation(); abrirCamera(b.dataset.ver); });
+    $$('#camCorpo [data-edit]').forEach(b => b.onclick = e => { e.stopPropagation(); editarCamera(b.dataset.edit); });
+    $$('#camCorpo [data-cam]').forEach(t => t.onclick = () => abrirCamera(t.dataset.cam));
   };
 
+  const filtrarStatus = st => { CAM_FILTRO.status = CAM_FILTRO.status === st && st ? '' : st; aplicar(); };
   $('#camQ').oninput = debounce(aplicar, 200);
   $('#camSetor').onchange = aplicar;
-  $('#camStatus').onchange = aplicar;
+  $$('#camStatus button').forEach(b => b.onclick = () => { CAM_FILTRO.status = b.dataset.st; aplicar(); });
+  $$('.cm-kpi[data-st]').forEach(b => b.onclick = () => filtrarStatus(b.dataset.st));
+  $$('#camVista button').forEach(b => b.onclick = () => {
+    CAM_FILTRO.vista = b.dataset.v;
+    $$('#camVista button').forEach(x => x.classList.toggle('on', x === b));
+    aplicar();
+  });
   const nova = $('#camNova'); if(nova) nova.onclick = () => editarCamera(null);
   aplicar();
 }
@@ -744,6 +1031,7 @@ async function editarCamera(codigo){
     alerta_presenca:  c ? !!c.alerta_presenca : false,
     detecta_veiculo:  c ? !!c.detecta_veiculo : false,
     inteligencia_veicular: c ? !!c.inteligencia_veicular : false,
+    guardian:         c ? !!c.guardian : false,
     detecta_bagagem:  c ? !!c.detecta_bagagem : false,
     detecta_animal:   c ? !!c.detecta_animal : false,
     detecta_celular:  c ? !!c.detecta_celular : false,
@@ -886,13 +1174,31 @@ async function editarCamera(codigo){
     </div>`;
   };
 
+  // Uma seção por assunto, com o menu lateral apontando para cada uma.
+  const SECOES_CAM = [['cs-id', 'Identificação', 'cam'], ['cs-con', 'Conexão', 'live'], ['cs-eq', 'Equipamento', 'cog'],
+                      ['cs-an', 'Analíticos', 'eye'], ['cs-lim', 'Limiares e local', 'gauge'], ['cs-zo', 'Zonas', 'grid']];
+  const secao = (id, titulo, icone, sub, corpo) => `<section class="cs-sec" id="${id}">
+      <header><span class="cf-gico">${ico(icone, 14)}</span><div><b>${titulo}</b><span>${sub}</span></div></header>
+      ${corpo}</section>`;
+  const grupo = (titulo, corpo) => `<div class="cs-grupo"><div class="cs-grupo-t">${titulo}</div>${corpo}</div>`;
+  const sw = (k, titulo, ajuda, extraId) => `<div class="sw-row" data-csw="${k}"><div class="bd"><b>${titulo}</b>
+        <span${extraId ? ` id="${extraId}"` : ''}>${ajuda}</span></div>${chave(k)}</div>`;
+
   const box = abrirModal(`
-    <div class="modal-hd"><h3>${novo ? 'Nova câmera' : 'Configurar câmera'}</h3>
-      ${novo ? '' : `<span class="chip c-gray mono">${esc(c.codigo)}</span>`}
+    <div class="modal-hd cs-hd"><span class="cf-gico">${ico('cam', 16)}</span>
+      <div class="cs-hd-t"><em>${novo ? 'Nova câmera' : 'Configurar câmera'}</em>
+        <h3>${novo ? 'Cadastro de um ponto de monitoramento' : esc(v('nome', '') || c.codigo)}</h3>
+        ${novo ? '' : `<div class="cs-hd-meta">
+          <span class="mono">${esc(c.codigo)}</span>
+          ${v('setor', '') && v('setor', '') !== v('nome', '') ? `<span>${ico('pin', 12)}${esc(v('setor', ''))}</span>` : ''}
+          <span class="cs-st ${(STATUS_CAMERA[c.status] || {}).cls || ''}"><i></i>${esc((STATUS_CAMERA[c.status] || {}).lbl || c.status || '')}</span>
+          ${v('ip', '') ? `<span class="mono">${esc(v('ip', ''))}</span>` : ''}</div>`}</div>
       <span class="sp" style="flex:1"></span><button class="x" data-close>${ico('x',17)}</button></div>
-    <div class="modal-bd">
-      <div class="eyebrow" style="margin-bottom:8px">Identificação</div>
-      <div class="form-grid">
+    <div class="cs-corpo">
+      <nav class="cs-nav" aria-label="Seções">${SECOES_CAM.map(([id, t, i], n) =>
+        `<button type="button" data-cs="${id}" class="${n ? '' : 'on'}">${ico(i, 14)}<span>${t}</span></button>`).join('')}</nav>
+      <div class="modal-bd cs-bd" id="csBd">
+      ${secao('cs-id', 'Identificação', 'cam', 'como a câmera aparece no sistema', `<div class="form-grid">
         <div class="field full"><label for="cNome">Nome da câmera</label>
           <input class="inp" id="cNome" value="${esc(v('nome',''))}" placeholder="Ex.: Recepção, Pátio dos fundos"></div>
         ${novo ? `<div class="field"><label for="cCodigo">Código (opcional)</label>
@@ -904,32 +1210,29 @@ async function editarCamera(codigo){
         <div class="field"><label for="cCena">Tipo de cena</label>
           <select class="inp" id="cCena">${Object.entries(CENAS)
             .map(([k,o]) => `<option value="${k}" ${v('cena','rua')===k?'selected':''}>${esc(o.lbl)}</option>`).join('')}</select>
-          <span class="hint">Rótulo de classificação do ponto. Não altera a análise nem a imagem.</span></div>
+          <span class="hint">Rótulo do ponto; não altera a análise nem a imagem.</span></div>
         <div class="field"><label for="cStatus">Status operacional</label>
           <select class="inp" id="cStatus">${Object.entries(STATUS_CAMERA)
             .map(([k,o]) => `<option value="${k}" ${v('status','ONLINE')===k?'selected':''}>${esc(o.lbl)}</option>`).join('')}</select>
           <span class="hint">O worker só processa câmeras on-line.</span></div>
-      </div>
+      </div>`)}
 
-      <div class="eyebrow" style="margin:17px 0 8px">Conexão</div>
-      <div class="form-grid">
+      ${secao('cs-con', 'Conexão', 'live', 'de onde vem o vídeo', `<div class="form-grid">
         <div class="field"><label for="cIp">Endereço IP</label>
           <input class="inp mono" id="cIp" value="${esc(v('ip',''))}" placeholder="192.168.3.27">
           <span class="hint">O servidor monta o endereço RTSP a partir dele.</span></div>
         <div class="field"><label for="cOnvif">ONVIF (opcional)</label>
-          <input class="inp mono" id="cOnvif" value="${esc(v('onvif_url',''))}" placeholder="http://192.168.0.10:80/onvif/device_service">
+          <input class="inp mono" id="cOnvif" value="${esc(v('onvif_url',''))}" placeholder="http://192.168.0.10/onvif/device_service">
           <span class="hint">Necessário só para comando PTZ.</span></div>
-      </div>
+      </div>`)}
 
-      <div class="eyebrow" style="margin:17px 0 8px">Equipamento</div>
-      <div class="form-grid">
+      ${secao('cs-eq', 'Equipamento', 'cog', 'modelo, fluxo de vídeo e recursos da câmera', `<div class="form-grid cs-3">
         <div class="field"><label for="cFab">Fabricante</label>
           <input class="inp" id="cFab" value="${esc(v('fabricante',''))}" placeholder="Intelbras"></div>
         <div class="field"><label for="cMod">Modelo</label>
           <input class="inp" id="cMod" value="${esc(v('modelo',''))}"></div>
         <div class="field"><label for="cRes">Resolução</label>
-          <input class="inp mono" id="cRes" value="${esc(v('resolucao','1920x1080'))}" placeholder="1920x1080">
-          <span class="hint">Usada para a proporção da pré-visualização.</span></div>
+          <input class="inp mono" id="cRes" value="${esc(v('resolucao','1920x1080'))}" placeholder="1920x1080"></div>
         <div class="field"><label for="cFps">Quadros por segundo</label>
           <input class="inp mono" id="cFps" type="number" min="1" max="120" value="${v('fps',25)}"></div>
         <div class="field"><label for="cCodec">Codec</label>
@@ -938,42 +1241,37 @@ async function editarCamera(codigo){
         <div class="field"><label for="cBitrate">Bitrate (kbps)</label>
           <input class="inp mono" id="cBitrate" type="number" min="128" max="65536" value="${v('bitrate_kbps',4096)}"></div>
       </div>
+      <div class="cs-sws">
+        ${sw('ptz', 'PTZ', 'Habilita os comandos de movimento, via ONVIF')}
+        ${sw('infravermelho', 'Infravermelho', 'A câmera tem iluminação própria para operar no escuro')}
+      </div>`)}
 
-      <div class="eyebrow" style="margin:17px 0 8px">Analíticos e limiares</div>
-      <div class="sw-row" data-csw="analitico_facial"><div class="bd"><b>Reconhecimento facial</b>
-        <span>Extrai template e consulta a base biométrica</span></div>${chave('analitico_facial')}</div>
-      <div class="sw-row" data-csw="analitico_objeto"><div class="bd"><b>Detecção de objetos</b>
-        <span>Pessoas sempre; veículo só com o item abaixo ligado</span></div>${chave('analitico_objeto')}</div>
-      <div class="sw-row" data-csw="detecta_veiculo"><div class="bd"><b>Alcança via, pátio ou garagem</b>
-        <span>Desligado, veículo é ignorado — num hall ele só vem da janela. Ligado, carro, caminhão, ônibus, moto e bicicleta contam, e a placa é lida</span></div>${chave('detecta_veiculo')}</div>
-      <div class="sw-row" data-csw="inteligencia_veicular"><div class="bd"><b>Inteligência veicular</b>
-        <span>Rastreia cada veículo (ByteTrack) e registra uma passagem por veículo, com cor, marca/modelo e placa quando identificados. Usa a GPU integrada; exige o item acima ligado</span></div>${chave('inteligencia_veicular')}</div>
-      <div class="sw-row" data-csw="detecta_bagagem"><div class="bd"><b>Bagagem — mochila, bolsa, mala</b>
-        <span>Vista do teto, essa silhueta costuma ser saco de lixo ou caixa: em seis semanas, dos 15 registros nenhum era bagagem. Ligue na revista de entrada ou no guarda-volumes</span></div>${chave('detecta_bagagem')}</div>
-      <div class="sw-row" data-csw="detecta_animal"><div class="bd"><b>Animais — cachorro e gato</b>
-        <span>Pela espécie. O modelo não tem rótulo para pessoa agachada e escolhe o bicho de silhueta parecida: das 10 detecções deste parque, as 10 eram pessoas. Ligue em pátio, perímetro ou via</span></div>${chave('detecta_animal')}</div>
-      <div class="sw-row" data-csw="detecta_celular"><div class="bd"><b>Celular</b>
-        <span>Numa sala de trabalho todo mundo tem um na mão. Ligue na revista de entrada, na cela ou onde ele é proibido</span></div>${chave('detecta_celular')}</div>
-      <div class="sw-row" style="cursor:default"><div class="bd"><b>Conformidade de EPI</b>
-        <span>Marque os EPIs obrigatórios nesta câmera. Quem estiver sem um deles gera alerta. Botas não têm detector: aparecem como "não verificado"</span>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${EPI_OPCOES.map(([k, l]) =>
-          `<button type="button" class="motivo" role="checkbox" data-epi="${k}" aria-checked="${epiSel.has(k)}">${l}</button>`).join('')}</div></div></div>
-      ${linhaDetectorExtra('capacete', 'Capacete', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
-      ${linhaDetectorExtra('arma', 'Arma de fogo', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}
-      <div class="sw-row" data-csw="alerta_presenca"><div class="bd"><b>Alertar toda presença</b>
-        <span>Sala vigiada: qualquer pessoa aqui gera alerta, autorizada ou não. Numa sala de trabalho vira enxurrada</span></div>${chave('alerta_presenca')}</div>
-      <div class="sw-row" data-csw="analitico_acao"><div class="bd"><b>Análise de ações</b>
-        <span id="cAcoesResumo">${esc(resumoAcoes())}</span></div>${chave('analitico_acao')}</div>
-      ${paineisDeAcoes()}
-      <div class="sw-row" data-csw="ptz"><div class="bd"><b>PTZ</b>
-        <span>Habilita os comandos de movimento, via ONVIF</span></div>${chave('ptz')}</div>
-      <div class="sw-row" data-csw="infravermelho"><div class="bd"><b>Infravermelho</b>
-        <span>A câmera tem iluminação própria para operar no escuro</span></div>${chave('infravermelho')}</div>
+      ${secao('cs-an', 'Analíticos', 'eye', 'o que a inteligência procura nesta câmera', `
+        ${grupo('Análise principal', `
+          ${sw('analitico_facial', 'Reconhecimento facial', 'Extrai template e consulta a base biométrica')}
+          ${sw('analitico_objeto', 'Detecção de objetos', 'Pessoas sempre; veículo só com “Alcança via” ligado')}
+          ${sw('analitico_acao', 'Análise de ações', esc(resumoAcoes()), 'cAcoesResumo')}
+          ${paineisDeAcoes()}`)}
+        ${grupo('Veículos', `
+          ${sw('detecta_veiculo', 'Alcança via, pátio ou garagem', 'Desligado, veículo é ignorado — num hall ele só vem da janela. Ligado, carro, caminhão, ônibus, moto e bicicleta contam, e a placa é lida')}
+          ${sw('inteligencia_veicular', 'Inteligência veicular', 'Uma passagem por veículo, com cor, marca/modelo e placa quando identificados. Exige o item acima ligado')}`)}
+        ${grupo('Segurança', `
+          ${sw('guardian', 'Aizon Guardian', 'Gesto Signal for Help e sinais de possível violência (agressão, queda, fuga). O gesto só é legível em câmera próxima')}
+          ${sw('alerta_presenca', 'Alertar toda presença', 'Sala vigiada: qualquer pessoa aqui gera alerta. Numa sala de trabalho vira enxurrada')}
+          ${linhaDetectorExtra('arma', 'Arma de fogo', 'Não existe no modelo do parque: exige um detector próprio, apontado nas configurações')}`)}
+        ${grupo('Conformidade de EPI', `<div class="cs-epi">
+          <span class="hint">Marque os EPIs obrigatórios. Quem estiver sem um deles gera alerta; botas não têm detector e aparecem como “não verificado”.</span>
+          <div class="cs-epi-op">${EPI_OPCOES.map(([k, l]) =>
+            `<button type="button" class="motivo" role="checkbox" data-epi="${k}" aria-checked="${epiSel.has(k)}">${ico('check', 12)}${l}</button>`).join('')}</div></div>`)}
+        ${grupo('Objetos específicos', `
+          ${sw('detecta_bagagem', 'Bagagem — mochila, bolsa, mala', 'Vista do teto costuma ser saco de lixo ou caixa. Ligue na revista de entrada ou no guarda-volumes')}
+          ${sw('detecta_animal', 'Animais — cachorro e gato', 'Pessoa agachada costuma sair como bicho. Ligue em pátio, perímetro ou via')}
+          ${sw('detecta_celular', 'Celular', 'Numa sala de trabalho todo mundo tem um. Ligue na revista de entrada ou onde ele é proibido')}`)}`)}
 
-      <div class="form-grid" style="margin-top:14px">
+      ${secao('cs-lim', 'Limiares e local', 'gauge', 'sensibilidade, retenção e posição no mapa', `<div class="form-grid cs-3">
         <div class="field"><label for="cLimFace">Limiar facial (%)</label>
           <input class="inp mono" id="cLimFace" type="number" min="50" max="100" value="${pct('limiar_facial',0.88)}">
-          <span class="hint">Abaixo disto a captura não é atribuída a ninguém. Baixar aumenta o falso positivo.</span></div>
+          <span class="hint">Baixar aumenta o falso positivo.</span></div>
         <div class="field"><label for="cLimObj">Limiar de objeto (%)</label>
           <input class="inp mono" id="cLimObj" type="number" min="10" max="100" value="${pct('limiar_objeto',0.65)}"></div>
         <div class="field"><label for="cRet">Retenção (dias)</label>
@@ -983,7 +1281,9 @@ async function editarCamera(codigo){
         <div class="field"><label for="cLon">Longitude</label>
           <input class="inp mono" id="cLon" type="number" step="0.00001" value="${c&&c.longitude!=null?c.longitude:''}" placeholder="-48.49017"></div>
       </div>
-      <div class="eyebrow" style="margin:17px 0 8px">Zonas e perímetros</div>
+      ${novo ? '' : `<p class="fc-nota cf-nota">${ico('alert',13)}<span>Mudança de limiar facial fica registrada com destaque na trilha de auditoria; o worker relê a configuração no próximo ciclo.</span></p>`}`)}
+
+      ${secao('cs-zo', 'Zonas e perímetros', 'grid', 'regiões desenhadas sobre a imagem', `
       <div class="zone-list">${(c && c.zonas || []).map(z => `<div class="zone-item">
         <span class="zone-swatch" style="background:${esc(z.cor)}"></span><b>${esc(z.nome)}</b>
         <span class="chip c-gray">${z.tipo === 'LINHA' ? 'Linha' : 'Polígono'}</span>
@@ -991,20 +1291,34 @@ async function editarCamera(codigo){
         || `<p class="hint">Nenhuma zona desenhada. Invasão de perímetro, área
              restrita, veículo em área proibida e contrafluxo não têm onde
              disparar sem uma região marcada na imagem.</p>`}</div>
-      <button class="btn btn-ghost btn-sm" id="cZonas" style="width:100%;margin-top:8px">
+      <button class="btn btn-ghost btn-sm" id="cZonas" style="width:100%;margin-top:10px">
         ${ico('edit',13)} ${novo ? 'Cadastrar e desenhar na imagem' : 'Desenhar na imagem'}</button>
-      <span class="hint" style="display:block;margin-top:4px">Abre o editor sobre
+      <span class="hint" style="display:block;margin-top:6px">Abre o editor sobre
         o vídeo desta câmera. ${novo ? 'A câmera é cadastrada primeiro — o editor precisa dela gravada.'
-          : 'As alterações desta tela são salvas antes de abrir.'}</span>
-      ${novo ? '' : `<div class="note" style="margin-top:15px">${ico('alert',15)}<div>Mudança de limiar facial fica registrada com destaque na trilha de auditoria. O worker relê a configuração no próximo ciclo.</div></div>`}
+          : 'As alterações desta tela são salvas antes de abrir.'}</span>`)}
+      </div>
     </div>
-    <div class="modal-ft">
-      ${novo ? '' : `<button class="btn btn-danger" id="cDel">${ico('trash',14)} Remover câmera</button>`}
+    <div class="modal-ft cs-ft">
+      ${novo ? '' : `<button class="btn btn-danger btn-sm" id="cDel">${ico('trash',14)} Remover câmera</button>`}
       <span style="flex:1"></span>
-      <button class="btn btn-ghost" id="cZonasFt">${ico('edit',14)} Desenhar zonas</button>
-      <button class="btn btn-ghost" data-close>Cancelar</button>
-      <button class="btn btn-primary" id="cSave">${ico('check',14)} ${novo ? 'Cadastrar câmera' : 'Salvar alterações'}</button>
-    </div>`);
+      <button class="btn btn-ghost btn-sm" id="cZonasFt">${ico('edit',14)} Desenhar zonas</button>
+      <button class="btn btn-ghost btn-sm" data-close>Cancelar</button>
+      <button class="btn btn-primary btn-sm" id="cSave">${ico('check',14)} ${novo ? 'Cadastrar câmera' : 'Salvar alterações'}</button>
+    </div>`, true);
+  box.classList.add('cs-modal');
+
+  // Menu lateral: leva à seção e acompanha a rolagem.
+  const bdCs = $('#csBd', box);
+  $$('[data-cs]', box).forEach(b => b.onclick = () => {
+    const alvo = $('#' + b.dataset.cs, box);
+    if(alvo) bdCs.scrollTo({top: alvo.offsetTop - bdCs.offsetTop - 8, behavior: 'smooth'});
+  });
+  bdCs.addEventListener('scroll', () => {
+    let atual = SECOES_CAM[0][0];
+    for(const [id] of SECOES_CAM){ const s = $('#' + id, box); if(s && s.offsetTop - bdCs.offsetTop - 40 <= bdCs.scrollTop) atual = id; }
+    if(bdCs.scrollTop + bdCs.clientHeight >= bdCs.scrollHeight - 4) atual = SECOES_CAM[SECOES_CAM.length - 1][0];
+    $$('[data-cs]', box).forEach(b => b.classList.toggle('on', b.dataset.cs === atual));
+  });
 
   $$('[data-close]', box).forEach(b => b.onclick = fecharModal);
 

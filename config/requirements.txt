@@ -5,7 +5,8 @@
 
 # --- Banco de produção -------------------------------------------------
 asyncpg==0.30.0
-pgvector==0.3.6
+pgvector==0.5.1
+psycopg[binary]==3.2.10   # scripts de linha de comando (app/banco_direto.py)
 alembic==1.14.0
 
 # --- Barramento de eventos distribuído --------------------------------
@@ -40,3 +41,8 @@ pytest-asyncio==0.25.0
 # Abre o PDF gerado e lê o texto de volta: é como os testes conferem que a
 # capa traz finalidade, operador e selo — e não só que o arquivo existe.
 pypdfium2==5.14.0
+
+# Aizon Guardian (instalar o mediapipe com --no-deps: veja docs/AIZON_GUARDIAN.md)
+mediapipe==1.2.2
+absl-py
+cryptography==50.0.2

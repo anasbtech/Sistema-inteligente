@@ -236,6 +236,11 @@ class ServicoVeicular:
                      "track_id": t.id, "veiculo": True}
                 c.update(self._rotulos.get((codigo, t.id), {}))
                 caixas.append(c)
+        try:
+            from app.services.ocupacao import acumulador
+            acumulador.registrar(codigo, caixas, "veic")
+        except Exception:  # noqa: BLE001
+            pass                        # o mapa de calor não pode derrubar o módulo veicular
         await publicar("veiculos_ao_vivo", {
             "camera_codigo": codigo, "caixas": caixas,
             "validade_s": max(1.5, 3.0 / max(0.5, settings.VEICULO_FPS)),

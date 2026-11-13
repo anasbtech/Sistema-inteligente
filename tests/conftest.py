@@ -19,6 +19,18 @@ for sufixo in ("", "-wal", "-shm"):
         arq.unlink()
 
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{BANCO_TESTE}"
+
+# Para rodar a mesma suíte no PostgreSQL, aponte TESTE_DATABASE_URL para um
+# banco DESCARTÁVEL, com papel próprio: tudo o que esse papel tem lá é apagado.
+#   TESTE_DATABASE_URL=postgresql+asyncpg://seguranca_teste:...@127.0.0.1:5432/seguranca_teste
+if os.environ.get("TESTE_DATABASE_URL"):
+    import psycopg
+
+    _url = os.environ["TESTE_DATABASE_URL"]
+    assert "teste" in _url.rsplit("/", 1)[-1], "TESTE_DATABASE_URL precisa ser um banco de teste"
+    with psycopg.connect(_url.replace("postgresql+asyncpg://", "postgresql://"), autocommit=True) as _c:
+        _c.execute("DROP OWNED BY CURRENT_USER")
+    os.environ["DATABASE_URL"] = _url
 # Recortes também em pasta própria: a suíte gravava na `evidencias/` real, e
 # um teste recomeçava a numeração e caía sobre o arquivo de outra rodada.
 EVIDENCIAS_TESTE = Path(tempfile.mkdtemp(prefix="seguranca_evid_"))
@@ -28,6 +40,8 @@ os.environ["SIMULADOR"] = "false"
 # O laço veicular abriria RTSP e carregaria o detector para as câmeras de
 # teste; os testes de veículos exercitam as partes dele diretamente.
 os.environ["VEICULO_ATIVO"] = "false"
+# Idem o laço do gesto do Guardian; a correlação e a API são testadas direto.
+os.environ["GUARDIAN_ATIVO"] = "false"
 # Os testes medem o comportamento do detector, não a velocidade: no PyTorch
 # eles não pagam a compilação do vídeo integrado e não dependem da máquina.
 os.environ["OBJECT_MOTOR"] = "pytorch"

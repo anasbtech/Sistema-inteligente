@@ -278,6 +278,9 @@ class Camera(Base):
     # desta câmera passam a ser dela — o laço geral deixa de registrá-los, e
     # um carro não vira dois registros. Exige `detecta_veiculo`.
     inteligencia_veicular: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Aizon Guardian: sinais de socorro (gesto) e correlação de sinais de
+    # possível violência. Desligado em todas: liga quem conhece o lugar.
+    guardian: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Bagagem — mochila, bolsa, mala. Desligado, porque numa câmera de teto o
     # que tem essa silhueta é saco de lixo e caixa de papelão: em seis semanas
@@ -414,6 +417,9 @@ class Pessoa(Base):
 
     base_legal: Mapped[str] = mapped_column(String(200), default="Segurança pública")
     observacoes: Mapped[str] = mapped_column(Text, default="")
+    # Captura escolhida por uma pessoa como foto da ficha (código da detecção).
+    # Vazio = automático: o rosto mais confiável ainda vinculado a ela.
+    foto_deteccao: Mapped[str] = mapped_column(String(24), default="")
 
     total_deteccoes: Mapped[int] = mapped_column(BigInteger, default=0)
     ultima_deteccao: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
@@ -615,6 +621,70 @@ class RotuloVeiculo(Base):
     usuario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
+
+
+class OcorrenciaGuardian(Base):
+    """Uma ocorrência do Aizon Guardian: sinais de risco que coincidiram na
+    mesma câmera, com a prioridade que a combinação deles merece.
+
+    Não afirma fato: `sinais` são o que a IA viu (gesto, trajetória), cada um
+    apontando para a detecção que o registrou. Quem decide é a avaliação
+    humana, que fica em `historico` com autor, hora e justificativa."""
+    __tablename__ = "guardian_ocorrencias"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
+    codigo: Mapped[str] = mapped_column(String(20), unique=True, index=True)   # GRD-00001
+    camera_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), index=True)
+    inicio: Mapped[datetime] = mapped_column(DataHora(), index=True)
+    ultimo_sinal: Mapped[datetime] = mapped_column(DataHora())
+    prioridade: Mapped[str] = mapped_column(String(10), index=True)     # CRITICA | ALTA | MEDIA | BAIXA
+    pontuacao: Mapped[float] = mapped_column(Float, default=0.0)
+    confianca: Mapped[float] = mapped_column(Float, default=0.0)
+    sinais: Mapped[list] = mapped_column(JSONPortatil, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="NOVA", index=True)
+    imagem_key: Mapped[str] = mapped_column(String(300), default="")
+    clipe_key: Mapped[str] = mapped_column(String(300), default="")
+    alerta_codigo: Mapped[str] = mapped_column(String(20), default="")
+    avaliado_por: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    avaliado_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
+    historico: Mapped[list] = mapped_column(JSONPortatil, default=list)
+    criado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
+
+    camera: Mapped[Camera] = relationship(lazy="joined")
+
+
+class OcupacaoHora(Base):
+    """Ocupação de uma câmera numa hora: ONDE as pessoas ficaram e por quanto
+    tempo, para o mapa de calor histórico.
+
+    A detecção registra uma linha por passagem (o ponto em que a pessoa
+    apareceu); isto aqui é o complemento contínuo: a cada volta da análise,
+    cada pessoa em cena soma ao pé dela os segundos desde a volta anterior.
+    Quem fica parado aquece o lugar onde está; quem atravessa deixa o
+    caminho. Nada identifica ninguém: são segundos por célula e contagens.
+
+    `grade_*` são esparsas: {índice da célula (linha * colunas + coluna):
+    segundos}, numa grade de `ocupacao.COLUNAS` × `ocupacao.LINHAS`."""
+    __tablename__ = "ocupacao_hora"
+    __table_args__ = (UniqueConstraint("camera_id", "inicio", name="uq_ocupacao_camera_hora"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
+    camera_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), index=True)
+    inicio: Mapped[datetime] = mapped_column(DataHora(), index=True)          # hora cheia, UTC
+    observado_s: Mapped[float] = mapped_column(Float, default=0.0)            # tempo com a câmera sob análise
+    presenca_s: Mapped[float] = mapped_column(Float, default=0.0)             # pessoa × segundos
+    veiculos_s: Mapped[float] = mapped_column(Float, default=0.0)
+    pico: Mapped[int] = mapped_column(Integer, default=0)                     # pessoas ao mesmo tempo
+    pico_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
+    maior_grupo: Mapped[int] = mapped_column(Integer, default=0)              # pessoas juntas
+    maior_grupo_em: Mapped[Optional[datetime]] = mapped_column(DataHora(), nullable=True)
+    grupo_s: Mapped[float] = mapped_column(Float, default=0.0)                # tempo com aglomeração
+    trilhas: Mapped[list] = mapped_column(JSONPortatil, default=list)         # track_ids vistos na hora
+    grade_pessoas: Mapped[dict] = mapped_column(JSONPortatil, default=dict)
+    grade_veiculos: Mapped[dict] = mapped_column(JSONPortatil, default=dict)
+    grade_grupos: Mapped[dict] = mapped_column(JSONPortatil, default=dict)
+    atualizado_em: Mapped[datetime] = mapped_column(DataHora(), server_default=func.now())
 
 
 class Alerta(Base):

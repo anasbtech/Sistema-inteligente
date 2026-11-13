@@ -264,6 +264,7 @@ class CameraBase(BaseModel):
     alerta_presenca: bool = False
     detecta_veiculo: bool = False
     inteligencia_veicular: bool = False
+    guardian: bool = False
     detecta_bagagem: bool = False
     detecta_animal: bool = False
     detecta_celular: bool = False
@@ -333,6 +334,7 @@ class CameraUpdate(BaseModel):
     alerta_presenca: Optional[bool] = None
     detecta_veiculo: Optional[bool] = None
     inteligencia_veicular: Optional[bool] = None
+    guardian: Optional[bool] = None
     detecta_bagagem: Optional[bool] = None
     detecta_animal: Optional[bool] = None
     detecta_celular: Optional[bool] = None
@@ -385,6 +387,7 @@ class CameraOut(ORMModel):
     limite_aglomeracao: Optional[int] = None
     detecta_veiculo: bool
     inteligencia_veicular: bool = False
+    guardian: bool = False
     detecta_bagagem: bool
     detecta_animal: bool
     detecta_celular: bool = False
@@ -481,6 +484,7 @@ class PessoaOut(ORMModel):
     ultima_camera: str
     ativo: bool
     criado_em: datetime
+    foto_deteccao: str = ""
 
 
 class MatchOut(BaseModel):

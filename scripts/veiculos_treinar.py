@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 from collections import Counter
 from datetime import datetime
@@ -39,6 +38,7 @@ sys.path.insert(0, str(RAIZ))
 import numpy as np  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app import banco_direto  # noqa: E402
 
 PASTA = Path(settings.VEICULO_MARCA_MODELO_DIR).parent
 
@@ -60,7 +60,7 @@ def exemplos(atributo: str) -> tuple[np.ndarray, list, list]:
             vetores += list(d["vetores"].astype(np.float32))
             rotulos += [str(r) for r in d["rotulos"]]
             origens += [f"base:{o}" for o in d["origens"]]
-    c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1])
+    c = banco_direto.conectar()
     linhas = []
     # Banco ainda sem a coluna `tipo` (servidor não reiniciado desde a
     # migração): os rótulos de cor e modelo continuam valendo.
@@ -73,7 +73,7 @@ def exemplos(atributo: str) -> tuple[np.ndarray, list, list]:
                                    from rotulos_veiculo r join passagens_veiculo p on p.id = r.passagem_id
                                    where {col_vetor} is not null and {col_vetor} not in ('[]', 'null')""").fetchall()
             break
-        except sqlite3.OperationalError:
+        except Exception:  # coluna `tipo` ausente: sem migração ainda
             continue
     for pid, vet, cor, marca, modelo, tipo in linhas:
         if atributo == "tipo":

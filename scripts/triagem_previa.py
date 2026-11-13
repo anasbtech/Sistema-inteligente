@@ -11,7 +11,6 @@ from __future__ import annotations
 import base64
 import html
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -22,6 +21,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app import banco_direto  # noqa: E402
 from app.services import evidencias  # noqa: E402
 
 PASTA = RAIZ / "data" / "cadastro_triagem"
@@ -36,7 +36,7 @@ def miniatura(jpeg: bytes) -> str:
 
 def main():
     grupos = json.loads((PASTA / "grupos.json").read_text(encoding="utf-8"))
-    c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1])
+    c = banco_direto.conectar()
     chave = dict(c.execute("select codigo, snapshot_key from deteccoes where tipo='FACIAL' and pessoa_id is null"))
     blocos = []
     for g in grupos:

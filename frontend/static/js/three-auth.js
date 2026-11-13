@@ -216,6 +216,14 @@
     if (w < 2 || h < 2) return;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    // O mosaico cabe inteiro na faixa do meio: marca e título acima, recursos
+    // abaixo, sem texto cobrindo câmera.
+    const visH = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const visW = visH * camera.aspect;
+    const largM = COLS * LARG + (COLS - 1) * VAO, altM = LINHAS * ALT + (LINHAS - 1) * VAO;
+    const esc = Math.min(visW * 0.9 / largM, visH * 0.44 / altM);
+    grupo.scale.setScalar(esc);
+    grupo.position.y = -visH * 0.07;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(w, h, false);
   }

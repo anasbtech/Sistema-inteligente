@@ -158,6 +158,8 @@ async def _pendentes(db: AsyncSession) -> list:
             "sexo_sugerido": g["sexo"], "sexo_conf": g.get("sexo_conf"),
             "nome_m": _nome("M", chave, usados), "nome_f": _nome("F", chave, usados),
             "coesao": g.get("coesao"),
+            # Grupo que lembra alguém com ficha: a tela já abre com ela escolhida.
+            "ja_cadastrado": g.get("ja_cadastrado"),
         })
     return saida
 

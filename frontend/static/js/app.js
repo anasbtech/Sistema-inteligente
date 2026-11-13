@@ -279,6 +279,7 @@ function protegerCamposDeSenha(){
 }
 protegerCamposDeSenha();
 
+
 $('#btnResend').onclick = enviarCodigo;
 $('#btnRecSave').onclick = salvarSenha;
 $('#recPass').addEventListener('input', atualizarMedidor);
@@ -327,7 +328,8 @@ const VIEWS = {
   actions:    {t:'Análise de ações',      s:'Eventos comportamentais detectados',     perm:'facial'},
   epi:        {t:'Conformidade de EPI',   s:'Equipamentos de proteção por pessoa e câmera', perm:'live'},
   vehicles:   {t:'Inteligência veicular', s:'Veículos rastreados, cor, marca/modelo e placa', perm:'objects'},
-  heatmap:    {t:'Mapa de calor',         s:'Onde e quando há movimento em cada câmera', perm:'live'},
+  heatmap:    {t:'Mapa de calor',         s:'Visão térmica ao vivo das câmeras', perm:'live'},
+  guardian:   {t:'Aizon Guardian',        s:'Sinais de socorro e de possível violência, para avaliação humana', perm:'alerts'},
   biometrics: {t:'Base biométrica',       s:'Registros com identificador permanente', perm:'biometrics'},
   alerts:     {t:'Alertas',               s:'Ocorrências que exigem tratamento',      perm:'alerts'},
   users:      {t:'Usuários e perfis',     s:'Controle de acesso e permissões',        perm:'users'},
@@ -410,7 +412,7 @@ async function irPara(v){
   const render = {
     dash: renderPainel, live: renderAoVivo, cams: renderCameras,
     facial: renderFacial, objects: renderObjetos, actions: renderAcoes,
-    biometrics: renderBiometria, epi: renderEpi, vehicles: renderVeiculos, heatmap: renderMapaCalor,
+    biometrics: renderBiometria, epi: renderEpi, vehicles: renderVeiculos, heatmap: renderMapaCalor, guardian: renderGuardian,
     alerts: renderAlertas, users: renderUsuarios,
     audit: renderAuditoria, settings: renderConfiguracoes
   }[v];
@@ -747,11 +749,18 @@ EventosAoVivo.ao(msg => {
   if(msg.tipo === 'quadro_ao_vivo'){
     // Sobreposição do mosaico: a cena atual, que não vira registro.
     FEED.definirCaixas(msg.dados.camera_codigo, msg.dados.caixas, msg.dados.validade_s);
+    if(APP.view === 'heatmap') calorAoVivo(msg.dados, false);
   }
   if(msg.tipo === 'veiculos_ao_vivo'){
     // Camada própria do módulo veicular, por cima da sobreposição geral.
     FEED.definirCaixas(msg.dados.camera_codigo + '|veic', msg.dados.caixas, msg.dados.validade_s);
     if(APP.view === 'vehicles') veicAoVivo(msg.dados);
+    if(APP.view === 'heatmap') calorAoVivo(msg.dados, true);
+  }
+  if(msg.tipo === 'guardian'){
+    guardianAoVivo(msg.dados);
+    const n = $('#navGuardian');
+    if(n && msg.dados.prioridade === 'CRITICA'){ n.hidden = false; n.textContent = (+n.textContent || 0) + (msg.dados.nova ? 1 : 0); }
   }
   /* Todo alerta — de detecção ou de sala — entra na fila do painel. */
   if(msg.tipo === 'alerta'){

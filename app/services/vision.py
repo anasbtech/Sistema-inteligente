@@ -298,8 +298,14 @@ ROTULO_ACAO: Dict[str, str] = {f.codigo: f.rotulo for f in CATALOGO_ACOES}
 # por `acoes_ativas`): nasce da lista `epi_obrigatorios` da câmera.
 SEVERIDADE_ACAO["epi_ausente"] = 3
 ROTULO_ACAO["epi_ausente"] = "EPI obrigatório ausente"
+# Aizon Guardian: o gesto Signal for Help vem do laço próprio do Guardian
+# (services/guardian), não da análise de ações. Crítico por definição: quem
+# faz o gesto está pedindo ajuda — mas é *possível* sinal, e o alerta manda
+# confirmar na imagem.
+SEVERIDADE_ACAO["sinal_socorro"] = 4
+ROTULO_ACAO["sinal_socorro"] = "Possível sinal de socorro (Signal for Help)"
 # Ações que o registro exibe e filtra, mas que não se ligam pelo catálogo.
-ACOES_FORA_DO_CATALOGO = frozenset({"epi_ausente"})
+ACOES_FORA_DO_CATALOGO = frozenset({"epi_ausente", "sinal_socorro"})
 
 # O que uma câmera nova liga sozinha: só o que pode disparar. Oferecer o
 # resto ligado por padrão seria repetir o problema que a ficha existe para

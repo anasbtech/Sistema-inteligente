@@ -36,6 +36,12 @@ CREATE INDEX IF NOT EXISTS ix_alertas_abertos
 CREATE OR REPLACE FUNCTION auditoria_somente_insercao()
 RETURNS TRIGGER AS $$
 BEGIN
+    -- Única alteração aceita: a exclusão de um usuário desfaz o vínculo
+    -- (ON DELETE SET NULL). O e-mail e o nome gravados no registro ficam.
+    IF TG_OP = 'UPDATE' AND OLD.usuario_id IS NOT NULL AND NEW.usuario_id IS NULL
+       AND (to_jsonb(NEW) - 'usuario_id') = (to_jsonb(OLD) - 'usuario_id') THEN
+        RETURN NEW;
+    END IF;
     RAISE EXCEPTION
         'A trilha de auditoria é somente-inserção. Operação % bloqueada na linha %.',
         TG_OP, COALESCE(OLD.id, -1);

@@ -99,11 +99,57 @@ def obter_modelo():
 
     provedores = (["CUDAExecutionProvider", "CPUExecutionProvider"]
                   if settings.DEVICE == "cuda" else ["CPUExecutionProvider"])
-    _app = FaceAnalysis(name=settings.FACE_MODEL, providers=provedores)
-    _app.prepare(ctx_id=0 if settings.DEVICE == "cuda" else -1,
-                 det_size=(settings.FACE_DET_SIZE, settings.FACE_DET_SIZE))
-    log.info("InsightFace '%s' carregado (%s)", settings.FACE_MODEL, settings.DEVICE)
+    # Só detecção e reconhecimento: o pacote traz também dois modelos de
+    # pontos do rosto (68 e 106) e um de sexo/idade, que rodavam em cada
+    # rosto sem ninguém no sistema ler o resultado — 1,2 s por quadro com
+    # quatro rostos, jogados fora. A triagem que usa sexo/idade carrega o
+    # seu próprio modelo (scripts/triagem_extrair.py).
+    app = FaceAnalysis(name=settings.FACE_MODEL, providers=provedores,
+                       allowed_modules=["detection", "recognition"])
+    app.prepare(ctx_id=0 if settings.DEVICE == "cuda" else -1,
+                det_size=(settings.FACE_DET_SIZE, settings.FACE_DET_SIZE))
+    motor = "onnxruntime/" + settings.DEVICE
+    if settings.DEVICE != "cuda" and settings.FACE_MOTOR in ("auto", "openvino-gpu", "openvino-cpu"):
+        motor = _para_openvino(app) or motor
+    _app = app
+    log.info("InsightFace '%s' carregado (%s)", settings.FACE_MODEL, motor)
     return _app
+
+
+def _para_openvino(app) -> Optional[str]:
+    """Passa detecção e reconhecimento para o OpenVINO (vídeo integrado,
+    quando há). Qualquer falha deixa o onnxruntime/CPU como estava: rosto
+    reconhecido devagar é melhor que rosto nenhum."""
+    from app.services.openvino_sessao import SessaoOpenVINO, gpu_disponivel
+
+    disp = "GPU" if settings.FACE_MOTOR in ("auto", "openvino-gpu") and gpu_disponivel() else "CPU"
+    if settings.FACE_MOTOR == "auto" and disp == "CPU":
+        return None                   # sem vídeo integrado o onnxruntime já serve
+    trocas = {}
+    try:
+        for m in app.models.values():
+            if m.taskname == "detection":
+                forma = [1, 3, settings.FACE_DET_SIZE, settings.FACE_DET_SIZE]
+            elif m.taskname == "recognition":
+                forma = [1, 3, 112, 112]
+            else:
+                continue
+            trocas[m] = SessaoOpenVINO(m.model_file, disp, forma)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("InsightFace segue no onnxruntime/CPU: OpenVINO %s indisponível (%s)", disp, exc)
+        return None
+    for m, s in trocas.items():
+        m.session = s
+        if m.taskname == "detection" and hasattr(m, "_session_for_input_size"):
+            # O SCRFD desta versão monta uma sessão onnxruntime por resolução,
+            # a partir do arquivo — passaria por cima da do OpenVINO. A nossa
+            # já tem a forma fixa de `det_size`, que é a única usada.
+            m._session_for_input_size = lambda _tamanho, _s=s: _s
+    MOTOR_FACIAL[0] = f"openvino ({disp})"
+    return MOTOR_FACIAL[0]
+
+
+MOTOR_FACIAL = ["onnxruntime"]
 
 
 # ----------------------------------------------------------------------
@@ -339,17 +385,23 @@ async def _sem_amostra(db: AsyncSession):
 
 
 async def _topk_postgres(db: AsyncSession, vetor: list, k: int) -> list[tuple]:
-    from pgvector.sqlalchemy import Vector  # noqa: F401
+    from pgvector.sqlalchemy import Vector
+    from sqlalchemy import type_coerce
+
+    # A coluna é declarada com o tipo portátil `Vetor`, que não traz os
+    # operadores do pgvector; `type_coerce` empresta o comparador do `Vector`
+    # sem pôr CAST no SQL (um CAST impediria o uso do índice HNSW).
+    distancia = type_coerce(AmostraFacial.embedding, Vector(len(vetor))).cosine_distance(vetor)
 
     # Mais linhas que `k` de propósito: várias podem ser da mesma pessoa, e a
     # dedupe acontece depois, em `_melhor_por_pessoa`.
     linhas = (
         await db.execute(
             select(Pessoa.id, Pessoa.id_biometrico, Pessoa.nome, Pessoa.status,
-                   (1 - AmostraFacial.embedding.cosine_distance(vetor)).label("sim"))
+                   (1 - distancia).label("sim"))
             .join(AmostraFacial, AmostraFacial.pessoa_id == Pessoa.id)
             .where(Pessoa.ativo.is_(True))
-            .order_by(AmostraFacial.embedding.cosine_distance(vetor))
+            .order_by(distancia)
             .limit(max(k * 8, 40))
         )
     ).all()

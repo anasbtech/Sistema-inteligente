@@ -10,7 +10,6 @@ data/cadastro_triagem/vetores.npz, e retoma de onde parou.
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -22,6 +21,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app import banco_direto  # noqa: E402
 from app.services import evidencias  # noqa: E402
 
 PASTA = RAIZ / "data" / "cadastro_triagem"
@@ -111,7 +111,7 @@ def main():
                    help="normal: disputa a CPU com o sistema ao vivo (mais rápido)")
     args = p.parse_args()
     PASTA.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1])
+    c = banco_direto.conectar()
     linhas = c.execute("""select codigo, snapshot_key, camera_id, ocorrido_em, qualidade_face
                           from deteccoes where tipo='FACIAL' and pessoa_id is null
                             and snapshot_key != '' and coalesce(veredito,'') != 'Falso positivo'

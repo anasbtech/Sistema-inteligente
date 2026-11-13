@@ -2386,6 +2386,8 @@ def test_e_mail_de_redefinicao_sai_em_texto_e_html(monkeypatch):
     assert link in texto, "o texto puro precisa do endereço inteiro"
     assert f'href="{link}"' in pagina, "o botão precisa apontar para o link"
     assert "Redefinir senha" in pagina
+    assert f">{link}<" not in pagina, "no HTML o link vai só no botão, sem a linha por extenso"
+    assert "AizonVMS" in msg["Subject"] and "SEGURANÇA" not in pagina
     assert "30 minutos" in texto and "30 minutos" in pagina
     # Nome vindo do cadastro não pode virar marcação.
     assert "<b>Teste</b>" not in pagina
@@ -2867,3 +2869,80 @@ def test_grupo_da_triagem_se_vincula_a_ficha_existente(cliente, monkeypatch, tmp
     r = cliente.post("/pessoas/triagem-novas/vincular", json={
         "chave": b[0], "id_biometrico": criada["id_biometrico"], "codigos": b})
     assert r.status_code == 404
+
+
+def test_foto_da_ficha_e_o_rosto_mais_confiavel_e_sai_com_o_falso_positivo(cliente):
+    """O caso do André (12/11/2026): a foto da ficha era a captura mais recente,
+    e um rosto confundido que ficou por último virou a foto. Agora vale a
+    escolhida por alguém; sem escolha, a confirmada ou de maior similaridade;
+    e o rosto marcado falso positivo deixa de ser a foto na hora."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from app.models import Camera, Deteccao, Pessoa, StatusCamera, TipoDeteccao
+    from app.routers.pessoas import _captura_da_foto
+
+    agora = datetime.now(timezone.utc)
+
+    async def montar():
+        async with db_context() as db:
+            cam = Camera(codigo="CAM-FOTO", nome="Foto", setor="Foto",
+                         status=StatusCamera.MANUTENCAO, rtsp_url="")
+            p = Pessoa(nome="Dono Da Foto", id_biometrico="BIO-M-999981",
+                       sexo="M", sexo_emissao="M", status="FUNCIONARIO", total_deteccoes=3)
+            db.add_all([cam, p])
+            await db.flush()
+            for cod, sim, idade in (("FR-FOTO-BOA", 0.81, 30), ("FR-FOTO-MEIA", 0.60, 20),
+                                    ("FR-FOTO-ERRADA", 0.51, 1)):
+                db.add(Deteccao(codigo=cod, tipo=TipoDeteccao.FACIAL, ocorrido_em=agora - timedelta(minutes=idade),
+                                camera_id=cam.id, pessoa_id=p.id, similaridade=sim, limiar_aplicado=0.5,
+                                severidade=1, snapshot_key=f"teste/{cod}.jpg"))
+
+    async def foto():
+        async with db_context() as db:
+            p = (await db.execute(select(Pessoa).where(Pessoa.id_biometrico == "BIO-M-999981"))).scalar_one()
+            d = await _captura_da_foto(db, p)
+            return d.codigo if d else None, p.foto_deteccao
+
+    cliente.portal.call(montar)
+    # A mais recente é a errada; a foto é a de maior similaridade.
+    assert cliente.portal.call(foto)[0] == "FR-FOTO-BOA"
+    # Escolha manual vale enquanto o rosto for desta pessoa.
+    assert cliente.put("/pessoas/BIO-M-999981/foto", params={"deteccao": "FR-FOTO-MEIA"}).status_code == 200
+    assert cliente.portal.call(foto) == ("FR-FOTO-MEIA", "FR-FOTO-MEIA")
+    # Rosto de outra ficha não pode ser escolhido.
+    assert cliente.put("/pessoas/BIO-M-999981/foto", params={"deteccao": "NAO-EXISTE"}).status_code == 422
+    # Falso positivo na foto escolhida: ela volta ao automático.
+    r = cliente.post("/deteccoes/FR-FOTO-MEIA/revisao", json={"veredito": "Falso positivo"})
+    assert r.status_code == 200, r.text
+    assert cliente.portal.call(foto) == ("FR-FOTO-BOA", "")
+
+
+def test_rostos_sugeridos_confirmados_entram_na_ficha_e_recusados_nao_voltam(cliente):
+    """Conciliação (12/11/2026): rosto solto com pessoa sugerida aparece para
+    conferência; confirmado entra na ficha, recusado vira falso positivo e sai
+    da lista."""
+    from datetime import datetime, timezone
+    from app.models import Camera, Deteccao, Pessoa, StatusCamera, TipoDeteccao
+
+    async def montar():
+        async with db_context() as db:
+            cam = Camera(codigo="CAM-SUG", nome="Sugestão", setor="S", status=StatusCamera.MANUTENCAO, rtsp_url="")
+            p = Pessoa(nome="Pessoa Sugerida", id_biometrico="BIO-F-999971", sexo="F", sexo_emissao="F",
+                       status="FUNCIONARIO", total_deteccoes=0)
+            db.add_all([cam, p]); await db.flush()
+            for cod, sim in (("FR-SUG-1", 0.55), ("FR-SUG-2", 0.50)):
+                db.add(Deteccao(codigo=cod, tipo=TipoDeteccao.FACIAL, ocorrido_em=datetime.now(timezone.utc),
+                                camera_id=cam.id, pessoa_sugerida_id=p.id, similaridade=sim,
+                                limiar_aplicado=0.6, severidade=1, snapshot_key=f"teste/{cod}.jpg"))
+
+    cliente.portal.call(montar)
+    fichas = cliente.get("/pessoas/sugestoes").json()["fichas"]
+    assert any(f["id_biometrico"] == "BIO-F-999971" and f["total"] == 2 for f in fichas)
+    assert {r["codigo"] for r in cliente.get("/pessoas/BIO-F-999971/sugestoes").json()} == {"FR-SUG-1", "FR-SUG-2"}
+    r = cliente.post("/pessoas/BIO-F-999971/sugestoes/decidir", json={"aceitar": ["FR-SUG-1"], "recusar": ["FR-SUG-2"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["confirmadas"] == 1 and r.json()["recusadas"] == 1
+    assert cliente.get("/deteccoes/FR-SUG-1").json()["pessoa"]["id_biometrico"] == "BIO-F-999971"
+    d2 = cliente.get("/deteccoes/FR-SUG-2").json()
+    assert d2["pessoa"] is None and d2["veredito"] == "Falso positivo"
+    assert cliente.get("/pessoas/BIO-F-999971/sugestoes").json() == []

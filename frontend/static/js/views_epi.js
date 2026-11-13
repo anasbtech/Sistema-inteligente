@@ -78,68 +78,103 @@ function epiTrabalhadorSVG(itens, exigidos){
   }).join('');
   return `<svg viewBox="-12 4 278 462" width="100%" style="max-width:440px;max-height:440px" aria-label="Trabalhador com EPI">
   <defs>
-    <linearGradient id="eSk" x1="0" x2="1"><stop offset="0" stop-color="#B9805C"/><stop offset=".5" stop-color="#D49A74"/><stop offset="1" stop-color="#A9704F"/></linearGradient>
-    <linearGradient id="eNv" x1="0" x2="1"><stop offset="0" stop-color="#1A2A44"/><stop offset=".5" stop-color="#26395A"/><stop offset="1" stop-color="#16243A"/></linearGradient>
-    <linearGradient id="eVe" x1="0" x2="1"><stop offset="0" stop-color="${tom(corCol, .85)}"/><stop offset=".5" stop-color="${tom(corCol, 1.06)}"/><stop offset="1" stop-color="${tom(corCol, .8)}"/></linearGradient>
-    <linearGradient id="eHe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${tom(corCap, 1.1)}"/><stop offset="1" stop-color="${tom(corCap, .82)}"/></linearGradient>
-    <linearGradient id="eRf" x1="0" x2="1"><stop offset="0" stop-color="#AEB7C0"/><stop offset=".5" stop-color="#F2F5F8"/><stop offset="1" stop-color="#9BA5AF"/></linearGradient>
-    <radialGradient id="eFu" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="#1B2A38"/><stop offset="1" stop-color="#0D161F" stop-opacity="0"/></radialGradient>
+    <linearGradient id="eSk" x1="0" x2="1"><stop offset="0" stop-color="#A86E4C"/><stop offset=".45" stop-color="#D39C78"/><stop offset="1" stop-color="#9A6343"/></linearGradient>
+    <linearGradient id="eNv" x1="0" x2="1"><stop offset="0" stop-color="#16233A"/><stop offset=".5" stop-color="#2A3E62"/><stop offset="1" stop-color="#121D31"/></linearGradient>
+    <linearGradient id="eNv2" x1="0" x2="1"><stop offset="0" stop-color="#121D31"/><stop offset=".6" stop-color="#24365A"/><stop offset="1" stop-color="#101A2C"/></linearGradient>
+    <linearGradient id="eVe" x1="0" x2="1"><stop offset="0" stop-color="${tom(corCol, .78)}"/><stop offset=".5" stop-color="${tom(corCol, 1.08)}"/><stop offset="1" stop-color="${tom(corCol, .74)}"/></linearGradient>
+    <linearGradient id="eHe" x1="0" x2="1"><stop offset="0" stop-color="${tom(corCap, .78)}"/><stop offset=".45" stop-color="${tom(corCap, 1.12)}"/><stop offset="1" stop-color="${tom(corCap, .72)}"/></linearGradient>
+    <linearGradient id="eRf" x1="0" x2="1"><stop offset="0" stop-color="#9EA8B3"/><stop offset=".5" stop-color="#F4F7FA"/><stop offset="1" stop-color="#8E98A3"/></linearGradient>
+    <linearGradient id="eLe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#CFEFFF" stop-opacity=".85"/><stop offset="1" stop-color="#5FA8D3" stop-opacity=".55"/></linearGradient>
+    <linearGradient id="eLu" x1="0" x2="1"><stop offset="0" stop-color="#CFC8B6"/><stop offset=".5" stop-color="#F1EDE2"/><stop offset="1" stop-color="#C4BCA8"/></linearGradient>
+    <linearGradient id="eBo" x1="0" x2="1"><stop offset="0" stop-color="#2A211C"/><stop offset=".5" stop-color="#4A3B31"/><stop offset="1" stop-color="#231B17"/></linearGradient>
+    <radialGradient id="eFu" cx=".5" cy=".42" r=".62"><stop offset="0" stop-color="#1A2A3A"/><stop offset="1" stop-color="#0D161F" stop-opacity="0"/></radialGradient>
   </defs>
-  <ellipse cx="120" cy="230" rx="118" ry="230" fill="url(#eFu)"/>
-  <ellipse cx="120" cy="452" rx="62" ry="7" fill="#000" opacity=".35"/>
-  <!-- pernas e calça com faixas refletivas -->
-  <path d="M90 262 L84 404 H112 L118 272 Z" fill="url(#eNv)"/>
-  <path d="M150 262 L156 404 H128 L122 272 Z" fill="url(#eNv)"/>
-  <path d="M85 360h30M126 360h30" stroke="url(#eRf)" stroke-width="6"/>
-  <!-- botas -->
+  <ellipse cx="120" cy="230" rx="122" ry="232" fill="url(#eFu)"/>
+  <ellipse cx="120" cy="447" rx="66" ry="7" fill="#000" opacity=".4"/>
+
+  <!-- pernas do macacão -->
+  <path d="M81 268 L84 402 H115 L120 284 L125 402 H156 L159 268 Z" fill="url(#eNv)"/>
+  <path d="M120 284 V402" stroke="#0E1828" stroke-width="2"/>
+  <path d="M86 356 H114 M126 356 H154" stroke="url(#eRf)" stroke-width="6"/>
+  <path d="M88 312 q12 4 24 0 M128 312 q12 4 24 0" stroke="#0E1828" stroke-width="1.4" fill="none" opacity=".7"/>
+
+  <!-- botas de segurança -->
   <g opacity="${op('botas')}">
-    <path d="M80 398h36v30q0 6-6 6H76q-8 0-8-7v-6q0-6 7-8z" fill="#2B2420"/>
-    <path d="M124 398h36q5 2 5 8v6q0 7-8 7h-27q-6 0-6-6z" fill="#2B2420"/>
-    <path d="M68 432h48v6H70q-2 0-2-2zM124 432h48v4q0 2-2 2h-46z" fill="#E0A21B"/>
-    <path d="M84 404h28M128 404h28" stroke="#4A3F38" stroke-width="2"/>
+    <g id="eBota">
+      <path d="M85 396 H115 V424 L118 430 Q120 438 112 440 H76 Q68 440 69 433 Q70 425 80 422 L85 420 Z" fill="url(#eBo)"/>
+      <path d="M70 432 Q72 426 80 424 L92 424 Q86 430 86 440 H76 Q68 440 70 432 Z" fill="#5A4A3E" opacity=".55"/>
+      <path d="M67 438 H119 V443 Q119 447 115 447 H71 Q67 447 67 443 Z" fill="#E0A21B"/>
+      <path d="M85 402 H115" stroke="#6A5748" stroke-width="2"/>
+      <path d="M92 408 h16 M92 413 h16" stroke="#8A7564" stroke-width="1.3"/>
+    </g>
+    <use href="#eBota" transform="translate(240 0) scale(-1 1)"/>
   </g>
-  <!-- tronco e braços (camisa) -->
-  <path d="M74 122 Q120 108 166 122 L170 182 L156 274 H84 L70 182 Z" fill="url(#eNv)"/>
-  <path d="M74 124 Q58 132 54 160 L46 256 H66 L76 172 Z" fill="url(#eNv)"/>
-  <path d="M166 124 Q182 132 186 160 L194 256 H174 L164 172 Z" fill="url(#eNv)"/>
+
+  <!-- tronco e braços -->
+  <path d="M76 128 Q88 116 106 115 L120 122 L134 115 Q152 116 164 128 L170 188 L160 272 H80 L70 188 Z" fill="url(#eNv)"/>
+  <path d="M77 128 Q63 133 58 150 L50 248 H70 L76 182 Z" fill="url(#eNv2)"/>
+  <path d="M163 128 Q177 133 182 150 L190 248 H170 L164 182 Z" fill="url(#eNv2)" transform="translate(0 0)"/>
+  <path d="M51 238 H69 V248 H50 Z M171 238 H189 L190 248 H171 Z" fill="#0F192A"/>
+  <path d="M60 196 q6 2 12 0 M168 196 q6 2 12 0" stroke="#0E1828" stroke-width="1.3" fill="none" opacity=".7"/>
+  <!-- gola -->
+  <path d="M106 115 L120 134 L134 115 L128 113 L120 124 L112 113 Z" fill="#33496F"/>
+  <!-- cinto -->
+  <path d="M80 262 H160 V272 H80 Z" fill="#0C1422"/>
+  <rect x="113" y="261" width="14" height="12" rx="2" fill="#7F8A96" stroke="#4E5864" stroke-width="1"/>
+
   <!-- luvas -->
   <g opacity="${op('luvas')}">
-    <path d="M44 252h24l2 26q0 14-12 15q-14 0-15-13z" fill="#E6E1D3" stroke="#B9B2A0" stroke-width="1"/>
-    <path d="M172 252h24l-1 28q-1 13-15 13q-12-1-12-15z" fill="#E6E1D3" stroke="#B9B2A0" stroke-width="1"/>
-    <path d="M44 258h24M172 258h24" stroke="#F0A02A" stroke-width="3"/>
+    <g id="eLuva">
+      <path d="M48 248 H70 L72 260 H46 Z" fill="#E2A12A"/>
+      <path d="M46 258 H72 L73 280 Q73 294 60 295 Q46 295 44 282 Z" fill="url(#eLu)" stroke="#A99F89" stroke-width="1"/>
+      <path d="M72 266 Q79 268 78 276 Q77 282 72 282" fill="url(#eLu)" stroke="#A99F89" stroke-width="1"/>
+      <path d="M52 284 V292 M58 285 V294 M64 284 V292" stroke="#B3A98F" stroke-width="1.2" stroke-linecap="round"/>
+    </g>
+    <use href="#eLuva" transform="translate(240 0) scale(-1 1)"/>
   </g>
+
   <!-- colete refletivo -->
   <g opacity="${op('colete')}">
-    <path d="M78 126 L106 120 L120 172 L134 120 L162 126 L166 186 L152 268 H88 L74 186 Z" fill="url(#eVe)"/>
-    <path d="M76 204h88M79 232h82" stroke="url(#eRf)" stroke-width="9"/>
-    <path d="M96 124v80M144 124v80" stroke="url(#eRf)" stroke-width="7" opacity=".9"/>
-    <path d="M120 172v96" stroke="${tom(corCol, .7)}" stroke-width="1.5"/>
+    <path d="M80 129 L106 119 L120 166 L134 119 L160 129 L166 190 L156 266 H84 L74 190 Z" fill="url(#eVe)"/>
+    <path d="M77 204 H163 L162 213 H78 Z M79 232 H161 L160 241 H80 Z" fill="url(#eRf)"/>
+    <path d="M95 123 L99 125 V204 H92 V126 Z M145 123 L141 125 V204 H148 V126 Z" fill="url(#eRf)" opacity=".95"/>
+    <path d="M120 166 V266" stroke="${tom(corCol, .6)}" stroke-width="1.6" stroke-dasharray="3 2"/>
+    <path d="M100 248 h14 v12 h-14 z M126 248 h14 v12 h-14 z" fill="none" stroke="${tom(corCol, .65)}" stroke-width="1.2"/>
   </g>
+
   <!-- pescoço e cabeça -->
-  <path d="M108 96h24v26q-12 6-24 0z" fill="url(#eSk)"/>
-  <ellipse cx="94" cy="72" rx="5" ry="9" fill="#B07552"/>
-  <ellipse cx="146" cy="72" rx="5" ry="9" fill="#B07552"/>
-  <path d="M95 60 Q95 34 120 34 Q145 34 145 60 L144 86 Q140 106 120 108 Q100 106 96 86 Z" fill="url(#eSk)"/>
-  <path d="M108 92q12 5 24 0" stroke="#7A4A33" stroke-width="1.6" fill="none"/>
+  <path d="M109 98 H131 V118 Q120 126 109 118 Z" fill="url(#eSk)"/>
+  <path d="M109 110 Q120 116 131 110" stroke="#8A5638" stroke-width="1.2" fill="none" opacity=".5"/>
+  <ellipse cx="96" cy="72" rx="5" ry="9" fill="#9C6545"/>
+  <ellipse cx="144" cy="72" rx="5" ry="9" fill="#9C6545"/>
+  <path d="M97 62 C97 42 107 33 120 33 C133 33 143 42 143 62 L142 84 C140 99 131 107 120 107 C109 107 100 99 98 84 Z" fill="url(#eSk)"/>
+  <path d="M104 52 q6 -3 12 -1 M124 51 q6 -2 12 1" stroke="#5A3A28" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M120 72 q-2 8 0 10" stroke="#8A5638" stroke-width="1.3" fill="none" opacity=".7"/>
+
   <!-- máscara -->
   <g opacity="${op('mascara')}">
-    <path d="M100 80 Q120 74 140 80 L138 98 Q120 110 102 98 Z" fill="#D9E6F2"/>
-    <path d="M104 86h32M105 92h30" stroke="#AFC2D3" stroke-width="1.2"/>
-    <path d="M100 82 L94 74M140 82 L146 74" stroke="#D9E6F2" stroke-width="1.6"/>
+    <path d="M100 79 C108 76 132 76 140 79 L139 95 C134 103 127 106 120 106 C113 106 106 103 101 95 Z" fill="#EAF1F7"/>
+    <path d="M100 79 L95 72 M140 79 L145 72 M101 95 L96 80 M139 95 L144 80" stroke="#D3DEE8" stroke-width="1.4" fill="none"/>
+    <path d="M103 86 H137 M104 92 H136 M107 98 H133" stroke="#B9CAD9" stroke-width="1.1"/>
+    <path d="M110 79 H130" stroke="#9AAAB8" stroke-width="2" stroke-linecap="round"/>
   </g>
-  <!-- óculos -->
+
+  <!-- óculos de proteção -->
   <g opacity="${op('oculos')}">
-    <path d="M93 64 Q120 58 147 64" stroke="#1B2A38" stroke-width="3" fill="none"/>
-    <rect x="98" y="60" width="20" height="13" rx="5" fill="#9FD3F0" fill-opacity=".55" stroke="#1B2A38" stroke-width="2"/>
-    <rect x="122" y="60" width="20" height="13" rx="5" fill="#9FD3F0" fill-opacity=".55" stroke="#1B2A38" stroke-width="2"/>
-    <path d="M102 63l6 0M126 63l6 0" stroke="#fff" stroke-width="1.4" opacity=".8"/>
+    <path d="M94 66 H146" stroke="#17222E" stroke-width="3"/>
+    <path d="M99 61 H141 Q146 61 146 66 V69 Q146 76 139 76 H128 Q124 76 122.5 72.5 Q120 70 117.5 72.5 Q116 76 112 76 H101 Q94 76 94 69 V66 Q94 61 99 61 Z"
+          fill="url(#eLe)" stroke="#17222E" stroke-width="1.8"/>
+    <path d="M100 64 L110 64 M128 64 L136 64" stroke="#fff" stroke-width="1.4" stroke-linecap="round" opacity=".85"/>
   </g>
+
   <!-- capacete -->
   <g opacity="${op('capacete')}">
-    <path d="M92 54 Q92 26 120 24 Q148 26 148 54 Z" fill="url(#eHe)"/>
-    <path d="M86 54 H154 Q156 60 150 60 H90 Q84 60 86 54 Z" fill="${tom(corCap, .95)}"/>
-    <path d="M120 24 V54" stroke="${tom(corCap, .8)}" stroke-width="5"/>
-    <path d="M100 52 Q100 34 112 29" stroke="#fff" stroke-width="2" fill="none" opacity=".9"/>
+    <path d="M92 56 C92 35 104 23 120 23 C136 23 148 35 148 56 Z" fill="url(#eHe)"/>
+    <path d="M114 24 Q120 23 126 24 L127 55 H113 Z" fill="${tom(corCap, 1.18)}" opacity=".9"/>
+    <path d="M84 54 Q84 51 88 51 H152 Q156 51 156 54 L155 58 Q155 61 151 61 H89 Q85 61 85 58 Z" fill="${tom(corCap, .9)}"/>
+    <path d="M88 58 H152" stroke="${tom(corCap, .62)}" stroke-width="1.4"/>
+    <path d="M100 50 C100 37 106 30 112 28" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" opacity=".75"/>
+    <circle cx="132" cy="42" r="4.5" fill="${tom(corCap, .7)}" opacity=".6"/>
   </g>
   ${marcas}
   </svg>`;
@@ -151,24 +186,26 @@ function epiListaHTML(itens, exigidos){
     const cls = {detectado: 'ok', ausente: 'falta', nao_verificado: 'nv'}[i.estado];
     const txt = {detectado: 'Detectado', ausente: 'Ausente', nao_verificado: 'Não verificado'}[i.estado];
     const simb = {detectado: '✓', ausente: '✕', nao_verificado: '?'}[i.estado];
-    const pct = i.confianca != null ? ` · ${Math.round(i.confianca * 100)}%` : '';
-    return `<div class="epi-item ${cls} ${exigidos.includes(k) ? '' : 'opc'}">
+    const exigido = exigidos.includes(k);
+    return `<div class="epi-item ${cls} ${exigido ? '' : 'opc'}" title="${esc(EPI_ROTULO[k])}">
       <span class="bola">${simb}</span>
-      <div title="${esc(EPI_ROTULO[k])}"><b>${esc(EPI_CURTO[k])}</b>
-        <small>${txt}${pct}${exigidos.includes(k) ? '' : ' · não exigido'}</small></div></div>`;
+      <div><b>${esc(EPI_CURTO[k])}</b><small>${exigido ? 'exigido' : 'não exigido'}</small></div>
+      <em>${txt}${i.confianca != null ? ` <span class="mono">${Math.round(i.confianca * 100)}%</span>` : ''}</em></div>`;
   }).join('');
 }
 
 function epiResultadoHTML(p){
-  if(!p) return `<div class="epi-res vazio"><div class="ico-g">–</div><h3>Ninguém em cena</h3>
-    <p>Aguardando uma pessoa na câmera.</p></div>`;
+  if(!p) return `<div class="epi-res vazio"><div class="ico-g">${ico('users', 18)}</div>
+    <div><h3>Ninguém em cena</h3><p>Aguardando uma pessoa na câmera.</p></div></div>`;
   const m = {
     conforme: ['✓', 'Em conformidade', 'Todos os EPIs exigidos foram identificados.'],
     fora: ['!', 'Fora de conformidade', `Falta: ${p.faltando.map(f => EPI_ROTULO[f].toLowerCase()).join(', ')}.`],
     inconclusivo: ['?', 'Inconclusivo', 'Algum EPI exigido não pôde ser verificado nesta imagem.'],
     sem_exigencia: ['–', 'Sem EPI exigido', 'Esta câmera não exige EPI.'],
   }[p.resultado];
-  return `<div class="epi-res ${p.resultado}"><div class="ico-g">${m[0]}</div><h3>${m[1]}</h3><p>${esc(m[2])}</p></div>`;
+  return `<div class="epi-res ${p.resultado}"><div class="ico-g">${m[0]}</div>
+    <div><h3>${m[1]}</h3><p>${esc(m[2])}</p></div>
+    <span class="epi-res-conf mono">pessoa ${Math.round((p.pessoa_conf || 0) * 100)}%</span></div>`;
 }
 
 function epiPintarPainel(){
@@ -181,9 +218,13 @@ function epiPintarPainel(){
   $('#epiCorpo').innerHTML = `<div class="epi-boneco">${epiTrabalhadorSVG(itens, exig)}</div>
     <div class="epi-lista">${epiListaHTML(itens, exig)}</div>`;
   $('#epiRes').innerHTML = epiResultadoHTML(p);
-  $('#epiPessoas').innerHTML = pessoas.length > 1 ? pessoas.map((x, i) =>
-    `<button class="btn btn-sm ${i === EPI.pessoa ? 'btn-primary' : 'btn-ghost'}" data-epi-p="${i}">
-       Pessoa ${i + 1} · ${EPI_RES_CURTO[x.resultado]}</button>`).slice(0, 8).join('')
+  const sub = $('#epiPessoaSub');
+  if(sub) sub.textContent = pessoas.length ? `pessoa ${EPI.pessoa + 1} de ${pessoas.length}` : 'nenhuma pessoa';
+  const COR = {conforme: 'var(--green)', fora: 'var(--red)', inconclusivo: 'var(--txt-3)', sem_exigencia: 'var(--txt-4)'};
+  $('#epiPessoas').innerHTML = pessoas.length > 1 ? `<span class="epi-pessoas-lbl">Pessoas na cena</span>
+    <div class="segm">${pessoas.slice(0, 8).map((x, i) =>
+      `<button class="${i === EPI.pessoa ? 'on' : ''}" data-epi-p="${i}" title="${esc(EPI_RES_CURTO[x.resultado])}">
+         <i class="epi-pdot" style="background:${COR[x.resultado]}"></i>Pessoa ${i + 1}</button>`).join('')}</div>`
        + (pessoas.length > 8 ? `<span class="hint" style="align-self:center">+${pessoas.length - 8} ao fundo</span>` : '') : '';
   $$('[data-epi-p]').forEach(b => b.onclick = () => { EPI.pessoa = +b.dataset.epiP; epiPintarPainel(); });
   epiDesenharCaixas();
@@ -233,16 +274,27 @@ function epiDesenharCaixas(){
 }
 
 function epiPintarDia(d){
-  const pct = d.conformidade == null ? '—' : `${(d.conformidade * 100).toFixed(1)}%`;
+  const tot = d.analisadas || 0;
+  const k = (cls, lbl, icone, val, sub, extra) => `<div class="kpi ${cls}">
+    <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+    <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></div>`;
+  const pct = d.conformidade == null ? '—' : `${(d.conformidade * 100).toFixed(1).replace('.', ',')}<small>%</small>`;
+  $('#epiKpis').innerHTML = `
+    ${k('', 'Pessoas analisadas hoje', 'users', fmtNum(tot), 'nas câmeras com análise de EPI', dashBarra(tot ? 1 : 0, 'var(--acc)'))}
+    ${k('k-green', 'Conformidade', 'check', pct, 'com todo EPI exigido visível', dashBarra(d.conformidade || 0, 'var(--green)'))}
+    ${k('k-red', 'Fora de conformidade', 'alert', fmtNum(d.fora || 0), `${fmtNum(d.alertas || 0)} alerta(s) de EPI hoje`, dashBarra(tot ? (d.fora || 0) / tot : 0, 'var(--red)'))}
+    ${k('k-amber', 'Inconclusivas', 'eye', fmtNum(d.inconclusivo || 0), 'EPI exigido não verificável na imagem', dashBarra(tot ? (d.inconclusivo || 0) / tot : 0, 'var(--amber)'))}`;
   const faltas = Object.entries(d.faltando || {}).sort((a, b) => b[1] - a[1]);
-  $('#epiDia').innerHTML = `
-    <div class="epi-stat"><span>Pessoas analisadas hoje</span><b>${fmtNum(d.analisadas)}</b></div>
-    <div class="epi-stat"><span>Conformidade</span><b style="color:var(--green)">${pct}</b></div>
-    <div class="epi-stat"><span>Fora de conformidade</span><b style="color:var(--red)">${fmtNum(d.fora)}</b></div>
-    <div class="epi-stat"><span>Inconclusivas</span><b>${fmtNum(d.inconclusivo)}</b></div>
-    <div class="epi-stat"><span>Alertas de EPI hoje</span><b>${fmtNum(d.alertas)}</b></div>
-    ${faltas.length ? `<div class="hint" style="margin:10px 0 4px">EPI que mais falta</div>
-      ${faltas.slice(0, 4).map(([k, n]) => `<div class="epi-stat"><span>${esc(EPI_ROTULO[k] || k)}</span><b>${fmtNum(n)}</b></div>`).join('')}` : ''}`;
+  const max = faltas.length ? faltas[0][1] : 0, soma = faltas.reduce((s, [, n]) => s + n, 0);
+  $('#epiFaltas').innerHTML = faltas.length ? `<div class="ac-lista">${faltas.map(([kk, n], i) => `
+      <div class="ac-tipo" style="--sev:var(--red);cursor:default">
+        <span class="ob-pos">${pad(i + 1)}</span>
+        <span class="ac-nome">${esc(EPI_ROTULO[kk] || kk)}</span>
+        <span class="ac-sev">faltou</span>
+        <span class="ob-barra"><i style="width:${(n / max * 100).toFixed(1)}%;background:var(--red)"></i></span>
+        <b class="mono">${fmtNum(n)}</b><em class="mono">${pctCurto(n, soma)}</em>
+      </div>`).join('')}</div>`
+    : vazio('check', 'Nenhuma falta de EPI registrada hoje.');
 }
 
 /* Análise do quadro atual da câmera, a cada ~3 s enquanto a tela está aberta. */
@@ -270,34 +322,42 @@ async function renderEpi(alvo){
   EPI.fonte = 'camera'; EPI.analise = null; EPI.pessoa = 0;
   const camSel = cams.find(c => c.codigo === EPI.cam);
   const exig = (r.cameras.find(c => c.codigo === EPI.cam) || {}).exigidos;
+  const usados = exig && exig.length ? exig : EPI_PADRAO;
 
   alvo.innerHTML = `
-  <div class="sec-hd"><h2>Conformidade de EPI</h2><span class="sp"></span>
+  <div class="sec-hd"><h2>Conformidade de EPI</h2><span class="cm-sub">equipamentos de proteção por pessoa e câmera</span><span class="sp"></span>
     <div class="toolbar">
       <select class="inp" id="epiCam">${cams.map(c => `<option value="${esc(c.codigo)}" ${c.codigo === EPI.cam ? 'selected' : ''}>
         ${esc(c.codigo)} · ${esc(c.nome)}${comEpi.has(c.codigo) ? ' · exige EPI' : ''}</option>`).join('')}</select>
       <label class="btn btn-ghost btn-sm" style="cursor:pointer" title="Analisar uma foto em vez da câmera">${ico('snap',14)} Testar com foto
         <input type="file" id="epiArq" accept="image/*" hidden></label>
     </div></div>
+  <div class="dash-grid dash-kpis" id="epiKpis"></div>
   ${r.modelo_disponivel ? '' : `<div class="note" style="margin-bottom:14px">${ico('alert',15)}<div><b>Detector de EPI não instalado.</b> Coloque o modelo em models/epi/ (veja a configuração EPI_MODEL).</div></div>`}
-  ${exig && exig.length ? '' : `<div class="note" style="margin-bottom:14px">${ico('info',15)}<div>Esta câmera não tem EPI obrigatório configurado: a análise usa capacete, colete, óculos e luvas. Para valer alerta, marque os EPIs em <b>Câmeras › Configurar</b>.</div></div>`}
+
   <div class="epi-grade">
-    <div class="panel"><div class="panel-hd"><h3 id="epiTitulo">${camSel ? `Câmera ao vivo — ${esc(camSel.nome)}` : 'Câmera ao vivo'}</h3>
-        <span class="sub" id="epiQuando">analisando…</span></div>
+    <div class="panel"><div class="panel-hd"><h3 id="epiTitulo">${camSel ? esc(camSel.nome) : 'Câmera ao vivo'}</h3>
+        <span class="sub mono">${camSel ? esc(camSel.codigo) : ''}</span><span class="sp"></span>
+        <span class="epi-vivo" id="epiQuando">analisando…</span></div>
       <div class="panel-bd"><div class="epi-palco" id="epiPalco">
         <canvas id="epiFeed"></canvas><canvas id="epiSobre"></canvas>
-      </div><div class="epi-pessoas" id="epiPessoas"></div></div></div>
-    <div class="panel"><div class="panel-hd"><h3>Modelo corporal (IA)</h3>
-        <span class="sub">pessoa selecionada</span></div>
-      <div class="panel-bd"><div class="epi-corpo" id="epiCorpo"></div></div></div>
-    <div style="display:flex;flex-direction:column;gap:14px">
-      <div class="panel"><div class="panel-hd"><h3>Resultado da análise</h3></div><div class="panel-bd" id="epiRes"></div></div>
-      <div class="panel"><div class="panel-hd"><h3>Estatísticas do dia</h3></div><div class="panel-bd" id="epiDia"></div></div>
-    </div>
-  </div>`;
+      </div>
+      <div class="epi-exige"><span>${exig && exig.length ? 'Exigidos nesta câmera' : 'Sem EPI obrigatório — analisando o padrão'}</span>
+        ${usados.map(x => `<em>${esc(EPI_CURTO[x] || x)}</em>`).join('')}
+        ${exig && exig.length ? '' : `<span class="epi-exige-dica" title="Para valer alerta, marque os EPIs em Câmeras › Configurar.">${ico('info',13)}</span>`}</div>
+      <div class="epi-pessoas" id="epiPessoas"></div></div></div>
+
+    <div class="panel"><div class="panel-hd"><h3>Análise da pessoa</h3>
+        <span class="sub" id="epiPessoaSub">nenhuma pessoa</span></div>
+      <div class="panel-bd"><div id="epiRes"></div><div class="epi-corpo" id="epiCorpo"></div></div></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>EPI que mais falta hoje</h3>
+      <span class="sub">pessoas fora de conformidade, por item</span></div>
+    <div class="panel-bd" id="epiFaltas"></div></div>`;
 
   epiPintarDia(r.dia);
-  EPI.analise = {pessoas: [], exigidos: exig && exig.length ? exig : EPI_PADRAO};
+  EPI.analise = {pessoas: [], exigidos: usados};
   epiPintarPainel();
   if(camSel){
     FEED.register($('#epiFeed'), camSel, {zonas: false, boxes: false, hd: true, conter: true});
@@ -320,7 +380,7 @@ async function renderEpi(alvo){
     EPI.analise = null;
     epiDesenharCaixas();              // a foto aparece já, as caixas quando a análise voltar
     try{
-      EPI.analise = epiOrdenar(await API.epiAnalisar(arq, exig && exig.length ? exig : EPI_PADRAO));
+      EPI.analise = epiOrdenar(await API.epiAnalisar(arq, usados));
       EPI.pessoa = 0;
       $('#epiQuando').textContent = `${EPI.analise.pessoas.length} pessoa(s) na foto · escolha outra câmera para voltar ao vivo`;
       epiPintarPainel();

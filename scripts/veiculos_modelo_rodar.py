@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 import time
 from datetime import datetime
@@ -34,6 +33,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app import banco_direto  # noqa: E402
 
 LOG = RAIZ / "logs" / "veiculos_modelo.log"
 PASTA_SONDA = Path(settings.VEICULO_MARCA_MODELO_DIR).parent / "modelo_carro"
@@ -47,9 +47,10 @@ def log(msg: str) -> None:
         f.write(linha + "\n")
 
 
-def conectar() -> sqlite3.Connection:
-    c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1], timeout=30)
-    c.execute("pragma busy_timeout = 30000")
+def conectar():
+    c = banco_direto.conectar(timeout=30)
+    if not settings.usa_sqlite:
+        return c  # no PostgreSQL a coluna nasce com a tabela
     colunas = {r[1] for r in c.execute("pragma table_info(passagens_veiculo)")}
     if "vetor_modelo" not in colunas:
         # O servidor faz a mesma migração ao subir; ela é idempotente.
@@ -69,7 +70,7 @@ def _obs(texto) -> dict:
     return d if isinstance(d, dict) else {}
 
 
-def aplicar(c: sqlite3.Connection, pid: str, v: np.ndarray, obs: dict) -> bool:
+def aplicar(c, pid: str, v: np.ndarray, obs: dict) -> bool:
     from app.services.veiculos import modelo_fino
     marca, modelo, conf, motivo = modelo_fino.afirmar(v)
     if motivo:
@@ -81,7 +82,7 @@ def aplicar(c: sqlite3.Connection, pid: str, v: np.ndarray, obs: dict) -> bool:
     return bool(marca)
 
 
-def analisar_pendentes(c: sqlite3.Connection, lote: int) -> int:
+def analisar_pendentes(c, lote: int) -> int:
     from app.services import evidencias
     from app.services.veiculos import modelo_fino
     linhas = c.execute("""select id, recorte_key, observacoes from passagens_veiculo
@@ -108,12 +109,12 @@ def analisar_pendentes(c: sqlite3.Connection, lote: int) -> int:
     return feitas
 
 
-def rotulos_de_carro(c: sqlite3.Connection) -> int:
+def rotulos_de_carro(c) -> int:
     return c.execute("""select count(*) from rotulos_veiculo r join passagens_veiculo p on p.id = r.passagem_id
                         where r.marca <> '' and p.vetor_modelo is not null and p.vetor_modelo not in ('[]', 'null')""").fetchone()[0]
 
 
-def treinar_e_reaplicar(c: sqlite3.Connection) -> None:
+def treinar_e_reaplicar(c) -> None:
     from scripts import veiculos_treinar
     rel = veiculos_treinar.rodar("modelo_carro", simular=False)
     liberadas = [k for k, v in (rel.get("classes") or {}).items() if v.get("liberada")]
@@ -154,7 +155,7 @@ def main() -> None:
                 break
             if n == 0:
                 time.sleep(60)
-        except sqlite3.OperationalError as exc:
+        except banco_direto.ERROS_OCUPADO as exc:
             log(f"banco ocupado ({exc}); nova tentativa em 30 s")
             time.sleep(30)
     log("fim")

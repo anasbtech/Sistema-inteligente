@@ -11,8 +11,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from pydantic import BaseModel
+
 import numpy as np
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +35,7 @@ from app.services import biometrics, face_engine
 from app.tipos import como_utc
 
 router = APIRouter(prefix="/pessoas", tags=["Base biométrica"])
+log = __import__("logging").getLogger("seguranca.pessoas")
 
 
 def _saida(p: Pessoa, usuario: Usuario) -> PessoaOut:
@@ -260,6 +263,128 @@ async def conferencia(
         "faixa": {"de": settings.FACE_REVIEW_MIN, "ate": settings.FACE_THRESHOLD},
         "abre_camera_nova": sum(1 for i in itens if not i["camera_coberta"]),
     }
+
+
+def _filtro_sugestao(pessoa_id=None):
+    """Captura solta que o motor (ou a conciliação) acha que é desta pessoa."""
+    f = [Deteccao.tipo == TipoDeteccao.FACIAL, Deteccao.pessoa_id.is_(None),
+         Deteccao.pessoa_sugerida_id.isnot(None), Deteccao.revisado.is_(False),
+         Deteccao.similaridade >= settings.FACE_REVIEW_MIN, Deteccao.snapshot_key != ""]
+    if pessoa_id is not None:
+        f.append(Deteccao.pessoa_sugerida_id == pessoa_id)
+    return f
+
+
+@router.get("/sugestoes", summary="Fichas com rostos sugeridos aguardando confirmação")
+async def sugestoes(db: AsyncSession = Depends(get_db),
+                    usuario: Usuario = Depends(exige("biometrics"))):
+    """Uma linha por ficha: quantos rostos soltos parecem ser dela.
+
+    É a outra metade da conciliação (scripts/reconciliar_faces.py): o que
+    ela não teve certeza para vincular sozinha fica aqui, com a pessoa
+    sugerida, até alguém olhar.
+    """
+    linhas = (await db.execute(
+        select(Pessoa.id_biometrico, Pessoa.nome, Pessoa.sexo, func.count(Deteccao.id),
+               func.max(Deteccao.similaridade), func.max(Deteccao.ocorrido_em))
+        .join(Pessoa, Pessoa.id == Deteccao.pessoa_sugerida_id)
+        .where(*_filtro_sugestao(), Pessoa.ativo.is_(True))
+        .group_by(Pessoa.id_biometrico, Pessoa.nome, Pessoa.sexo)
+        .order_by(func.count(Deteccao.id).desc())
+    )).all()
+    return {"total": sum(n for *_, n, _, _ in linhas),
+            "fichas": [{"id_biometrico": i, "nome": n, "sexo": s.value if hasattr(s, "value") else s,
+                        "total": t, "similaridade_max": sm, "ultima": u}
+                       for i, n, s, t, sm, u in linhas]}
+
+
+@router.get("/{id_biometrico}/sugestoes", summary="Rostos sugeridos para uma ficha")
+async def sugestoes_da_pessoa(id_biometrico: str, request: Request,
+                              limite: int = Query(3000, ge=1, le=5000),
+                              db: AsyncSession = Depends(get_db),
+                              usuario: Usuario = Depends(exige("biometrics"))):
+    pessoa = (await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))).scalar_one_or_none()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
+    linhas = (await db.execute(
+        select(Deteccao.codigo, Deteccao.ocorrido_em, Deteccao.similaridade, Camera.nome, Camera.codigo)
+        .join(Camera, Camera.id == Deteccao.camera_id)
+        .where(*_filtro_sugestao(pessoa.id))
+        .order_by(Deteccao.similaridade.desc()).limit(limite)
+    )).all()
+    await audit.registrar(db, acao="CONSULTA_BIO", descricao="Rostos sugeridos para conferência",
+                          severidade="info", usuario=usuario, alvo=pessoa.id_biometrico, request=request)
+    return [{"codigo": c, "ocorrido_em": q, "similaridade": s, "camera": cn, "camera_codigo": cc}
+            for c, q, s, cn, cc in linhas]
+
+
+class DecisaoSugestoes(BaseModel):
+    aceitar: List[str] = []
+    recusar: List[str] = []
+
+
+@router.post("/{id_biometrico}/sugestoes/decidir", summary="Confirmar ou recusar rostos sugeridos")
+async def decidir_sugestoes(id_biometrico: str, dados: DecisaoSugestoes, request: Request,
+                            tarefas: BackgroundTasks,
+                            db: AsyncSession = Depends(get_db),
+                            usuario: Usuario = Depends(exige("biometrics", "edit"))):
+    """Aceitos entram na ficha como confirmados; os mais parecidos viram
+    amostras, para o reconhecimento ao vivo passar a acertar sozinho.
+    Recusados ficam como falso positivo e não voltam a ser sugeridos."""
+    pessoa = (await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico,
+                                                    Pessoa.ativo.is_(True)))).scalar_one_or_none()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
+    agora = datetime.now(timezone.utc)
+    validos = lambda cods: select(Deteccao).where(*_filtro_sugestao(pessoa.id), Deteccao.codigo.in_(cods))
+
+    aceitas = (await db.execute(validos(dados.aceitar))).scalars().unique().all() if dados.aceitar else []
+    recusadas = (await db.execute(validos(dados.recusar))).scalars().unique().all() if dados.recusar else []
+
+    # Até 5 dos aceitos, os mais parecidos, viram amostras: é o ângulo novo
+    # que faz a câmera reconhecer sozinha da próxima vez.
+    # Fica para depois da resposta: extrair o rosto espera o modelo facial,
+    # que está ocupado com as câmeras, e com 1.500 rostos a tela desistia
+    # antes de o vínculo — já gravado — ser confirmado.
+    melhores = [d.codigo for d in sorted(aceitas, key=lambda d: -(d.similaridade or 0))[:5]]
+    if melhores:
+        tarefas.add_task(_amostras_depois, pessoa.id, melhores)
+    for d in aceitas:
+        d.pessoa_id = pessoa.id
+        d.pessoa_sugerida_id = None
+        d.revisado, d.veredito, d.revisado_por, d.revisado_em = True, "Confirmado", usuario.id, agora
+        d.expurgo_em = None
+    for d in recusadas:
+        d.revisado, d.veredito, d.revisado_por, d.revisado_em = True, "Falso positivo", usuario.id, agora
+    await db.flush()
+
+    if aceitas:
+        pessoa.total_deteccoes = (await db.execute(
+            select(func.count()).select_from(Deteccao).where(Deteccao.pessoa_id == pessoa.id))).scalar_one()
+        ultima = max(aceitas, key=lambda d: d.ocorrido_em)
+        if pessoa.ultima_deteccao is None or ultima.ocorrido_em > pessoa.ultima_deteccao:
+            pessoa.ultima_deteccao = ultima.ocorrido_em
+            cam = await db.get(Camera, ultima.camera_id)
+            pessoa.ultima_camera = cam.nome if cam else pessoa.ultima_camera
+    await audit.registrar(
+        db, acao="BIO_TRIAGEM", severidade="warn", usuario=usuario, alvo=pessoa.id_biometrico,
+        descricao=f"Rostos sugeridos: {len(aceitas)} confirmado(s), {len(recusadas)} recusado(s)",
+        finalidade="Conferência de rostos sugeridos", request=request,
+        metadados={"aceitas": len(aceitas), "recusadas": len(recusadas), "amostras_pedidas": len(melhores)})
+    return {"id_biometrico": pessoa.id_biometrico, "confirmadas": len(aceitas),
+            "recusadas": len(recusadas), "amostras_pedidas": len(melhores)}
+
+
+async def _amostras_depois(pessoa_id, codigos: List[str]) -> None:
+    """Os melhores rostos confirmados viram amostras, fora da requisição."""
+    from app.database import db_context
+    try:
+        async with db_context() as db:
+            pessoa = await db.get(Pessoa, pessoa_id)
+            if pessoa is not None:
+                await _capturas_viram_amostras(db, pessoa, codigos, exigir_amostra=False)
+    except Exception:  # noqa: BLE001 — sem rosto legível: o vínculo já está feito
+        log.warning("Amostras dos rostos confirmados não extraídas", exc_info=True)
 
 
 @router.get("/desconhecidos", summary="Rostos sem candidato algum na base")
@@ -866,7 +991,8 @@ async def candidatos(
 
 
 @router.get("/{id_biometrico}/capturas", summary="Histórico de capturas da pessoa")
-async def capturas(id_biometrico: str, request: Request, limite: int = Query(50, ge=1, le=500),
+async def capturas(id_biometrico: str, request: Request, limite: int = Query(50, ge=1, le=5000),
+                   camera: Optional[str] = Query(None, description="Só as capturas desta câmera (código)"),
                    tipo: Optional[str] = Query(
                        None, pattern="^(rosto|corpo)$",
                        description="Filtra o histórico: `rosto` traz as identificações "
@@ -893,6 +1019,8 @@ async def capturas(id_biometrico: str, request: Request, limite: int = Query(50,
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
 
     filtros = [Deteccao.pessoa_id == pessoa.id]
+    if camera:
+        filtros.append(Deteccao.camera_id.in_(select(Camera.id).where(Camera.codigo == camera)))
     if tipo == "rosto":
         filtros.append(Deteccao.tipo == TipoDeteccao.FACIAL)
     elif tipo == "corpo":
@@ -1091,7 +1219,53 @@ async def trajetoria(
     }
 
 
-@router.get("/{id_biometrico}/face", summary="Rosto da pessoa, da captura mais recente")
+async def _captura_da_foto(db: AsyncSession, pessoa: Pessoa):
+    """A captura que serve de foto da ficha.
+
+    Antes era a mais recente — e bastava um rosto confundido ficar por último
+    para a ficha mostrar outra pessoa. Agora: a escolhida por alguém, se ainda
+    for desta pessoa; senão a mais confiável entre as recentes — confirmada
+    por uma pessoa primeiro, depois a de maior similaridade. Falso positivo
+    nunca entra (a revisão já o desvincula; o filtro cobre o legado).
+    """
+    base = [Deteccao.pessoa_id == pessoa.id, Deteccao.tipo == TipoDeteccao.FACIAL,
+            Deteccao.snapshot_key != "",
+            or_(Deteccao.veredito.is_(None), Deteccao.veredito != "Falso positivo")]
+    if pessoa.foto_deteccao:
+        escolhida = (await db.execute(
+            select(Deteccao).where(*base, Deteccao.codigo == pessoa.foto_deteccao)
+        )).scalars().unique().one_or_none()
+        if escolhida is not None:
+            return escolhida
+    recentes = (await db.execute(
+        select(Deteccao).where(*base).order_by(Deteccao.ocorrido_em.desc()).limit(300)
+    )).scalars().unique().all()
+    if not recentes:
+        return None
+    return max(recentes, key=lambda d: (d.veredito == "Confirmado", d.similaridade or 0.0))
+
+
+@router.put("/{id_biometrico}/foto", summary="Escolher a captura que é a foto da ficha")
+async def escolher_foto(id_biometrico: str, request: Request, deteccao: str = Query("", max_length=24),
+                        db: AsyncSession = Depends(get_db),
+                        usuario: Usuario = Depends(exige("biometrics", "edit"))):
+    """`deteccao` vazio volta à escolha automática."""
+    pessoa = (await db.execute(select(Pessoa).where(Pessoa.id_biometrico == id_biometrico))).scalar_one_or_none()
+    if pessoa is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
+    if deteccao:
+        det = (await db.execute(select(Deteccao).where(Deteccao.codigo == deteccao))).scalars().unique().one_or_none()
+        if det is None or det.pessoa_id != pessoa.id or det.tipo != TipoDeteccao.FACIAL or not det.snapshot_key:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Só um rosto vinculado a esta ficha, com recorte guardado, pode ser a foto.")
+    pessoa.foto_deteccao = deteccao
+    await audit.registrar(db, acao="PESSOA_EDIT",
+                          descricao=f"Foto da ficha: {deteccao or 'automática'}",
+                          severidade="info", usuario=usuario, alvo=pessoa.id_biometrico, request=request)
+    return {"id_biometrico": pessoa.id_biometrico, "foto_deteccao": deteccao}
+
+
+@router.get("/{id_biometrico}/face", summary="Rosto da pessoa, da captura mais confiável")
 async def face(id_biometrico: str, token: str = Query(..., description="Access token JWT"),
                db: AsyncSession = Depends(get_db)):
     """O rosto que a ficha mostra, para quem revisa reconhecer de quem se trata.
@@ -1117,16 +1291,7 @@ async def face(id_biometrico: str, token: str = Query(..., description="Access t
     if pessoa is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Registro não encontrado.")
 
-    det = (
-        await db.execute(
-            select(Deteccao)
-            .where(Deteccao.pessoa_id == pessoa.id,
-                   Deteccao.tipo == TipoDeteccao.FACIAL,
-                   Deteccao.snapshot_key != "")
-            .order_by(Deteccao.ocorrido_em.desc())
-            .limit(1)
-        )
-    ).scalars().unique().one_or_none()
+    det = await _captura_da_foto(db, pessoa)
     if det is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sem captura guardada desta pessoa.")
 
@@ -1135,4 +1300,4 @@ async def face(id_biometrico: str, token: str = Query(..., description="Access t
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Recorte já expurgado.")
 
     return Response(content=imagem, media_type="image/jpeg",
-                    headers={"Cache-Control": "private, max-age=300"})
+                    headers={"Cache-Control": "private, max-age=60"})

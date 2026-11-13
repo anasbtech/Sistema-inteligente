@@ -22,6 +22,7 @@ from app.config import settings
 
 log = logging.getLogger("seguranca.notificacoes")
 
+MARCA = "AizonVMS"
 INSTITUICAO = "Centro Integrado de Videomonitoramento"
 
 # Texto puro: o que leem os clientes que não abrem HTML, e o que o filtro de
@@ -29,7 +30,7 @@ INSTITUICAO = "Centro Integrado de Videomonitoramento"
 MODELO = """\
 {saudacao},
 
-Recebemos um pedido de redefinição de senha para a sua conta no SEGURANÇA.
+Recebemos um pedido de redefinição de senha para a sua conta no AizonVMS.
 
 Para definir uma nova senha, acesse o endereço abaixo:
 
@@ -42,7 +43,7 @@ valendo. Por segurança, comunique o administrador do sistema — a solicitaçã
 já foi registrada na trilha de auditoria.
 
 Atenciosamente,
-{instituicao}
+AizonVMS · {instituicao}
 
 Mensagem automática. Não responda a este e-mail.
 """
@@ -51,7 +52,7 @@ Mensagem automática. Não responda a este e-mail.
 MODELO_PRIMEIRO_ACESSO = """\
 {saudacao},
 
-Sua conta no SEGURANÇA foi criada. Para definir sua senha e fazer o
+Sua conta no AizonVMS foi criada. Para definir sua senha e fazer o
 primeiro acesso, acesse o endereço abaixo:
 
 {link}
@@ -64,7 +65,7 @@ Se o link expirar antes de ser usado, peça ao administrador que emita um
 novo — a conta continua ativa.
 
 Atenciosamente,
-{instituicao}
+AizonVMS · {instituicao}
 
 Mensagem automática. Não responda a este e-mail.
 """
@@ -79,9 +80,9 @@ def _html(*, titulo: str, saudacao: str, paragrafos: list[str], botao: str,
     carrega deixa um quadro vazio no topo. O botão é uma célula de tabela com
     cor de fundo, que é o único botão que o Outlook desenha.
 
-    O endereço vai também por extenso, logo abaixo do botão: há quem não
-    clique em botão de e-mail por desconfiança, e há cliente que não o mostra.
-    Tudo que vem de fora (nome, link) é escapado.
+    Só o botão leva ao link: o endereço por extenso saiu do HTML a pedido
+    (11/11/2026). Quem não abre HTML recebe a versão em texto, que traz o
+    endereço inteiro. Tudo que vem de fora (nome, link) é escapado.
     """
     e = html.escape
     corpo = "".join(
@@ -103,7 +104,7 @@ def _html(*, titulo: str, saudacao: str, paragrafos: list[str], botao: str,
 <tr><td align="center" style="padding:32px 16px">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#FFFFFF;border-radius:10px;overflow:hidden;border:1px solid #DDE4EB">
     <tr><td style="background:#0B121A;padding:22px 32px;border-bottom:3px solid #35A7DE">
-      <div style="font-size:18px;font-weight:700;letter-spacing:3px;color:#FFFFFF">SEGURANÇA</div>
+      <div style="font-size:20px;font-weight:700;letter-spacing:.5px;color:#FFFFFF">Aizon<span style="color:#35A7DE">VMS</span></div>
       <div style="font-size:12px;letter-spacing:.5px;color:#9BB0C3;margin-top:4px">{e(INSTITUICAO)}</div>
     </td></tr>
     <tr><td style="padding:32px 32px 8px">
@@ -126,14 +127,11 @@ def _html(*, titulo: str, saudacao: str, paragrafos: list[str], botao: str,
         </td></tr>
       </table>
     </td></tr>
-    <tr><td style="padding:16px 32px 24px">
-      <p style="margin:0;font-size:12px;line-height:18px;word-break:break-all"><a href="{e(link, quote=True)}" style="color:#1F7FB8;text-decoration:underline">{e(link)}</a></p>
-    </td></tr>
-    <tr><td style="padding:0 32px 28px">
+    <tr><td style="padding:16px 32px 28px">
       <p style="margin:0;padding-top:20px;border-top:1px solid #E3E9EF;font-size:13px;line-height:20px;color:#4A5F73">{nota}</p>
     </td></tr>
     <tr><td style="background:#F4F7FA;padding:18px 32px;border-top:1px solid #E3E9EF">
-      <p style="margin:0;font-size:12px;line-height:18px;color:#6B7F92">Atenciosamente,<br><b style="color:#33475B">{e(INSTITUICAO)}</b></p>
+      <p style="margin:0;font-size:12px;line-height:18px;color:#6B7F92">Atenciosamente,<br><b style="color:#33475B">{e(MARCA)} · {e(INSTITUICAO)}</b></p>
       <p style="margin:10px 0 0;font-size:11px;line-height:16px;color:#8A9BAB">Mensagem automática. Não responda a este e-mail.</p>
     </td></tr>
   </table>
@@ -232,7 +230,7 @@ async def enviar_link_recuperacao(email: str, nome: str, link: str, minutos: int
     saudacao = f"Prezado(a) {nome}" if nome else "Prezado(a)"
     await _enviar_email(
         email,
-        "SEGURANÇA — redefinição de senha",
+        f"{MARCA} — redefinição de senha",
         MODELO.format(saudacao=saudacao, link=link, minutos=minutos,
                       instituicao=INSTITUICAO),
         _html(
@@ -240,7 +238,7 @@ async def enviar_link_recuperacao(email: str, nome: str, link: str, minutos: int
             saudacao=saudacao,
             paragrafos=[
                 "Recebemos um pedido de redefinição de senha para a sua conta "
-                "no SEGURANÇA. Para definir uma nova senha, clique no botão abaixo.",
+                f"no {MARCA}. Para definir uma nova senha, clique no botão abaixo.",
             ],
             botao="Redefinir senha",
             link=link, minutos=minutos,
@@ -264,14 +262,14 @@ async def enviar_primeiro_acesso(email: str, nome: str, link: str,
     saudacao = f"Prezado(a) {nome}" if nome else "Prezado(a)"
     await _enviar_email(
         email,
-        "SEGURANÇA — primeiro acesso",
+        f"{MARCA} — primeiro acesso",
         MODELO_PRIMEIRO_ACESSO.format(saudacao=saudacao, link=link,
                                       minutos=minutos, instituicao=INSTITUICAO),
         _html(
-            titulo="Bem-vindo(a) ao SEGURANÇA",
+            titulo=f"Bem-vindo(a) ao {MARCA}",
             saudacao=saudacao,
             paragrafos=[
-                "Sua conta no SEGURANÇA foi criada. Para definir sua senha e "
+                f"Sua conta no {MARCA} foi criada. Para definir sua senha e "
                 "fazer o primeiro acesso, clique no botão abaixo.",
                 "A senha que você escolher não é conhecida por mais ninguém, "
                 "nem pelo administrador que criou a conta.",

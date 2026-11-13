@@ -235,6 +235,16 @@ async def _criar_alerta(db: AsyncSession, det: Deteccao, cam: Camera,
                 "não vê o objeto mudar de mão — confirme na imagem antes de "
                 "qualquer ação."
             )
+        elif det.classe == "sinal_socorro":
+            # Possível, e não certo: a mão fez a sequência do Signal for Help,
+            # mas o mesmo movimento pode sair de quem conta nos dedos ou ajeita
+            # algo na mão. O operador olha o vídeo da ocorrência no Guardian.
+            detalhe = (
+                f"A IA viu em {cam.nome} a sequência do gesto Signal for Help "
+                f"({(det.confianca or 0) * 100:.0f}% de confiança). {extra} "
+                "Confirme na imagem e no vídeo da ocorrência (Aizon Guardian) "
+                "antes de qualquer ação — o sistema não confirma o pedido sozinho."
+            ).replace("  ", " ")
         else:
             detalhe = (
                 f"Evento comportamental por {det.duracao_s or 0}s envolvendo "
@@ -626,6 +636,15 @@ async def processar_deteccao(db: AsyncSession, dados: DeteccaoIn,
                                  notificar=publicar_evento,
                                  zona_nome=dados.zona_nome or "",
                                  teste=teste, extra=dados.detalhe_extra)
+
+    # Aizon Guardian: sinal de risco em câmera com o Guardian ligado entra
+    # numa ocorrência (ou abre uma). Nunca derruba o registro da detecção.
+    if dados.tipo == TipoDeteccao.ACAO and getattr(cam, "guardian", False) and not teste:
+        try:
+            from app.services.guardian.correlacao import registrar_sinal
+            await registrar_sinal(db, det, cam, alerta, dados.detalhe_extra or "")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Guardian: sinal de %s não correlacionado: %s", det.codigo, exc)
 
     if publicar_evento:
         await publicar("deteccao", {
@@ -1051,6 +1070,8 @@ async def revisar(codigo: str, dados: RevisaoIn, request: Request,
         if pessoa is not None:
             desvinculada = pessoa.id_biometrico
             pessoa.total_deteccoes = max(0, (pessoa.total_deteccoes or 0) - 1)
+            if (pessoa.foto_deteccao or "") == det.codigo:
+                pessoa.foto_deteccao = ""      # a foto da ficha não pode ser de outra pessoa
         det.pessoa_sugerida_id = det.pessoa_id
         det.pessoa_id = None
         det.pessoa = None        # a resposta não pode devolver a pessoa antiga

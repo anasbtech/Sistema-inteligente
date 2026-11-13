@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import random
-import sqlite3
 import sys
 from collections import Counter
 from pathlib import Path
@@ -31,6 +30,7 @@ sys.path.insert(0, str(RAIZ))
 import numpy as np  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app import banco_direto  # noqa: E402
 
 PASTA = RAIZ / "data" / "cadastro_triagem"
 # Ligação por MÉDIA (09/11/2026). A ligação por um único par parecido, com
@@ -123,11 +123,13 @@ def main():
         brutos[0] = [0]
 
     # Cadastrados: amostras de quem já tem ficha.
-    c = sqlite3.connect(settings.DATABASE_URL.split(":///")[-1])
-    amostras = [json.loads(e) if isinstance(e, str) else e for (e,) in c.execute(
-        "select a.embedding from amostras_faciais a join pessoas p on p.id=a.pessoa_id where p.ativo=1")]
-    A = np.array(amostras, np.float32)
-    A /= np.linalg.norm(A, axis=1, keepdims=True)
+    c = banco_direto.conectar()
+    linhas_a = c.execute("select a.embedding, p.id_biometrico, p.nome from amostras_faciais a "
+                         "join pessoas p on p.id=a.pessoa_id where p.ativo").fetchall()
+    A = np.array([json.loads(e) if isinstance(e, str) else e for (e, _, _) in linhas_a], np.float32)
+    dono_a = [(i, n) for (_, i, n) in linhas_a]
+    if len(A):
+        A /= np.linalg.norm(A, axis=1, keepdims=True)
     existentes = [n for (n,) in c.execute("select nome from pessoas")]
 
     grupos, motivos = [], Counter()
@@ -154,13 +156,17 @@ def main():
         sexos = d["sexo"][idx[m]]
         maioria = Counter(sexos.tolist()).most_common(1)[0]
         centro = V[m].mean(0); centro /= np.linalg.norm(centro)
-        if len(A) and float((A @ centro).max()) >= JA_CADASTRADO:
-            motivos["parece cadastrado"] += 1
-            continue
+        ja = None
+        if len(A):
+            sims = A @ centro
+            k = int(sims.argmax())
+            if float(sims[k]) >= JA_CADASTRADO:
+                motivos["parece cadastrado (vai para vínculo)"] += 1
+                ja = {"id_biometrico": dono_a[k][0], "nome": dono_a[k][1], "similaridade": round(float(sims[k]), 3)}
         coesao = float((V[m] @ centro).mean())
         grupos.append({"membros": m, "sexo": "M" if maioria[0] == 1 else "F",
                        "sexo_conf": maioria[1] / len(m),
-                       "coesao": coesao, "centro": centro})
+                       "coesao": coesao, "centro": centro, "ja": ja})
 
     # Dois grupos muito parecidos podem ser a mesma pessoa: fica um só aviso,
     # e não se juntam sozinhos (a prévia mostra os dois lado a lado).
@@ -172,6 +178,8 @@ def main():
                 g["parecidos"].append(j); grupos[j]["parecidos"].append(i)
 
     grupos.sort(key=lambda g: -len(g["membros"]))
+    # Pessoas novas primeiro; os vínculos a fichas existentes depois.
+    grupos.sort(key=lambda g: (g["ja"] is not None, -len(g["membros"])))
     nomes = nomes_ficticios([g["sexo"] for g in grupos], existentes)
     cams = dict(c.execute("select id, codigo from cameras"))
     saida = []
@@ -187,6 +195,7 @@ def main():
             "cameras": sorted({cams.get(x, "?") for x in d["camera"][ii]}),
             "codigos": [str(x) for x in d["codigos"][ordem]],
             "parecidos_com": g["parecidos"],
+            "ja_cadastrado": g["ja"],
         })
     # Troca atômica: a tela de aprovação lê este arquivo a qualquer momento, e
     # gravá-lo por cima deixava uma janela em que ela leria metade.

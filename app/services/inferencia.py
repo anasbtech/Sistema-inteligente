@@ -431,6 +431,13 @@ class Inferencia:
         anterior = self._ultimas_caixas.get(codigo)
         if anterior is not None:
             self._medir_intervalo(codigo, agora - anterior["em"])
+        # O mapa de calor histórico soma presença por volta da análise: são as
+        # caixas que a análise afirmou, antes de o seguimento movê-las.
+        try:
+            from app.services.ocupacao import acumulador
+            acumulador.registrar(codigo, caixas, "geral", agora)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("%s: ocupação não somada: %s", codigo, exc)
         na_tela = self._para_a_tela(caixas)
         if quadro is not None and settings.INFERENCIA_SEGUIMENTO and                 any(c.codigo == codigo for c, _ in self._camaras_em_tela()):
             seguidor = self._seguidor_de(codigo)

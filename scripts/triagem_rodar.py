@@ -46,6 +46,19 @@ def agrupar() -> None:
         log(f"grupos atualizados: {saida}")
     else:
         log(f"agrupamento falhou ({r.returncode}): {(r.stderr or '')[-400:]}")
+    # Rosto solto que já tem ficha: entra nela (com certeza) ou vai para
+    # aprovação (com dúvida). Ver scripts/reconciliar_faces.py.
+    r = subprocess.run([sys.executable, "-m", "scripts.reconciliar_faces", "--aplicar"], cwd=RAIZ,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"})
+    fim = [l for l in (r.stdout or "").splitlines() if l.startswith("gravado")]
+    log(f"conciliação: {fim[-1] if fim else 'falhou ' + (r.stderr or '')[-300:]}")
+    # E a galeria aprende com o que foi confirmado desde a última volta.
+    r = subprocess.run([sys.executable, "-m", "scripts.treinar_faces", "--aplicar"], cwd=RAIZ,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"})
+    fim = [l for l in (r.stdout or "").splitlines() if l.startswith("gravado")]
+    log(f"treino da galeria: {fim[-1] if fim else 'falhou ' + (r.stderr or '')[-300:]}")
 
 
 def main() -> None:

@@ -107,6 +107,11 @@ def _colunas_novas() -> list[tuple[str, str, str, str | None]]:
         ("rotulos_veiculo", "tipo", "VARCHAR(20) DEFAULT ''", None),
         # Nulo nas antigas: o analisador de marca/modelo as pega na fila.
         ("passagens_veiculo", "vetor_modelo", "JSON", None),
+        # Desligado em todas: o Guardian liga câmera a câmera.
+        ("cameras", "guardian", "BOOLEAN DEFAULT 0", None),
+        # Vazio em todas: sem escolha humana, a ficha mostra o rosto mais
+        # confiável que o sistema tem dela.
+        ("pessoas", "foto_deteccao", "VARCHAR(24) DEFAULT ''", None),
     ]
 
 
@@ -137,6 +142,18 @@ async def acrescentar_colunas(conn) -> int:
 
 async def preparar_banco(reset: bool) -> bool:
     """Cria o schema e semeia. Devolve True se semeou agora."""
+    from app.database import engine
+
+    try:
+        return await _preparar_banco(reset)
+    finally:
+        # Este laço de eventos termina aqui e o servidor sobe em outro. No
+        # PostgreSQL, conexão que fica no pool presa ao laço antigo quebra
+        # ("Event loop is closed") quando o servidor tenta reaproveitá-la.
+        await engine.dispose()
+
+
+async def _preparar_banco(reset: bool) -> bool:
     from sqlalchemy import func, select
 
     from app.config import settings
@@ -328,20 +345,6 @@ def abrir_quiosque(url: str, atraso: float = 2.0) -> bool:
 
 
 def ceder_a_tela() -> None:
-    """Põe o servidor abaixo do navegador na fila da CPU (Windows).
-
-    A IA analisa as câmeras sem parar e mantém os 8 núcleos em 100%. Na mesma
-    prioridade, o navegador disputava a CPU com ela: o login que o servidor
-    responde em 0,25 s levava 2,6 s para aparecer na tela, e o mosaico
-    engasgava. Abaixo do normal, a IA continua com toda a CPU que sobra — que
-    é quase toda —, mas a tela, o vídeo e o mouse passam na frente.
-
-    Desligado por padrão (liga com SEGURANCA_PRIORIDADE_BAIXA=1): medido em
-    05/11/2026, com o mosaico 4x4 aberto o navegador passa na frente também
-    da análise da tela, que foi de 1,2-2,4 s para 4-8 s por câmera — e 14 das
-    16 câmeras ficaram sem caixa em 40 s. Caixa faltando é pior que login
-    lento.
-    """
     if sys.platform != "win32":
         return
     try:

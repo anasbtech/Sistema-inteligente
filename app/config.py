@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = ""          # vazio: usa SMTP_USER
-    SMTP_FROM_NOME: str = "SEGURANÇA"
+    SMTP_FROM_NOME: str = "AizonVMS"
     SMTP_STARTTLS: bool = True   # 587 usa STARTTLS; 465 é TLS direto
     SMTP_TIMEOUT: int = 20
 
@@ -221,6 +221,12 @@ class Settings(BaseSettings):
     # `deteccoes._rosto_confirmado`). Sem isso, nuca e luva viravam o José.
     FACE_CONFIRMAR_NO_RECORTE: bool = True
     FACE_DET_SIZE: int = 640
+    # Onde o reconhecimento facial roda. "auto" usa o vídeo integrado Intel
+    # pelo OpenVINO quando ele existe (o mesmo do detector de objetos), e o
+    # onnxruntime na CPU quando não. Medido em 13/11/2026 na CAM-016, 4
+    # rostos: 3.758 ms na CPU, 1.541 ms no vídeo integrado, vetores iguais.
+    # "openvino-gpu", "openvino-cpu" e "onnxruntime" forçam um motor.
+    FACE_MOTOR: str = "auto"
 
     # --- Cobertura do template por câmera --------------------------------
     # A busca 1:N compara contra CADA amostra e fica com a melhor (veja
@@ -1048,6 +1054,23 @@ class Settings(BaseSettings):
     # Marca e modelo: só com modelo treinado e validado (scripts/veiculos_*).
     # A pasta guarda o modelo exportado, os rótulos e o piso por classe.
     VEICULO_MARCA_MODELO_DIR: str = str(RAIZ / "models" / "veiculos" / "marca_modelo")
+
+    # --- Aizon Guardian (app/services/guardian) -------------------------
+    # Liga o laço do gesto Signal for Help nas câmeras com `guardian`. A
+    # correlação dos sinais de trajetória (agressão, queda, fuga) vale mesmo
+    # com ele desligado, porque esses sinais já vêm da análise de ações.
+    GUARDIAN_ATIVO: bool = True
+    GUARDIAN_MODELO_MAOS: str = str(RAIZ / "models" / "guardian" / "hand_landmarker.task")
+    GUARDIAN_FPS: float = 4.0
+    # Pessoa menor que isto (altura da caixa) não tem mão com pixels para o
+    # gesto: nem é avaliada. Mais de N pessoas por quadro, só as maiores.
+    GUARDIAN_PESSOA_MIN_PX: int = 150
+    GUARDIAN_PESSOAS_POR_QUADRO: int = 4
+    # Sinais na mesma câmera dentro desta janela viram a mesma ocorrência.
+    GUARDIAN_JANELA_S: float = 180.0
+    GUARDIAN_CLIPE_ANTES_S: float = 8.0
+    GUARDIAN_CLIPE_DEPOIS_S: float = 6.0
+    GUARDIAN_CHAVE: str = str(RAIZ / ".secrets" / "guardian.key")
 
     # --- Retenção / privacidade -----------------------------------------
     RETENTION_DAYS_UNMATCHED: int = 90

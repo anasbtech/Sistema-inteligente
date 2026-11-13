@@ -108,6 +108,7 @@ const ROTULO_ACAO_UI = {
   fora_de_horario:'Entrada em horário não permitido',
   veiculo_proibido:'Veículo em área proibida',
   epi_ausente:'EPI obrigatório ausente',
+  sinal_socorro:'Possível sinal de socorro (Signal for Help)',
   arma_detectada:'Detecção de arma', fumaca:'Fumaça'
 };
 const SEVERIDADE = ['', 'Informativo', 'Baixa', 'Média', 'Crítica'];
@@ -392,6 +393,9 @@ function pintarFaces(raiz){
    O template continua por baixo: quem ainda não foi capturado fica com o
    esquema, que não finge ser fotografia de alguém. A imagem é sempre de uma
    captura — a foto do cadastro é descartada quando o template sai dela. */
+/* Versão da foto de cada ficha: muda quando alguém escolhe outra, e o
+   navegador não reaproveita a imagem antiga do cache. */
+const FACE_VER = {};
 function carregarFace(canvas, idBiometrico){
   if(!idBiometrico || !API.access) return;
   const img = new Image();
@@ -399,7 +403,7 @@ function carregarFace(canvas, idBiometrico){
                                     ...medidaCSS(canvas));
   img.onerror = () => {};   // sem captura guardada: fica o template
   img.src = `${API.base}/pessoas/${encodeURIComponent(idBiometrico)}/face`
-          + `?token=${encodeURIComponent(API.access)}`;
+          + `?token=${encodeURIComponent(API.access)}${FACE_VER[idBiometrico] ? '&v=' + FACE_VER[idBiometrico] : ''}`;
 }
 /* Busca o recorte guardado da captura e o desenha sobre o canvas.
 

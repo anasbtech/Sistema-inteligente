@@ -1,11 +1,3 @@
-#! python3.13
-"""Analisa os rostos da triagem e monta os grupos para a tela de aprovação.
-
-Dê duplo clique ao final do dia, com o sistema desligado: sem o sistema ao
-vivo disputando a máquina, termina em ~2-3 h (ligado, ~18 h). Pode fechar e
-abrir de novo: continua de onde parou. Se já houver uma análise rodando, esta
-não começa. O andamento fica em data/cadastro_triagem/extrair.log.
-"""
 import os
 import subprocess
 import sys

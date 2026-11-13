@@ -25,13 +25,14 @@ from app.database import MemoriaVolatil, close_connections, db_context, engine, 
 from app.routers import (
     alertas, auditoria, auth, cameras, configuracao, deteccoes, pessoas, stream,
     triagem_cadastro, usuarios, epi as rotas_epi, veiculos as rotas_veiculos,
-    mapa_calor,
+    mapa_calor, guardian as rotas_guardian,
 )
 from app.services import video
 from app.services.configuracao import carregar as carregar_configuracao
 from app.services.events import gerenciador
 from app.services.inferencia import inferencia
 from app.services.veiculos.servico import servico as servico_veicular
+from app.services.guardian.servico import servico as servico_guardian
 from app.services.retencao import retencao
 from app.services.simulador import simulador
 
@@ -72,11 +73,17 @@ async def ciclo_de_vida(app: FastAPI):
     # com o simulador: veículo real misturado a sorteado não se distingue.
     if settings.VEICULO_ATIVO and (settings.INFERENCIA or not settings.SIMULADOR):
         await servico_veicular.iniciar()
+    # Guardian: o laço do gesto precisa das pessoas que a análise geral acha.
+    if settings.GUARDIAN_ATIVO and settings.INFERENCIA:
+        await servico_guardian.iniciar()
 
     # Depois dos motores: ele consulta o banco e, se estiver ligado, apaga.
     # Mesmo desligado avisa quanto já passou do prazo — material vencido
     # acumulando em silêncio é o que se quer deixar de ter.
     await retencao.iniciar()
+    # Mapa de calor histórico: grava a cada minuto a ocupação que a análise somou.
+    from app.services.ocupacao import acumulador as ocupacao
+    await ocupacao.iniciar()
 
     # Chave sorteada morre com o processo: no próximo reinício toda sessão cai
     # e todo link de redefinição pendente passa a ser recusado. Em
@@ -118,7 +125,13 @@ async def ciclo_de_vida(app: FastAPI):
     await retencao.parar()
     await simulador.parar()
     await servico_veicular.parar()
+    await servico_guardian.parar()
     await inferencia.parar()
+    try:
+        from app.services.ocupacao import acumulador as ocupacao
+        await ocupacao.parar()        # depois dos motores: o último minuto vai para o banco
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Ocupação do último minuto não gravada: %s", exc)
     # Depois dos motores e antes do banco: cada leitor RTSP é uma thread com
     # uma conexão aberta na câmera, e `video.encerrar_todos` existia sem
     # ninguém chamar. Sem isto, encerrar o servidor deixava as 24 conexões
@@ -269,6 +282,7 @@ app.include_router(stream.router)
 app.include_router(rotas_epi.router)
 app.include_router(rotas_veiculos.router)
 app.include_router(mapa_calor.router)
+app.include_router(rotas_guardian.router)
 
 # --- Interface ---
 web.montar_estaticos(app)

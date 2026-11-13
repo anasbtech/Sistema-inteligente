@@ -66,30 +66,39 @@ function veicPlaca(p){
 function veicAoVivo(d){
   if(!d || d.camera_codigo !== VEIC.cam) return;
   VEIC.emCena = d.caixas || [];
+  const n = $('#veicEmCenaN'); if(n) n.textContent = fmtNum(VEIC.emCena.length);
   const box = $('#veicCena');
   if(!box) return;
   box.innerHTML = VEIC.emCena.length ? VEIC.emCena.map(c => `
     <div class="veic-item">
       <span class="veic-id">#${c.track_id}</span>
-      <div><b>${esc(VEIC_ROT_CAT[c.classe] || c.classe)}</b> <span class="veic-conf">${veicPct(c.confianca)}</span>
+      <div><b>${esc(VEIC_ROT_CAT[c.classe] || c.classe)}</b>
         <div class="veic-sub">${[c.cor, c.marca ? `${c.marca} ${c.modelo || ''}` : '', c.placa]
           .filter(Boolean).map(esc).join(' · ') || 'identificação ao fim da passagem'}</div></div>
+      <span class="veic-conf mono">${veicPct(c.confianca)}</span>
     </div>`).join('') : vazio('car', 'Nenhum veículo em cena.', '');
 }
 
-function veicModelosHTML(m, rotulados){
-  const linha = (nome, s) => {
-    if(!s.treinado) return `<dt>${nome}</dt><dd>aguardando rótulos — nada é afirmado ainda</dd>`;
-    const r = s.relatorio || {};
-    const prec = r.precisao_validacao != null ? ` · precisão medida ${Math.round(r.precisao_validacao * 100)}%` : '';
-    return `<dt>${nome}</dt><dd>${s.liberadas.length ? esc(s.liberadas.join(', ')) : 'nenhuma classe liberada'}${prec}</dd>`;
+/* Um modelo por linha: o que já está liberado e quanto acertou na validação,
+   com a régua de 95% — abaixo dela a classe não é afirmada na tela. */
+function veicModelosHTML(m){
+  const linha = (nome, icone, s, rotulo) => {
+    const r = (s && s.relatorio) || {};
+    const prec = r.precisao_validacao;
+    const lib = ((s && s.liberadas) || []).map(rotulo || (x => x));
+    const estado = !s || !s.treinado ? ['c-gray', 'aguardando rótulos']
+                 : lib.length ? ['c-green', `${lib.length} liberada(s)`] : ['c-amber', 'nada liberado'];
+    return `<div class="veic-mod">
+      <div class="veic-mod-hd"><span class="cf-gico">${ico(icone, 14)}</span><b>${nome}</b><span class="sp"></span>
+        <span class="chip ${estado[0]}">${estado[1]}</span></div>
+      ${prec != null ? fcSimilaridade(prec, 0.95, prec >= 0.95) : '<div class="veic-sub">sem medição ainda — nada é afirmado</div>'}
+      ${lib.length ? `<div class="veic-mod-lib">${lib.map(x => `<em>${esc(x)}</em>`).join('')}</div>` : ''}
+    </div>`;
   };
-  const tipo = m.tipo ? linha('Tipo', {...m.tipo, liberadas: (m.tipo.liberadas || []).map(t => VEIC_ROT_CAT[t] || t)}) : '';
-  return `<dl class="kv">${tipo}${linha('Cor', m.cor)}${linha('Marca/modelo', m.marca_modelo)}
-    <dt>Rotulados</dt><dd>${fmtNum(rotulados)} veículo(s)</dd></dl>
-    <div class="note" style="margin-top:12px">${ico('info',15)}<div>Tipo, cor e marca/modelo só aparecem quando a
-    classe passou de 95% de precisão na validação. Rotule veículos na ficha (clique numa linha do histórico)
-    e rode <code>py -3.13 -m scripts.veiculos_treinar</code>.</div></div>`;
+  return `${m.tipo ? linha('Tipo', 'car', m.tipo, t => VEIC_ROT_CAT[t] || t) : ''}
+    ${linha('Cor', 'eye', m.cor)}
+    ${linha('Marca / modelo', 'search', m.marca_modelo)}
+    <p class="fc-nota cf-nota" title="Rotule veículos na ficha (clique numa linha do histórico) e rode py -3.13 -m scripts.veiculos_treinar.">${ico('info',13)}<span>Só aparece na tela a classe que passou de <b>95%</b> de precisão na validação.</span></p>`;
 }
 
 async function renderVeiculos(alvo){
@@ -102,45 +111,64 @@ async function renderVeiculos(alvo){
   const camObj = (APP.cameras || []).find(c => c.codigo === VEIC.cam);
   const f = VEIC.filtro;
   const vivo = camInfo && camInfo.ao_vivo;
+  const ligadas = cams.filter(c => c.inteligencia_veicular).length;
+  const m = est.modelos || {};
+  const liberadas = ['tipo', 'cor', 'marca_modelo'].filter(k => m[k] && (m[k].liberadas || []).length).length;
+  const k = (cls, lbl, icone, val, sub, extra) => `<div class="kpi ${cls}">
+    <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+    <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></div>`;
 
   alvo.innerHTML = `
-  <div class="sec-hd"><h2>Inteligência veicular</h2><span class="sp"></span>
+  <div class="sec-hd"><h2>Inteligência veicular</h2><span class="cm-sub">veículos rastreados, cor, marca/modelo e placa</span><span class="sp"></span>
     <div class="toolbar">
       <select class="inp" id="veicCam">${cams.map(c => `<option value="${esc(c.codigo)}" ${c.codigo === VEIC.cam ? 'selected' : ''}>
         ${esc(c.codigo)} · ${esc(c.nome)}${c.inteligencia_veicular ? '' : ' · desligada'}</option>`).join('')}</select>
     </div></div>
+
+  <div class="dash-grid dash-kpis">
+    ${k('', 'Passagens hoje', 'car', fmtNum(est.passagens_hoje || 0), 'um registro por veículo, não por quadro', dashBarra(est.passagens_hoje ? 1 : 0, 'var(--acc)'))}
+    ${k('k-green', 'Em cena agora', 'eye', `<span id="veicEmCenaN">0</span>`, camObj ? esc(camObj.nome) : 'nenhuma câmera')}
+    ${k('k-violet', 'Veículos rotulados', 'check', fmtNum(est.rotulados || 0), 'conferidos por uma pessoa, usados no treino', dashBarra(Math.min(1, (est.rotulados || 0) / 200), 'var(--violet)'))}
+    ${k('k-amber', 'Câmeras com rastreio', 'cam', `${ligadas}<small>/${cams.length}</small>`, `${liberadas} de 3 identificações liberadas`, dashBarra(cams.length ? ligadas / cams.length : 0, 'var(--amber)'))}
+  </div>
+
   ${!cams.length ? `<div class="note" style="margin-bottom:14px">${ico('info',15)}<div>Nenhuma câmera marcada como
      <b>Alcança via, pátio ou garagem</b>. Marque em Câmeras › Configurar.</div></div>` : ''}
   ${camInfo && !camInfo.inteligencia_veicular ? `<div class="note" style="margin-bottom:14px">${ico('info',15)}<div>A
      inteligência veicular está <b>desligada</b> nesta câmera: os veículos seguem no registro geral, sem rastreio,
      cor e marca/modelo. Ligue em Câmeras › Configurar › Inteligência veicular.</div></div>` : ''}
+
   <div class="veic-grade">
-    <div class="panel"><div class="panel-hd"><h3>${camObj ? `Câmera ao vivo — ${esc(camObj.nome)}` : 'Câmera ao vivo'}</h3>
-        <span class="sub">${vivo ? `${esc(vivo.motor || est.servico.motor)} · ${vivo.ms_por_quadro} ms/quadro` : esc(est.servico.motor)}</span></div>
+    <div class="panel"><div class="panel-hd"><h3>${camObj ? esc(camObj.nome) : 'Câmera ao vivo'}</h3>
+        <span class="sub mono">${camObj ? esc(camObj.codigo) : ''}</span><span class="sp"></span>
+        <span class="epi-vivo">${vivo ? `${esc(vivo.motor || est.servico.motor)} · ${vivo.ms_por_quadro} ms/quadro` : esc(est.servico.motor || '')}</span></div>
       <div class="panel-bd"><div class="veic-palco"><canvas id="veicFeed"></canvas></div></div></div>
-    <div style="display:flex;flex-direction:column;gap:14px">
-      <div class="panel"><div class="panel-hd"><h3>Em cena agora</h3><span class="sub">${fmtNum(est.passagens_hoje)} passagem(ns) hoje</span></div>
-        <div class="panel-bd" id="veicCena">${vazio('car', 'Nenhum veículo em cena.', '')}</div></div>
-      <div class="panel"><div class="panel-hd"><h3>Modelos de identificação</h3></div>
-        <div class="panel-bd">${veicModelosHTML(est.modelos, est.rotulados)}</div></div>
+    <div class="veic-lado">
+      <div class="panel"><div class="panel-hd"><h3>Em cena agora</h3><span class="sub">rastreio ao vivo</span></div>
+        <div class="panel-bd veic-cena" id="veicCena">${vazio('car', 'Nenhum veículo em cena.', '')}</div></div>
+      <div class="panel"><div class="panel-hd"><h3>Modelos de identificação</h3><span class="sub">precisão na validação</span></div>
+        <div class="panel-bd">${veicModelosHTML(m)}</div></div>
     </div>
   </div>
-  <div class="panel" style="margin-top:14px"><div class="panel-hd"><h3>Histórico de passagens</h3><span class="sp"></span>
-    <div class="toolbar">
-      <select class="inp" id="veicFCat"><option value="">Todas as categorias</option>
-        ${Object.entries(VEIC_ROT_CAT).map(([k, v]) => `<option value="${k}" ${f.categoria === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-      <select class="inp" id="veicFCor"><option value="">Todas as cores</option>
-        ${cat.cores.map(c => `<option ${f.cor === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-      <input class="inp" id="veicFPlaca" placeholder="Placa" value="${esc(f.placa)}" style="width:110px">
-      <div class="periodo">
-        <label for="veicFDe">Período</label>
-        <input class="inp" id="veicFDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || diaISO(new Date()))}">
-        <span class="sep">até</span>
-        <input class="inp" id="veicFAte" type="date" value="${esc(f.ate)}" min="${esc(f.de)}" max="${diaISO(new Date())}">
-      </div>
-      <label class="veic-chk"><input type="checkbox" id="veicFRot" ${f.rotulagem ? 'checked' : ''}> só sem rótulo</label>
-    </div></div>
-    <div class="panel-bd tight" id="veicHist">${carregando()}</div></div>`;
+
+  <div class="veic-hist-hd"><h3>Histórico de passagens</h3><span>clique numa linha para abrir a ficha e rotular</span></div>
+  <div class="cm-barra fc-barra">
+    <select class="inp" id="veicFCat"><option value="">Todas as categorias</option>
+      ${Object.entries(VEIC_ROT_CAT).map(([kk, v]) => `<option value="${kk}" ${f.categoria === kk ? 'selected' : ''}>${v}</option>`).join('')}</select>
+    <select class="inp" id="veicFCor"><option value="">Todas as cores</option>
+      ${cat.cores.map(c => `<option ${f.cor === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+    <div class="search">${ico('search',14)}<input class="inp" id="veicFPlaca" placeholder="Placa" value="${esc(f.placa)}"></div>
+    <div class="periodo">
+      <label for="veicFDe">Período</label>
+      <input class="inp" id="veicFDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || diaISO(new Date()))}">
+      <span class="sep">até</span>
+      <input class="inp" id="veicFAte" type="date" value="${esc(f.ate)}" min="${esc(f.de)}" max="${diaISO(new Date())}">
+    </div>
+    <label class="veic-chk"><input type="checkbox" id="veicFRot" ${f.rotulagem ? 'checked' : ''}> só sem rótulo</label>
+    <span class="sp"></span>
+    <span class="cm-cont" id="veicCont"></span>
+  </div>
+  <div class="panel"><div class="panel-bd tight" id="veicHist">${carregando()}</div></div>`;
 
   if(camObj){
     FEED.register($('#veicFeed'), camObj, {zonas: false, boxes: true, hd: true, conter: true});
@@ -170,19 +198,20 @@ async function veicCarregarHistorico(){
                                       placa: f.placa, rotulagem: f.rotulagem || undefined,
                                       desde: limiteDia(f.de), ate: limiteDia(f.ate, true),
                                       pagina: VEIC.pagina, por_pagina: 20});
-    box.innerHTML = `<div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th style="width:84px">Captura</th><th>Veículo</th><th>Cor</th><th>Marca / modelo</th>
-        <th>Placa</th><th>Câmera</th><th>Data / hora</th></tr></thead>
+    const cont = $('#veicCont'); if(cont) cont.textContent = `${fmtNum(r.total || 0)} passagem(ns)`;
+    box.innerHTML = `<div class="tbl-wrap"><table class="tbl fc-tbl veic-tbl">
+      <thead><tr><th style="width:96px">Captura</th><th>Veículo</th><th>Cor</th><th>Marca / modelo</th>
+        <th>Placa</th><th>Câmera</th><th>Quando</th></tr></thead>
       <tbody>${(r.itens || []).map(p => `
         <tr class="clickable" data-veic="${esc(p.id)}">
           <td><img class="veic-mini" loading="lazy" src="${API.veicImagem(p.id, 'recorte')}" alt=""></td>
-          <td>${veicTipo(p)}
-            <br><span class="td-id">#${p.trilha} · ${p.quadros} quadros${p.rotulo ? ' · rotulado' : ''}</span></td>
+          <td><div class="veic-tit">${veicTipo(p)}</div>
+            <span class="fc-sub mono">#${p.trilha} · ${p.quadros} quadros${p.rotulo ? ' · rotulado' : ''}</span></td>
           <td>${veicCor(p)}</td>
           <td>${veicMarcaModelo(p)}</td>
           <td>${veicPlaca(p)}</td>
-          <td><b>${esc(p.camera ? p.camera.codigo : '')}</b><br><span class="td-ts">${esc(p.camera ? p.camera.nome : '')}</span></td>
-          <td class="td-ts">${fmtDT(p.inicio)}<br><span style="color:var(--txt-4)">${relTime(p.inicio)}</span></td>
+          <td><b class="fc-cam">${esc(p.camera ? p.camera.codigo : '')}</b><span class="fc-sub">${esc(p.camera ? p.camera.nome : '')}</span></td>
+          <td><span class="fc-hora mono">${fmtDT(p.inicio)}</span><span class="fc-sub">${relTime(p.inicio)}</span></td>
         </tr>`).join('') || `<tr><td colspan="7">${vazio('car', 'Nenhuma passagem registrada.',
           'Com a inteligência veicular ligada, cada veículo que passa vira uma linha aqui.')}</td></tr>`}
       </tbody></table></div>${pagerHTML(r.total, r.pagina, r.por_pagina, 'veic')}`;

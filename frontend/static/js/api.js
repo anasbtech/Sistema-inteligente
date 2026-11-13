@@ -259,12 +259,19 @@ const API = {
   proximoId(sexo){ return this.get('/pessoas/proximo-id', {sexo}); },
   // Passagens, não capturas: quem fica diante da câmera gera uma captura por
   // volta do worker, e lidas uma a uma não dizem por onde a pessoa andou.
+  escolherFoto(id, codigo){ return this.req('PUT', `/pessoas/${id}/foto`, {query: {deteccao: codigo || ''}}); },
   trajetoriaDaPessoa(id, q){ return this.get(`/pessoas/${id}/trajetoria`, q || {}); },
   // Os registros que a trajetória resume, um por linha. `tipo` separa os dois
   // modos de reconhecer: 'rosto' identifica, 'corpo' prova presença.
+  // Todos os rostos da pessoa numa câmera, numa chamada (até 5.000).
+  rostosNaCamera(id, camera){ return this.get(`/pessoas/${id}/capturas`, {tipo: 'rosto', camera, limite: 5000}); },
   registrosDaPessoa(id, tipo, limite){
     return this.get(`/pessoas/${id}/capturas`, {tipo, limite: limite || 200});
   },
+  sugestoes(){ return this.get('/pessoas/sugestoes'); },
+  sugestoesDaPessoa(id){ return this.get(`/pessoas/${id}/sugestoes`); },
+  // Prazo largo: são até milhares de rostos numa gravação só.
+  decidirSugestoes(id, aceitar, recusar){ return this.req('POST', `/pessoas/${id}/sugestoes/decidir`, {corpo: {aceitar, recusar}, prazoMs: 180000}); },
   filaConferencia(q){ return this.get('/pessoas/conferencia', q || {}); },
   // A outra metade da triagem: rosto que não se parece com ninguém. A fila
   // de conferência pergunta "é ela?"; esta, "quem é?".
@@ -293,7 +300,15 @@ const API = {
   veicEstado(){ return this.get('/veiculos/estado'); },
   veicCatalogo(){ return this.get('/veiculos/catalogo'); },
   calorMapa(q){ return this.get('/mapa-calor', q); },
+  calorPessoas(codigo, varredura){ return this.get('/mapa-calor/pessoas/' + encodeURIComponent(codigo), {varredura: !!varredura}); },
+  guardianEstado(){ return this.get('/guardian/estado'); },
+  guardianOcorrencias(q){ return this.get('/guardian/ocorrencias', q || {}); },
+  guardianOcorrencia(cod){ return this.get('/guardian/ocorrencias/' + encodeURIComponent(cod)); },
+  guardianAvaliar(cod, corpo){ return this.post('/guardian/ocorrencias/' + encodeURIComponent(cod) + '/avaliacao', corpo); },
+  guardianEstatisticas(q){ return this.get('/guardian/estatisticas', q || {}); },
   calorRanking(q){ return this.get('/mapa-calor/ranking', q); },
+  calorAnalise(q){ return this.get('/mapa-calor/analise', q); },
+  calorCameras(q){ return this.get('/mapa-calor/cameras', q); },
   veicPassagens(f){
     const q = {};
     Object.entries(f || {}).forEach(([k, v]) => { if(v !== undefined && v !== null && v !== '') q[k] = v; });

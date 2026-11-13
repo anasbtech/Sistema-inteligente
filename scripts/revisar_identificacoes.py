@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sqlite3
 import sys
 import time
 from collections import Counter, defaultdict
@@ -29,6 +28,7 @@ sys.path.insert(0, str(RAIZ))
 import numpy as np  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app import banco_direto  # noqa: E402
 from app.services import evidencias, face_engine  # noqa: E402
 
 
@@ -42,9 +42,9 @@ def carregar_referencias(c):
     ids, vetores = [], []
     com_amostra = set()
     for pid, emb in c.execute("select a.pessoa_id, a.embedding from amostras_faciais a "
-                              "join pessoas p on p.id=a.pessoa_id where p.ativo=1"):
+                              "join pessoas p on p.id=a.pessoa_id where p.ativo"):
         ids.append(pid); vetores.append(_vetor(emb)); com_amostra.add(pid)
-    for pid, emb in c.execute("select id, embedding from pessoas where ativo=1 and embedding is not null"):
+    for pid, emb in c.execute("select id, embedding from pessoas where ativo and embedding is not null"):
         if pid not in com_amostra:
             ids.append(pid); vetores.append(_vetor(emb))
     return np.array(ids), np.vstack(vetores).astype(np.float32)
@@ -60,8 +60,8 @@ def melhor_pessoa(ids, matriz, vetor):
     return pid, melhor[pid]
 
 
-def verificar(caminho_banco: str):
-    c = sqlite3.connect(caminho_banco)
+def verificar():
+    c = banco_direto.conectar()
     ids, matriz = carregar_referencias(c)
     linhas = c.execute("""select d.id, d.codigo, d.pessoa_id, d.similaridade, d.limiar_aplicado,
                                  d.snapshot_key from deteccoes d
@@ -146,8 +146,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--aplicar", action="store_true")
     args = p.parse_args()
-    banco = settings.DATABASE_URL.split(":///")[-1]
-    linhas, sair, motivos = verificar(banco)
+    linhas, sair, motivos = verificar()
     print(f"{len(linhas)} identificações automáticas; {len(sair)} não passam: {dict(motivos)}")
     if args.aplicar and sair:
         asyncio.run(aplicar(sair))

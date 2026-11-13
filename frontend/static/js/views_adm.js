@@ -26,36 +26,51 @@ async function renderAlertas(alvo){
   const f = FILTRO.alertas, hoje = diaISO(new Date());
   const porPagina = +f.por_pagina || POR_PAGINA;
   const podeAgir = API.pode('edit');
+  const ab = resumo.abertos || 0, ea = resumo.em_andamento || 0, rs = resumo.resolvidos || 0;
+  const total = ab + ea + rs, crit = resumo.criticos_pendentes || 0;
+
+  /* Cartão que filtra a lista pelo status; clicar de novo volta a mostrar todos. */
+  const kpi = (st, cls, lbl, icone, val, sub, extra) => `<button type="button" class="kpi cm-kpi ${cls} ${f.status === st ? 'on' : ''}" data-st="${st}"
+      title="${f.status === st ? 'Mostrar todos os alertas' : `Listar só os ${esc(lbl.toLowerCase())}`}">
+    <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+    <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></button>`;
 
   alvo.innerHTML = `
-  <div class="sec-hd"><h2>Central de alertas</h2><span class="sp"></span>
-    <div class="toolbar">
-      <div class="segm" id="alSeg">
-        <button data-s="" class="${!f.status?'on':''}">Todos</button>
-        <button data-s="ABERTO" class="${f.status==='ABERTO'?'on':''}">Abertos (${resumo.abertos||0})</button>
-        <button data-s="EM_ANDAMENTO" class="${f.status==='EM_ANDAMENTO'?'on':''}">Em curso (${resumo.em_andamento||0})</button>
-        <button data-s="RESOLVIDO" class="${f.status==='RESOLVIDO'?'on':''}">Resolvidos (${resumo.resolvidos||0})</button>
-      </div>
-      <select class="inp" id="alSev"><option value="">Qualquer severidade</option>
-        ${[4,3,2].map(s => `<option value="${s}" ${f.severidade==String(s)?'selected':''}>${SEVERIDADE[s]}</option>`).join('')}</select>
-      <select class="inp" id="alCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, f.cam)}
-        <option value="VIDEO-TESTE" ${f.cam === 'VIDEO-TESTE' ? 'selected' : ''}>Vídeo de teste</option></select>
-      <div class="periodo">
-        <label for="alDe">Período</label>
-        <input class="inp" id="alDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || hoje)}">
-        <span class="sep">até</span>
-        <input class="inp" id="alAte" type="date" value="${esc(f.ate)}" min="${esc(f.de)}" max="${hoje}">
-        <button class="btn btn-ghost btn-sm" id="alLimpar" ${f.de||f.ate?'':'hidden'}>Limpar</button>
-      </div>
-    </div></div>
-  <div class="grid cols-4" style="margin-bottom:14px">
-    <div class="kpi k-red"><div class="kpi-top"><span class="kpi-lbl">Abertos</span><span class="kpi-ico">${ico('bell',15)}</span></div><div class="kpi-val">${resumo.abertos||0}</div><div class="kpi-delta dn">aguardando triagem</div></div>
-    <div class="kpi k-amber"><div class="kpi-top"><span class="kpi-lbl">Em andamento</span><span class="kpi-ico">${ico('clock',15)}</span></div><div class="kpi-val">${resumo.em_andamento||0}</div><div class="kpi-delta nt">com responsável atribuído</div></div>
-    <div class="kpi k-green"><div class="kpi-top"><span class="kpi-lbl">Resolvidos</span><span class="kpi-ico">${ico('check',15)}</span></div><div class="kpi-val">${resumo.resolvidos||0}</div><div class="kpi-delta up">com desfecho registrado</div></div>
-    <div class="kpi"><div class="kpi-top"><span class="kpi-lbl">Tempo médio de resposta</span><span class="kpi-ico">${ico('gauge',15)}</span></div>
-      <div class="kpi-val" style="font-size:22px">${resumo.tempo_medio_resposta_s ? duracao(resumo.tempo_medio_resposta_s) : '—'}</div>
-      <div class="kpi-delta nt">${resumo.criticos_pendentes||0} crítico(s) pendente(s)</div></div>
+  <div class="sec-hd"><h2>Central de alertas</h2><span class="cm-sub">ocorrências que exigem tratamento</span><span class="sp"></span></div>
+
+  <div class="dash-grid dash-kpis">
+    ${kpi('ABERTO', 'k-red', 'Abertos', 'bell', fmtNum(ab), `${pctCurto(ab, total)} do total · aguardando triagem`, dashBarra(total ? ab / total : 0, 'var(--red)'))}
+    ${kpi('EM_ANDAMENTO', 'k-amber', 'Em andamento', 'clock', fmtNum(ea), 'com responsável atribuído', dashBarra(total ? ea / total : 0, 'var(--amber)'))}
+    ${kpi('RESOLVIDO', 'k-green', 'Resolvidos', 'check', fmtNum(rs), `${pctCurto(rs, total)} com desfecho registrado`, dashBarra(total ? rs / total : 0, 'var(--green)'))}
+    <div class="kpi al-kpi-tempo">
+      <div class="kpi-top"><span class="kpi-lbl">Tempo médio de resposta</span><span class="kpi-ico">${ico('gauge',15)}</span></div>
+      <div class="kpi-val">${resumo.tempo_medio_resposta_s ? duracao(resumo.tempo_medio_resposta_s) : '—'}</div>
+      <div class="kpi-delta nt">${crit
+        ? `<span class="al-crit">${ico('alert',12)} ${fmtNum(crit)} crítico(s) pendente(s)</span>`
+        : 'nenhum crítico pendente'}</div>
+    </div>
   </div>
+
+  <div class="cm-barra fc-barra">
+    <div class="segm" id="alSeg">
+      ${[['', 'Todos', total], ['ABERTO', 'Abertos', ab], ['EM_ANDAMENTO', 'Em curso', ea], ['RESOLVIDO', 'Resolvidos', rs]].map(([k, l, q]) =>
+        `<button data-s="${k}" class="${(f.status || '') === k ? 'on' : ''}">${l} <em>${fmtNum(q)}</em></button>`).join('')}
+    </div>
+    <select class="inp" id="alSev"><option value="">Qualquer severidade</option>
+      ${[4,3,2].map(s => `<option value="${s}" ${f.severidade==String(s)?'selected':''}>${SEVERIDADE[s]}</option>`).join('')}</select>
+    <select class="inp" id="alCam"><option value="">Todas as câmeras</option>${opcoesCameras(null, f.cam)}
+      <option value="VIDEO-TESTE" ${f.cam === 'VIDEO-TESTE' ? 'selected' : ''}>Vídeo de teste</option></select>
+    <div class="periodo">
+      <label for="alDe">Período</label>
+      <input class="inp" id="alDe" type="date" value="${esc(f.de)}" max="${esc(f.ate || hoje)}">
+      <span class="sep">até</span>
+      <input class="inp" id="alAte" type="date" value="${esc(f.ate)}" min="${esc(f.de)}" max="${hoje}">
+      <button class="btn btn-ghost btn-sm" id="alLimpar" ${f.de||f.ate?'':'hidden'}>Limpar</button>
+    </div>
+    <span class="sp"></span>
+    <span class="cm-cont" id="alCont"></span>
+  </div>
+
   <div class="panel"><div class="panel-bd tight"><div id="alCorpo">${carregando()}</div></div></div>`;
 
   const carregar = async () => {
@@ -71,24 +86,30 @@ async function renderAlertas(alvo){
         ate: limiteDia(FILTRO.alertas.ate, true)
       });
       const itens = r.itens || [];
-      corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th style="width:8px"></th>
-          <th style="width:64px">Captura</th>
-          <th>Alerta</th><th>Tipo</th><th>Câmera</th>
-          <th>Data / hora</th><th>Status</th><th style="width:96px"></th></tr></thead>
+      const cont = $('#alCont'); if(cont) cont.textContent = `${fmtNum(r.total || 0)} alerta(s)`;
+      corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl fc-tbl al-tbl">
+        <thead><tr><th style="width:74px">Captura</th><th>Alerta</th><th>Severidade</th><th>Tipo</th><th>Câmera</th>
+          <th>Disparado</th><th>Status</th><th style="width:104px"></th></tr></thead>
         <tbody>${itens.map(a => {
           const st = STATUS_ALERTA[a.status] || {};
           const img = imagemDoAlerta(a);
-          return `<tr class="clickable" data-a="${esc(a.codigo)}">
-            <td style="padding:0"><div class="sev sev-${a.severidade}" style="height:100%;min-height:44px;width:3px"></div></td>
-            <td>${img ? `<canvas data-snap="${snapAttr(img, img.fonte)}" width="54"></canvas>` : ''}</td>
-            <td><b>${esc(a.titulo)}</b><br><span class="td-ts">${esc((a.detalhe||'').slice(0,54))}${(a.detalhe||'').length>54?'…':''}</span></td>
+          const cor = SEV_COR[a.severidade] || 'var(--txt-3)';
+          const det = a.detalhe || '';
+          return `<tr class="clickable al-sev-${a.severidade}" data-a="${esc(a.codigo)}" style="--sev:${cor}">
+            <td><div class="fc-cap" style="--cap:${cor}">${img
+              ? `<canvas data-snap="${snapAttr(img, img.fonte)}" width="46"></canvas>`
+              : `<span class="al-semimg">${ico('bell', 16)}</span>`}</div></td>
+            <td><div class="al-tit"><b>${esc(a.titulo)}</b>
+              <span class="mono">${esc(a.codigo)}</span>
+              ${det ? `<span class="fc-sub" title="${esc(det)}">${esc(det.slice(0, 70))}${det.length > 70 ? '…' : ''}</span>` : ''}</div></td>
+            <td><span class="ob-sev" style="--sev:${cor}"><i></i>${esc(SEVERIDADE[a.severidade] || '')}</span></td>
             <td><span class="chip ${COR_TIPO_ALERTA[a.tipo] || 'c-gray'}">${esc(ROTULO_TIPO_ALERTA[a.tipo] || a.tipo)}</span></td>
-            <td><b>${esc(a.camera?a.camera.codigo:'')}</b><br><span class="td-ts">${esc((a.camera?a.camera.nome:'').slice(0,24))}</span></td>
-            <td class="td-ts">${fmtDT(a.disparado_em)}<br><span style="color:var(--txt-4)">${relTime(a.disparado_em)}</span></td>
-            <td><span class="chip ${st.cls}">${esc(st.lbl)}</span>${a.atribuido_nome ? `<br><span class="td-ts">${esc(a.atribuido_nome)}</span>` : ''}</td>
+            <td><b class="fc-cam">${esc(a.camera?a.camera.codigo:'')}</b><span class="fc-sub">${esc((a.camera?a.camera.nome:'').slice(0,24))}</span></td>
+            <td><span class="fc-hora mono">${fmtDT(a.disparado_em)}</span><span class="fc-sub">${relTime(a.disparado_em)}</span></td>
+            <td><span class="chip ${st.cls}">${esc(st.lbl)}</span>${a.atribuido_nome ? `<span class="fc-sub">${ico('users',11)} ${esc(a.atribuido_nome)}</span>` : ''}</td>
             <td style="text-align:right">${a.status==='ABERTO' && podeAgir
-              ? `<button class="btn btn-soft btn-sm" data-assume="${esc(a.codigo)}">Assumir</button>` : ''}</td>
+              ? `<button class="btn btn-soft btn-sm al-assumir" data-assume="${esc(a.codigo)}">${ico('users',13)} Assumir</button>`
+              : `<span class="al-abrir">${ico('chev',14)}</span>`}</td>
           </tr>`;
         }).join('') || `<tr><td colspan="8">${vazio('check','Nenhum alerta neste filtro.')}</td></tr>`}
         </tbody></table></div>
@@ -116,10 +137,10 @@ async function renderAlertas(alvo){
     }catch(e){ corpo.innerHTML = erroBloco(e); }
   };
 
+  const porStatus = s => { FILTRO.alertas.status = s; PAG.alertas = 1; irPara('alerts'); };
   const aplicar = () => { PAG.alertas = 1; FILTRO.alertas = {...FILTRO.alertas, de: $('#alDe').value, ate: $('#alAte').value}; $('#alDe').max = FILTRO.alertas.ate || hoje; $('#alAte').min = FILTRO.alertas.de; $('#alLimpar').hidden = !(FILTRO.alertas.de || FILTRO.alertas.ate); carregar(); };
-  $$('#alSeg button').forEach(b => b.onclick = () => {
-    FILTRO.alertas.status = b.dataset.s; PAG.alertas = 1; irPara('alerts');
-  });
+  $$('#alSeg button').forEach(b => b.onclick = () => porStatus(b.dataset.s));
+  $$('.cm-kpi[data-st]', alvo).forEach(b => b.onclick = () => porStatus(f.status === b.dataset.st ? '' : b.dataset.st));
   $('#alSev').onchange = e => { FILTRO.alertas.severidade = e.target.value; PAG.alertas = 1; carregar(); };
   $('#alCam').onchange = e => { FILTRO.alertas.cam = e.target.value; PAG.alertas = 1; carregar(); };
   ['alDe','alAte'].forEach(id => $('#'+id).onchange = aplicar);
@@ -328,7 +349,9 @@ const ROTULO_AUDITORIA = {
   DET_REVISAO:'Detecção revisada', DET_EXCLUSAO:'Detecção excluída',
   ALERTA_ASSUME:'Alerta assumido', ALERTA_FECHA:'Alerta encerrado', ALERTA_EXCLUSAO:'Alerta excluído',
   CONFIG_EDIT:'Configuração alterada', LIMIAR_EDIT:'Limiar alterado',
-  EXPORTACAO:'Exportação de dados', EXPURGO:'Expurgo de capturas vencidas'
+  EXPORTACAO:'Exportação de dados', EXPURGO:'Expurgo de capturas vencidas',
+  BIO_TRIAGEM:'Triagem biométrica aprovada', VEICULO_ROTULO:'Veículo rotulado',
+  VEICULO_PASSAGEM_EXCLUIDA:'Passagem de veículo excluída'
 };
 const rotuloAuditoria = c => ROTULO_AUDITORIA[c] || c;
 
@@ -337,56 +360,93 @@ const statusUsuario = u => u.excluido_em ? '<span class="chip c-gray">Excluído<
   : u.ativo ? '<span class="chip c-green">Ativo</span>'
   : '<span class="chip c-amber">Bloqueado</span>';
 
+const COR_PERFIL = {ADMIN:'var(--red)', SUPER:'var(--amber)', OPERADOR:'var(--acc)', ANALISTA:'var(--green)', AUDITOR:'var(--violet)'};
+const CHIP_PERFIL = {ADMIN:'c-red', SUPER:'c-amber', AUDITOR:'c-violet', ANALISTA:'c-green'};
+
 async function renderUsuarios(alvo){
   // Os setores vêm das câmeras: é o mesmo prédio, e manter uma lista à parte
   // faria a unidade do usuário divergir de onde ele de fato trabalha.
   const [perfis, setores] = await Promise.all([API.perfis(), API.setores(true)]);
   let usuarios = await API.usuarios();
-  let verExcluidos = false;
+  let verExcluidos = false, perfilSel = '';
+  const listaPerfis = perfis.perfis || [];
+  const corDe = c => COR_PERFIL[c] || 'var(--acc)';
 
   alvo.innerHTML = `
-  <div class="sec-hd"><h2>Usuários e perfis de acesso</h2><span class="sp"></span>
+  <div class="sec-hd"><h2>Usuários e perfis de acesso</h2><span class="cm-sub">contas, perfis e o que cada perfil pode fazer</span><span class="sp"></span>
     <div class="toolbar">
-      <div class="search">${ico('search',14)}<input class="inp" id="usQ" placeholder="Nome, matrícula, e-mail…"></div>
-      <button class="btn btn-ghost btn-sm" id="usExc">${ico('eye',14)} Ver excluídos</button>
       <button class="btn btn-primary btn-sm" id="usNovo">${ico('plus',14)} Novo usuário</button>
     </div></div>
+  <div class="dash-grid dash-kpis" id="usKpis"></div>
+  <div class="cm-barra fc-barra">
+    <div class="search">${ico('search',14)}<input class="inp" id="usQ" placeholder="Nome, matrícula, e-mail…"></div>
+    <div class="segm" id="usPerfilSeg"></div>
+    <span class="sp"></span>
+    <button class="btn btn-ghost btn-sm" id="usExc">${ico('eye',14)} Ver excluídos</button>
+    <span class="cm-cont" id="usCont"></span>
+  </div>
+  <div class="panel"><div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl fc-tbl" id="usTbl">
+    <thead><tr><th>Usuário</th><th>Perfil</th><th>Setor</th><th>Verificação em 2 etapas</th>
+      <th>Último acesso</th><th>Status</th><th style="width:60px"></th></tr></thead>
+    <tbody></tbody></table></div></div></div>
 
-  <div class="grid cols-3" style="margin-bottom:18px" id="rolGrid">${carregando()}</div>
+  <div class="panel us-matriz-painel"><div class="panel-hd"><h3>Matriz de permissões</h3>
+      <span class="sub">o que cada perfil acessa</span><span class="sp"></span>
+      <span class="hint" style="margin:0">clique num perfil para listar os usuários dele</span></div>
+    <div class="panel-bd tight"><div class="tbl-wrap" id="usMatriz"></div></div></div>`;
 
-  <div class="sec-hd" style="margin-top:22px"><h3>Usuários do sistema</h3></div>
-  <div class="panel"><div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl" id="usTbl">
-    <thead><tr><th>Usuário</th><th>Perfil</th><th>Setor</th><th>MFA</th>
-      <th>Último acesso</th><th>Status</th><th style="width:80px"></th></tr></thead>
-    <tbody></tbody></table></div></div></div>`;
+  const kpis = () => {
+    const vivos = usuarios.filter(u => !u.excluido_em);
+    const ativos = vivos.filter(u => u.ativo).length;
+    const bloq = vivos.length - ativos;
+    const mfa = vivos.filter(u => u.mfa_ativo).length;
+    const k = (cls, lbl, icone, val, sub, extra) => `<div class="kpi ${cls}">
+      <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+      <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></div>`;
+    $('#usKpis').innerHTML = `
+      ${k('', 'Usuários', 'users', fmtNum(vivos.length), `${fmtNum(ativos)} ativo(s)`, dashBarra(vivos.length ? ativos / vivos.length : 0, 'var(--acc)'))}
+      ${k('k-amber', 'Bloqueados', 'lock', fmtNum(bloq), bloq ? 'sem acesso até desbloquear' : 'nenhuma conta bloqueada', dashBarra(vivos.length ? bloq / vivos.length : 0, 'var(--amber)'))}
+      ${k('k-green', 'Verificação em 2 etapas', 'shield', pctCurto(mfa, vivos.length), `${fmtNum(mfa)} de ${fmtNum(vivos.length)} conta(s)`, dashBarra(vivos.length ? mfa / vivos.length : 0, 'var(--green)'))}
+      ${k('k-violet', 'Perfis de acesso', 'key', fmtNum(listaPerfis.length), `${Object.keys(PERMS_ROTULO).length} permissões possíveis`,
+        `<div class="cm-cob">${listaPerfis.map(p => `<i style="flex:1;max-width:none;background:${corDe(p.codigo)}"></i>`).join('')}</div>`)}`;
+    const qtd = c => vivos.filter(u => u.perfil === c).length;
+    $('#usPerfilSeg').innerHTML = [['', 'Todos', vivos.length], ...listaPerfis.map(p => [p.codigo, rotuloPerfil(p.codigo), qtd(p.codigo)])]
+      .map(([c, l, q]) => `<button data-p="${c}" class="${perfilSel === c ? 'on' : ''}">${esc(l)} <em>${fmtNum(q)}</em></button>`).join('');
+    $$('#usPerfilSeg button').forEach(b => b.onclick = () => porPerfil(b.dataset.p));
+    matriz(qtd);
+  };
 
-  $('#rolGrid').innerHTML = (perfis.perfis||[]).map(pf => {
-    const cores = {ADMIN:'c-red', SUPER:'c-amber', AUDITOR:'c-violet'};
-    const cor = cores[pf.codigo] || 'c-blue';
-    return `<div class="perm-card">
-      <div class="perm-head ${cor}">
-        <b>${esc(rotuloPerfil(pf.codigo))}</b>
-        <span class="mono" style="font-size:10px;opacity:.7">${esc(pf.codigo)}</span>
-      </div>
-      <div class="perm-list">
-        ${pf.permissoes.map(p => `<div class="perm-item">${ico('check',12)} ${esc(PERMS_ROTULO[p]||p)}</div>`).join('')}
-      </div>
-    </div>`;
-  }).join('');
+  // Linhas = permissões, colunas = perfis: dá para comparar perfis num olhar,
+  // o que os cartões lado a lado não deixavam.
+  const matriz = qtd => {
+    const perms = Object.keys(PERMS_ROTULO);
+    $('#usMatriz').innerHTML = `<table class="tbl us-matriz">
+      <thead><tr><th>Permissão</th>${listaPerfis.map(p => `<th>
+        <button type="button" class="us-perfil ${perfilSel === p.codigo ? 'on' : ''}" data-mp="${esc(p.codigo)}" style="--pf:${corDe(p.codigo)}">
+          <i></i><b>${esc(rotuloPerfil(p.codigo))}</b><span class="mono">${fmtNum(qtd(p.codigo))} usuário(s) · ${p.permissoes.length}/${perms.length}</span></button></th>`).join('')}</tr></thead>
+      <tbody>${perms.map(k => `<tr><td>${esc(PERMS_ROTULO[k])}</td>${listaPerfis.map(p => `<td class="${perfilSel === p.codigo ? 'on' : ''}">${p.permissoes.includes(k)
+          ? `<span class="us-sim" style="--pf:${corDe(p.codigo)}">${ico('check', 13)}</span>`
+          : '<span class="us-nao">—</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    $$('[data-mp]').forEach(b => b.onclick = () => porPerfil(perfilSel === b.dataset.mp ? '' : b.dataset.mp));
+  };
 
   const pintar = lista => {
+    $('#usCont').textContent = `${fmtNum(lista.length)} usuário(s)`;
     $('#usTbl tbody').innerHTML = lista.map(u => `
       <tr class="user-row ${u.excluido_em ? '' : 'clickable'}" ${u.excluido_em ? '' : `data-u="${esc(u.id)}"`}
           style="${u.excluido_em ? 'opacity:.55' : ''}">
-        <td><div class="face-cell"><span class="avatar" style="width:36px;height:36px;font-size:12px">${esc(iniciais(u.nome))}</span>
-          <div class="face-meta"><b>${esc(u.nome)}</b><span style="color:var(--txt-3);font-family:var(--f-mono);font-size:11px">${esc(u.email)}</span></div></div></td>
-        <td><span class="chip ${u.perfil==='ADMIN'?'c-red':u.perfil==='SUPER'?'c-amber':u.perfil==='AUDITOR'?'c-violet':'c-blue'}">${esc(rotuloPerfil(u.perfil))}</span></td>
-        <td style="color:var(--txt-2);font-size:13px">${esc(u.unidade||'—')}</td>
-        <td>${u.mfa_ativo ? '<span class="chip c-green">Ativo</span>' : '<span class="chip c-amber">Inativo</span>'}</td>
-        <td class="mono" style="font-size:12px">${u.ultimo_acesso ? '<b>'+fmtDT(u.ultimo_acesso).split(' ')[1]+'</b><br><span style="color:var(--txt-4)">'+fmtDT(u.ultimo_acesso).split(' ')[0]+'</span>' : '—'}</td>
+        <td><div class="fc-pessoa"><span class="avatar us-av" style="--pf:${corDe(u.perfil)}">${esc(iniciais(u.nome))}</span>
+          <div><b>${esc(u.nome)}</b><span class="mono">${esc(u.email)}${u.matricula ? ` · ${esc(u.matricula)}` : ''}</span></div></div></td>
+        <td><span class="chip ${CHIP_PERFIL[u.perfil] || 'c-blue'}">${esc(rotuloPerfil(u.perfil))}</span></td>
+        <td><span class="fc-cam">${esc(u.unidade || '—')}</span></td>
+        <td>${u.mfa_ativo
+          ? `<span class="ob-sev" style="--sev:var(--green)"><i></i>Ativa</span>`
+          : `<span class="ob-sev" style="--sev:var(--amber)"><i></i>Desativada</span>`}</td>
+        <td>${u.ultimo_acesso ? `<span class="fc-hora mono">${fmtDT(u.ultimo_acesso)}</span><span class="fc-sub">${relTime(u.ultimo_acesso)}</span>`
+          : '<span class="fc-sub">nunca acessou</span>'}</td>
         <td>${statusUsuario(u)}</td>
         <td style="text-align:right">${u.excluido_em ? ''
-          : `<button class="btn btn-ghost btn-sm btn-icon" data-eu="${esc(u.id)}">${ico('edit',14)}</button>`}</td>
+          : `<button class="btn btn-ghost btn-sm btn-icon" data-eu="${esc(u.id)}" title="Editar">${ico('edit',14)}</button>`}</td>
       </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;padding:24px">${vazio('users','Nenhum usuário encontrado.')}</td></tr>`;
     $$('#usTbl [data-eu]').forEach(b => b.onclick = e => { e.stopPropagation(); editarUsuario(b.dataset.eu, usuarios, perfis, setores); });
     $$('#usTbl tr[data-u]').forEach(t => t.onclick = () => editarUsuario(t.dataset.u, usuarios, perfis, setores));
@@ -394,9 +454,10 @@ async function renderUsuarios(alvo){
 
   const filtrados = () => {
     const q = $('#usQ').value.toLowerCase().trim();
-    return usuarios.filter(u => !q ||
-      [u.nome, u.email, u.matricula, u.unidade].join(' ').toLowerCase().includes(q));
+    return usuarios.filter(u => (!perfilSel || u.perfil === perfilSel) && (!q ||
+      [u.nome, u.email, u.matricula, u.unidade].join(' ').toLowerCase().includes(q)));
   };
+  const porPerfil = c => { perfilSel = c; kpis(); pintar(filtrados()); };
 
   $('#usQ').oninput = debounce(() => pintar(filtrados()), 200);
   $('#usNovo').onclick = () => editarUsuario(null, usuarios, perfis, setores);
@@ -405,10 +466,12 @@ async function renderUsuarios(alvo){
     // Contas excluídas seguem ocupando e-mail e matrícula; sem poder vê-las,
     // o cadastro de um substituto homônimo falharia sem explicação.
     $('#usExc').innerHTML = ico('eye',14) + (verExcluidos ? ' Ocultar excluídos' : ' Ver excluídos');
+    $('#usExc').classList.toggle('on', verExcluidos);
     usuarios = await API.usuarios(null, verExcluidos);
-    pintar(filtrados());
+    kpis(); pintar(filtrados());
   };
-  pintar(usuarios);
+  kpis();
+  pintar(filtrados());
 }
 
 function editarUsuario(id, usuarios, perfis, setores){
@@ -647,26 +710,69 @@ function editarUsuario(id, usuarios, perfis, setores){
 /* ==========================================================
    AUDITORIA
    ========================================================== */
+/* Cada ação da trilha cai numa categoria: dá a cor, o ícone e o grupo do filtro. */
+const CATEGORIAS_AUDITORIA = [
+  {k: 'acesso',   nome: 'Acesso',      ico: 'key',    cor: 'var(--acc)',    teste: a => /^(LOGIN|LOGOUT|SENHA_)/.test(a)},
+  {k: 'bio',      nome: 'Biometria',   ico: 'face',   cor: 'var(--violet)', teste: a => /^(BIO_|CONSULTA_BIO|PESSOA_)/.test(a)},
+  {k: 'deteccao', nome: 'Detecções',   ico: 'box',    cor: 'var(--green)',  teste: a => /^(DET_|VEICULO_)/.test(a)},
+  {k: 'alerta',   nome: 'Alertas',     ico: 'bell',   cor: 'var(--amber)',  teste: a => /^ALERTA_/.test(a)},
+  {k: 'camera',   nome: 'Câmeras',     ico: 'cam',    cor: '#4FC3C9',       teste: a => /^(CAM_|PTZ)/.test(a)},
+  {k: 'usuario',  nome: 'Usuários',    ico: 'users',  cor: '#E05F9E',       teste: a => /^USR_/.test(a)},
+  {k: 'sistema',  nome: 'Sistema',     ico: 'cog',    cor: 'var(--txt-3)',  teste: () => true},
+];
+const categoriaAuditoria = a => CATEGORIAS_AUDITORIA.find(c => c.teste(a || ''));
+/* Ações que a corregedoria costuma procurar primeiro: saem marcadas na lista. */
+const auSensivel = a => /EXCLUSAO|_DEL$|EXPORTACAO|EXPURGO|CONFIG_EDIT|LIMIAR_EDIT|LOGIN_BLOQUEADO|BIO_FUSAO|BIO_RENUMERA/.test(a || '');
+
 async function renderAuditoria(alvo){
   const acoes = await API.acoesAuditoria();
+  const tot = acoes.reduce((s, a) => s + (a.total || 0), 0);
+  const somaDe = re => acoes.filter(a => re.test(a.acao)).reduce((s, a) => s + (a.total || 0), 0);
+  const consultas = somaDe(/^CONSULTA_BIO$/);
+  const sensiveis = acoes.filter(a => auSensivel(a.acao)).reduce((s, a) => s + (a.total || 0), 0);
+  const k = (cls, lbl, icone, val, sub, extra) => `<div class="kpi ${cls}">
+    <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+    <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></div>`;
 
   alvo.innerHTML = `
-  <div class="sec-hd"><h2>Trilha de auditoria</h2><span class="sp"></span>
+  <div class="sec-hd"><h2>Trilha de auditoria</h2><span class="cm-sub">registro imutável de operações</span><span class="sp"></span>
     <div class="toolbar">
-      <div class="search">${ico('search',14)}<input class="inp" id="auQ" value="${esc(FILTRO.audit.q)}" placeholder="Usuário, ação, alvo, IP…"></div>
-      <select class="inp" id="auAcao"><option value="">Todas as ações</option>
-        ${acoes.map(a => `<option value="${esc(a.acao)}" ${FILTRO.audit.acao===a.acao?'selected':''}>${esc(rotuloAuditoria(a.acao))} (${a.total})</option>`).join('')}</select>
       <button class="btn btn-ghost btn-sm" id="auVerificar">${ico('shield',14)} Verificar cadeia</button>
-      ${API.pode('export') ? `<button class="btn btn-ghost btn-sm" id="auExp">${ico('dl',14)} Exportar</button>` : ''}
+      ${API.pode('export') ? `<button class="btn btn-ghost btn-sm" id="auExp">${ico('dl',14)} Exportar PDF</button>` : ''}
     </div></div>
+
+  <div class="dash-grid dash-kpis">
+    ${k('', 'Registros', 'log', fmtNum(tot), `${acoes.length} tipo(s) de ação`,
+      `<div class="cm-cob">${CATEGORIAS_AUDITORIA.map(c => {
+        const v = acoes.filter(a => categoriaAuditoria(a.acao) === c).reduce((s, a) => s + a.total, 0);
+        return v ? `<i title="${esc(c.nome)}: ${fmtNum(v)}" style="width:${(v / tot * 100).toFixed(1)}%;max-width:none;background:${c.cor}"></i>` : '';
+      }).join('')}</div>`)}
+    ${k('k-violet', 'Consultas biométricas', 'face', fmtNum(consultas), `${pctCurto(consultas, tot)} da trilha · vinculadas à matrícula`, dashBarra(tot ? consultas / tot : 0, 'var(--violet)'))}
+    ${k('k-amber', 'Operações sensíveis', 'alert', fmtNum(sensiveis), 'exclusões, exportações e ajustes', dashBarra(tot ? sensiveis / tot : 0, 'var(--amber)'))}
+    <div class="kpi k-green au-cadeia" id="auCadeia">
+      <div class="kpi-top"><span class="kpi-lbl">Integridade da cadeia</span><span class="kpi-ico">${ico('shield',15)}</span></div>
+      <div class="kpi-val au-cadeia-val">Não verificada</div>
+      <div class="kpi-delta nt au-cadeia-sub">use “Verificar cadeia”, no alto da tela</div>
+    </div>
+  </div>
+
+  <div class="cm-barra fc-barra">
+    <div class="search">${ico('search',14)}<input class="inp" id="auQ" value="${esc(FILTRO.audit.q)}" placeholder="Usuário, ação, alvo, IP…"></div>
+    <select class="inp" id="auAcao"><option value="">Todas as ações</option>
+      ${CATEGORIAS_AUDITORIA.map(c => {
+        const doGrupo = acoes.filter(a => categoriaAuditoria(a.acao) === c);
+        return doGrupo.length ? `<optgroup label="${esc(c.nome)}">${doGrupo.map(a =>
+          `<option value="${esc(a.acao)}" ${FILTRO.audit.acao===a.acao?'selected':''}>${esc(rotuloAuditoria(a.acao))} (${fmtNum(a.total)})</option>`).join('')}</optgroup>` : '';
+      }).join('')}</select>
+    <span class="sp"></span>
+    <span class="cm-cont" id="auCont"></span>
+  </div>
+  <p class="fc-nota" title="Uma trigger no banco recusa UPDATE e DELETE. Consulta de biométricos, exportação ou mudança de limiar fica vinculada à matrícula do operador.">${ico('lock',13)}<span><b>Somente inserção:</b> cada registro é encadeado por hash ao anterior e não pode ser alterado nem apagado.</span></p>
   <div id="auVerif"></div>
-  <div class="note" style="margin-bottom:14px">${ico('lock',15)}<div>Registros encadeados por hash e somente-inserção — uma trigger no banco recusa <span class="mono">UPDATE</span> e <span class="mono">DELETE</span>. Consulta de biométricos, exportação ou mudança de limiar fica vinculada à matrícula do operador.</div></div>
   <div class="panel"><div class="panel-bd tight"><div id="auCorpo">${carregando()}</div></div></div>`;
 
   /* Quantos registros o filtro atual alcança. Guardado da última consulta
-     para o diálogo de exportação poder dizer o tamanho do que vai sair —
-     exportar às cegas uma trilha de milhares de linhas é o tipo de coisa que
-     só se descobre quando o arquivo chega. */
+     para o diálogo de exportação poder dizer o tamanho do que vai sair. */
   let ultimoTotal = null;
 
   const carregar = async () => {
@@ -678,40 +784,27 @@ async function renderAuditoria(alvo){
         q: FILTRO.audit.q || undefined, acao: FILTRO.audit.acao || undefined
       });
       ultimoTotal = r.total;
+      const cont = $('#auCont'); if(cont) cont.textContent = `${fmtNum(r.total || 0)} registro(s)`;
       const itens = r.itens || [];
+      const local = ip => ip === '::1' || ip === '127.0.0.1';
 
-      const iconoPorAcao = (acao) => {
-        if(acao.includes('LOGIN')) return 'key';
-        if(acao.includes('LOGOUT')) return 'logout';
-        if(acao.includes('DELETE')) return 'trash';
-        if(acao.includes('UPDATE')) return 'edit';
-        if(acao.includes('EXPORT')) return 'dl';
-        if(acao.includes('CADEIA')) return 'shield';
-        return 'log';
-      };
-
-      corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr>
-          <th style="width:8px"></th>
-          <th>Data / hora</th>
-          <th>Ação</th>
-          <th>Descrição</th>
-          <th>Usuário</th>
-          <th>Alvo</th>
-          <th style="width:80px">IP</th></tr></thead>
-        <tbody>${itens.map(a => `<tr class="audit-row">
-          <td style="padding:0"><div style="height:100%;min-height:52px;width:3px;background:${
-            a.severidade === '4' ? 'var(--red)' :
-            a.severidade === '3' ? 'var(--amber)' :
-            a.severidade === '2' ? 'var(--green)' : 'var(--acc)'
-          }"></div></td>
-          <td class="mono" style="font-size:12px;white-space:nowrap"><b>${fmtDT(a.ocorrido_em).split(' ')[0]}</b><br><span style="color:var(--txt-4)">${fmtDT(a.ocorrido_em).split(' ')[1]}</span></td>
-          <td><div style="display:flex;align-items:center;gap:7px"><span style="width:20px;text-align:center">${ico(iconoPorAcao(a.acao),14)}</span><div><b style="white-space:nowrap">${esc(rotuloAuditoria(a.acao))}</b><br><span class="td-id">${esc(a.acao)}</span></div></div></td>
-          <td style="max-width:280px"><span style="color:var(--txt-2);font-size:13px">${esc(a.descricao || '—')}</span></td>
-          <td><b style="display:block">${esc(a.usuario_nome||'—')}</b><span class="mono" style="font-size:11px;color:var(--txt-3)">${esc((a.usuario_email||'').split('@')[0]||'')}</span></td>
-          <td class="mono" style="font-size:12px;color:var(--txt-3);max-width:120px;overflow:hidden;text-overflow:ellipsis" title="${esc(a.alvo||'')}">${esc(a.alvo||'—')}</td>
-          <td class="mono" style="font-size:11px;color:var(--txt-4)">${esc(a.ip||'—')}</td>
-        </tr>`).join('') || `<tr><td colspan="7" style="text-align:center;padding:24px">${vazio('log','Nenhum registro.')}</td></tr>`}
+      corpo.innerHTML = `<div class="tbl-wrap"><table class="tbl fc-tbl au-tbl">
+        <thead><tr><th>Quando</th><th>Ação</th><th>Descrição</th><th>Usuário</th><th>Alvo</th><th>Origem</th></tr></thead>
+        <tbody>${itens.map(a => {
+          const c = categoriaAuditoria(a.acao);
+          return `<tr style="--cat:${c.cor}">
+          <td><span class="fc-hora mono">${fmtDT(a.ocorrido_em)}</span><span class="fc-sub">${relTime(a.ocorrido_em)}</span></td>
+          <td><div class="fc-pessoa"><span class="ob-ico" style="color:${c.cor};background:color-mix(in srgb, ${c.cor} 15%, transparent)">${ico(c.ico, 14)}</span>
+            <div><b>${esc(rotuloAuditoria(a.acao))}${auSensivel(a.acao) ? ' <em class="au-sens">sensível</em>' : ''}</b>
+              <span class="mono">${esc(c.nome)} · ${esc(a.acao)}</span></div></div></td>
+          <td class="au-desc"><span title="${esc(a.descricao || '')}">${esc(a.descricao || '—')}</span></td>
+          <td>${a.usuario_nome ? `<div class="fc-pessoa"><span class="avatar au-av">${esc(iniciais(a.usuario_nome))}</span>
+            <div><b>${esc(a.usuario_nome)}</b><span class="mono">${esc((a.usuario_email||'').split('@')[0]||'')}</span></div></div>`
+            : '<span class="fc-sub">sistema</span>'}</td>
+          <td>${a.alvo ? `<span class="au-alvo mono" title="${esc(a.alvo)}">${esc(a.alvo)}</span>` : '<span class="fc-sub">—</span>'}</td>
+          <td><span class="fc-hora mono">${esc(a.ip || '—')}</span>${a.ip ? `<span class="fc-sub">${local(a.ip) ? 'esta máquina' : 'rede'}</span>` : ''}</td>
+        </tr>`;
+        }).join('') || `<tr><td colspan="6" style="text-align:center;padding:24px">${vazio('log','Nenhum registro.')}</td></tr>`}
         </tbody></table></div>
         ${pagerHTML(r.total, r.pagina, r.por_pagina, 'audit')}`;
       ligarPager(corpo, 'audit', carregar);
@@ -722,33 +815,38 @@ async function renderAuditoria(alvo){
   $('#auAcao').onchange = () => { PAG.audit = 1; carregar(); };
 
   $('#auVerificar').onclick = async () => {
-    const box = $('#auVerif');
-    box.innerHTML = `<div class="alert alert-info" style="margin-bottom:13px">${ico('info',15)}<div>Recalculando a cadeia…</div></div>`;
+    const box = $('#auVerif'), card = $('#auCadeia'), btn = $('#auVerificar');
+    btn.disabled = true;
+    $('.au-cadeia-val', card).textContent = '…';
+    $('.au-cadeia-sub', card).textContent = 'recalculando a cadeia…';
+    box.innerHTML = '';
     try{
       const v = await API.verificarCadeia();
       /* Três veredictos, não dois. "Comprometida" em vermelho é para linha
-         reescrita — e só. Esta trilha tem 83 elos bifurcados por gravação
-         simultânea e 10 vínculos zerados pela exclusão de uma conta: nada
-         disso é adulteração, e pintar tudo de vermelho ensina o operador a
-         ignorar o aviso. Quando ele ignorar o aviso de verdade, a trilha
-         deixou de servir para o que existe. */
+         reescrita — e só. Elos bifurcados por gravação simultânea e vínculos
+         zerados pela exclusão de uma conta não são adulteração; pintar tudo
+         de vermelho ensina o operador a ignorar o aviso. */
       const adulteradas = (v.conteudo_divergente||0) - (v.vinculo_de_usuario_perdido||0);
       const nivel = v.integra ? 'ok' : (adulteradas > 0 ? 'err' : 'warn');
-      const titulo = v.integra ? 'Cadeia íntegra'
-                   : (adulteradas > 0 ? 'Cadeia comprometida' : 'Cadeia íntegra, com ressalvas');
-      box.innerHTML = `<div class="alert alert-${nivel}" style="margin-bottom:13px">
-        ${ico(nivel === 'ok' ? 'check' : 'alert', 15)}<div><b>${titulo}</b><br>${esc(v.mensagem)}</div></div>`;
+      const titulo = v.integra ? 'Íntegra' : (adulteradas > 0 ? 'Comprometida' : 'Com ressalvas');
+      card.classList.remove('k-green', 'k-amber', 'k-red');
+      card.classList.add(nivel === 'ok' ? 'k-green' : nivel === 'warn' ? 'k-amber' : 'k-red');
+      $('.au-cadeia-val', card).textContent = titulo;
+      $('.au-cadeia-sub', card).textContent = `verificada ${fmtDT(new Date().toISOString())}`;
+      if(nivel !== 'ok') box.innerHTML = `<div class="alert alert-${nivel}" style="margin-bottom:13px">
+        ${ico('alert', 15)}<div><b>Cadeia ${titulo.toLowerCase()}</b><br>${esc(v.mensagem)}</div></div>`;
+      else card.title = v.mensagem || '';
     }catch(e){
+      $('.au-cadeia-val', card).textContent = '—';
+      $('.au-cadeia-sub', card).textContent = 'não foi possível verificar';
       box.innerHTML = `<div class="alert alert-err" style="margin-bottom:13px">${ico('alert',15)}<div>${esc(e.message)}</div></div>`;
-    }
+    }finally{ btn.disabled = false; }
   };
 
   const be = $('#auExp');
   if(be) be.onclick = async () => {
-    /* O que vai no arquivo é o que está na tela. Dizer isso *antes* evita o
-       engano mais caro desta tela: filtrar por uma ação, exportar e entregar
-       a corregedoria um arquivo com outro conteúdo — ou o contrário, achar
-       que levou tudo e ter levado um recorte. */
+    /* O que vai no arquivo é o que está na tela — dito *antes*, para ninguém
+       entregar à corregedoria um recorte achando que levou tudo. */
     const filtro = {q: FILTRO.audit.q || undefined, acao: FILTRO.audit.acao || undefined};
     const recorte = [
       filtro.acao ? `ação <b>${esc(rotuloAuditoria(filtro.acao))}</b>` : '',
@@ -766,17 +864,14 @@ async function renderAuditoria(alvo){
       {rotulo:'Exportar PDF', exigeTexto:'Finalidade da exportação'});
     if(!fin) return;
 
-    /* O botão sai do ar enquanto o documento é montado. São segundos de
-       espera numa trilha grande — montar mil e trezentas linhas leva uns
-       quatro —, e dois cliques gerariam dois documentos e duas linhas na
-       própria trilha. */
+    // O botão sai do ar enquanto o documento é montado: dois cliques gerariam
+    // dois documentos e duas linhas na própria trilha.
     const antes = be.innerHTML;
     be.disabled = true;
     be.innerHTML = `${ico('dl',14)} Gerando o PDF…`;
     try{
       const nome = await API.exportarAuditoria(fin, filtro);
       toast('Trilha exportada', `Documento ${nome} salvo nos downloads.`, 'ok');
-      // A exportação virou uma linha nova na trilha; a tela mostra isso.
       PAG.audit = 1;
       await carregar();
     }catch(e){
@@ -794,180 +889,181 @@ async function renderAuditoria(alvo){
    CONFIGURAÇÕES
    ========================================================== */
 const GRUPOS_CFG = [
-  ['retencao', 'Retenção e privacidade', 'shield'],
-  ['acesso',   'Acesso e sessão',        'key'],
-  ['deteccao', 'Detecção',               'gauge'],
+  ['retencao', 'Retenção e privacidade', 'shield', 'quanto tempo a evidência fica e quem vê o dado pessoal'],
+  ['acesso',   'Acesso e sessão',        'key',    'senha, bloqueio e duração da sessão'],
+  ['deteccao', 'Detecção',               'gauge',  'sensibilidade dos motores de análise'],
 ];
 
-/* Um campo por parâmetro, com a faixa que o servidor declarou. O `min`/`max`
+/* Um parâmetro por linha: o que é à esquerda, o valor à direita. O `min`/`max`
    aqui é conveniência de digitação — quem recusa de verdade é o servidor,
    porque o navegador não é lugar para guardar regra. */
 function campoCfg(p){
   const id = 'cfg_' + p.chave;
+  const texto = `<div class="cf-txt"><label for="${id}">${esc(p.rotulo)}</label><span class="hint">${esc(p.ajuda)}</span></div>`;
   if(p.tipo === 'perfis'){
     const atuais = String(p.valor || '').split(',').map(x => x.trim()).filter(Boolean);
-    return `<div class="field full" data-cfg="${esc(p.chave)}" data-tipo="perfis">
-      <label>${esc(p.rotulo)}</label>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 5px">
-        ${(p.opcoes||[]).map(o => `<span class="chip ${atuais.includes(o)?'c-blue':'c-gray'} clickable"
-          data-perfil="${esc(o)}" style="cursor:pointer;user-select:none">${esc(rotuloPerfil(o))}</span>`).join('')}
-      </div>
-      <span class="hint">${esc(p.ajuda)}</span></div>`;
+    return `<div class="cf-linha" data-cfg="${esc(p.chave)}" data-tipo="perfis">${texto}
+      <div class="cf-val"><div class="cf-perfis">
+        ${(p.opcoes||[]).map(o => `<button type="button" class="cf-perfil ${atuais.includes(o)?'on':''}" data-perfil="${esc(o)}"
+          aria-pressed="${atuais.includes(o)}">${ico('check',12)}${esc(rotuloPerfil(o))}</button>`).join('')}
+      </div></div></div>`;
   }
   const passo = p.tipo === 'float' ? '0.01' : '1';
-  return `<div class="field" data-cfg="${esc(p.chave)}" data-tipo="${esc(p.tipo)}">
-    <label for="${id}">${esc(p.rotulo)}${p.unidade ? ` <span style="color:var(--txt-3);font-weight:400">(${esc(p.unidade)})</span>` : ''}</label>
-    <input class="inp mono" id="${id}" type="number" value="${esc(String(p.valor))}"
-           min="${p.minimo}" max="${p.maximo}" step="${passo}">
-    <span class="hint">${esc(p.ajuda)} <b>Faixa: ${p.minimo} a ${p.maximo}.</b></span></div>`;
+  return `<div class="cf-linha" data-cfg="${esc(p.chave)}" data-tipo="${esc(p.tipo)}">${texto}
+    <div class="cf-val">
+      <div class="cf-inp"><input class="inp mono" id="${id}" type="number" value="${esc(String(p.valor))}"
+           min="${p.minimo}" max="${p.maximo}" step="${passo}">${p.unidade ? `<span>${esc(p.unidade)}</span>` : ''}</div>
+      <span class="cf-faixa mono">faixa ${p.minimo} – ${p.maximo}</span>
+    </div></div>`;
 }
 
 async function renderConfiguracoes(alvo){
   const [info, saude, cfg] = await Promise.all([API.info(), API.saude(), API.configuracao()]);
-  const c = info.config || {};
+  const c = info.config || {}, est = info.estatisticas || {}, mod = info.modelos || {};
+  const params = cfg.parametros || [];
+  const pode = API.pode('settings');
+  const k = (cls, lbl, icone, val, sub, extra) => `<div class="kpi ${cls}">
+    <div class="kpi-top"><span class="kpi-lbl">${lbl}</span><span class="kpi-ico">${ico(icone,15)}</span></div>
+    <div class="kpi-val">${val}</div>${extra || ''}<div class="kpi-delta nt">${sub}</div></div>`;
+  const motores = [mod.face, mod.yolo].filter(Boolean).length;
+  const linha = (rot, val) => `<div class="cf-kv"><span>${rot}</span><b>${val}</b></div>`;
 
   alvo.innerHTML = `
-  <div class="sec-hd"><h2>Configurações do sistema</h2></div>
+  <div class="sec-hd"><h2>Configurações do sistema</h2><span class="cm-sub">parâmetros do sistema e da análise</span><span class="sp"></span>
+    <div class="toolbar">
+      ${pode ? `<button class="btn btn-ghost btn-sm" id="cfgExpurgo">${ico('trash',13)} Expurgar capturas vencidas</button>` : ''}
+    </div></div>
 
-  <div class="split" style="align-items:flex-start;margin-bottom:14px">
-    <div class="panel">
-      <div class="panel-hd"><h3>Motores de análise</h3></div>
-      <div class="panel-bd">
-        <dl class="kv">
-          <dt>Reconhecimento facial</dt><dd>${info.modelos && info.modelos.face ? '<span class="chip c-green">InsightFace carregado</span>' : '<span class="chip c-amber">Modelo não instalado</span>'}</dd>
-          <dt>Detecção de objetos</dt><dd>${info.modelos && info.modelos.yolo ? '<span class="chip c-green">YOLO carregado</span>' : '<span class="chip c-amber">Modelo não instalado</span>'}</dd>
-          <dt>Limiar global facial</dt><dd class="mono">${Math.round((c.limiar_facial||0)*100)}%</dd>
-          <dt>Limiar global objeto</dt><dd class="mono">${Math.round((c.limiar_objeto||0)*100)}%</dd>
-          <dt>Dimensão do vetor</dt><dd class="mono">${c.embedding_dim || 512}-D</dd>
-          <dt>Dispositivo</dt><dd class="mono">${esc(c.device||'cpu')}</dd>
-        </dl>
-        ${!(info.modelos && info.modelos.face) ? `<div class="note" style="margin-top:14px">${ico('info',15)}<div>Sem os modelos instalados, a busca por imagem fica indisponível — o restante do sistema opera normalmente com o simulador. Para habilitar:<br><span class="mono" style="color:var(--acc-2)">pip install insightface onnxruntime ultralytics</span></div></div>` : ''}
-        <div class="note" style="margin-top:12px">${ico('alert',15)}<div>O limiar é ajustado <b>por câmera</b>, na tela de configuração de cada uma. Limiares baixos aumentam falsos positivos — e o custo de um falso positivo recai sobre uma pessoa inocente.</div></div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-hd"><h3>Privacidade e retenção</h3></div>
-      <div class="panel-bd">
-        <dl class="kv">
-          <dt>Retenção de não identificadas</dt><dd>${c.retencao_dias || 90} dias</dd>
-          <dt>Mascaramento de PII</dt><dd>${esc((c.mascarar_para||[]).join(', ') || 'nenhum perfil')}</dd>
-          <dt>Expiração de senha</dt><dd>${c.senha_expira_dias || 90} dias</dd>
-          <dt>Tentativas de login</dt><dd>${c.max_tentativas || 5} antes do bloqueio</dd>
-          <dt>Sessão</dt><dd>${c.sessao_minutos || 60} minutos</dd>
-        </dl>
-        ${API.pode('settings') ? `<button class="btn btn-soft btn-sm" id="cfgExpurgo" style="margin-top:14px">${ico('trash',13)} Expurgar capturas vencidas</button>` : ''}
-        <div class="note" style="margin-top:14px">${ico('shield',15)}<div>Tratamento de dado biométrico exige <b>base legal específica</b> na LGPD, aviso às pessoas monitoradas e avaliação de impacto. O uso em ambiente de trabalho depende ainda do que a norma interna e a legislação trabalhista permitem.</div></div>
-      </div>
-    </div>
+  <div class="dash-grid dash-kpis">
+    ${k(saude.saudavel ? 'k-green' : 'k-red', 'Infraestrutura', 'gauge', saude.saudavel ? 'Saudável' : 'Degradado',
+        `banco ${esc(saude.componentes.banco || '—')} · ${fmtNum(saude.websockets_ativos || 0)} conexão(ões) ao vivo`)}
+    ${k(motores === 2 ? '' : 'k-amber', 'Motores de análise', 'eye', `${motores}<small>/2</small>`,
+        `${mod.face ? 'InsightFace' : 'facial ausente'} · ${mod.yolo ? 'YOLO' : 'objetos ausente'} · ${esc(c.device || 'cpu')}`,
+        dashBarra(motores / 2, motores === 2 ? 'var(--acc)' : 'var(--amber)'))}
+    ${k('k-violet', 'Limiares globais', 'filter', `${Math.round((c.limiar_facial||0)*100)}<small>% facial</small>`,
+        `objetos ${Math.round((c.limiar_objeto||0)*100)}% · vetor ${c.embedding_dim || 512}-D · ajuste fino por câmera`,
+        dashBarra(c.limiar_facial || 0, 'var(--violet)'))}
+    ${k('k-amber', 'Retenção', 'clock', `${c.retencao_dias || 90}<small> dias</small>`,
+        'para capturas sem identidade', dashBarra(Math.min(1, (c.retencao_dias || 90) / 365), 'var(--amber)'))}
   </div>
 
-  <div class="panel" style="margin-bottom:14px">
-    <div class="panel-hd"><h3>Ajustar parâmetros</h3>
-      <span class="sub">valem na requisição seguinte, sem reiniciar</span>
-      <span class="sp"></span>
-      <button class="btn btn-primary btn-sm" id="cfgSalvar">${ico('check',14)} Salvar alterações</button></div>
-    <div class="panel-bd">
-      ${GRUPOS_CFG.map(([g, titulo, icone]) => {
-        const doGrupo = (cfg.parametros||[]).filter(p => p.grupo === g);
-        if(!doGrupo.length) return '';
-        return `<div class="eyebrow" style="display:flex;align-items:center;gap:6px;margin:4px 0 9px">
-            <span style="color:var(--acc)">${ico(icone,14)}</span>${esc(titulo)}</div>
-          <div class="form-grid" style="margin-bottom:18px">${doGrupo.map(campoCfg).join('')}</div>`;
-      }).join('')}
+  <div class="cf-layout">
+    <div class="cf-main">
+      <div class="panel">
+        <div class="panel-hd"><h3>Parâmetros ajustáveis</h3>
+          <span class="sub">valem na requisição seguinte, sem reiniciar</span><span class="sp"></span>
+          <span class="cf-pend" id="cfgPend" hidden></span>
+          ${pode ? `<button class="btn btn-ghost btn-sm" id="cfgDesfazer" hidden>Desfazer</button>
+          <button class="btn btn-primary btn-sm" id="cfgSalvar" disabled>${ico('check',14)} Salvar alterações</button>` : ''}</div>
+        <div class="panel-bd cf-grupos">
+          ${GRUPOS_CFG.map(([g, titulo, icone, desc]) => {
+            const doGrupo = params.filter(p => p.grupo === g);
+            if(!doGrupo.length) return '';
+            return `<section class="cf-grupo">
+              <header><span class="cf-gico">${ico(icone,15)}</span><div><b>${esc(titulo)}</b><span>${esc(desc)}</span></div></header>
+              ${doGrupo.map(campoCfg).join('')}</section>`;
+          }).join('')}
+        </div>
+      </div>
 
-      <div class="eyebrow" style="display:flex;align-items:center;gap:6px;margin:4px 0 9px">
-        <span style="color:var(--txt-3)">${ico('lock',14)}</span>Fixos — exigem reinício</div>
-      <dl class="kv" style="margin-bottom:14px">
-        ${(cfg.fixos||[]).map(f => `<dt>${esc(f.rotulo)}</dt>
-          <dd class="mono">${esc(String(f.valor))}
-            <span style="color:var(--txt-4);font-size:11px"> · ${esc(f.variavel)}</span></dd>`).join('')}
-      </dl>
-
-      <div class="note">${ico('info',15)}<div>Os fixos são lidos quando o processo sobe: mudá-los é no <span class="mono">.env</span> seguido de reinício. Gravá-los aqui mostraria um número que o sistema não está usando. Cada alteração dos ajustáveis fica na trilha de auditoria, com o valor anterior e o novo.</div></div>
-    </div>
-  </div>
-
-  <div class="split" style="align-items:flex-start;margin-bottom:14px">
-    <div class="panel">
-      <div class="panel-hd"><h3>Infraestrutura</h3>
-        <span class="sp"></span><span class="chip ${saude.saudavel?'c-green':'c-red'}">${saude.saudavel?'Saudável':'Degradado'}</span></div>
-      <div class="panel-bd">
-        <dl class="kv">
-          <dt>Versão</dt><dd class="mono">SEGURANÇA ${esc(info.versao||'')}</dd>
-          <dt>Modo</dt><dd class="mono">${esc(info.modo||'')}</dd>
-          <dt>Banco</dt><dd class="mono">${esc(saude.componentes.banco)}</dd>
-          <dt>Barramento</dt><dd class="mono">${esc(saude.componentes.eventos||'—')}</dd>
-          <dt>WebSockets ativos</dt><dd class="mono">${saude.websockets_ativos}</dd>
-          <dt>Simulador</dt><dd>${info.simulador ? `<span class="chip c-blue">Ativo · ${fmtNum(info.simulador_gerados||0)} eventos</span>` : '<span class="chip c-gray">Desligado</span>'}</dd>
-          <dt>Busca vetorial</dt><dd class="mono">${esc(info.busca_vetorial||'—')}</dd>
-        </dl>
+      <div class="panel">
+        <div class="panel-hd"><h3>Parâmetros fixos</h3><span class="sub">lidos quando o servidor sobe</span><span class="sp"></span>
+          <span class="chip c-gray">${ico('lock',11)} exigem reinício</span></div>
+        <div class="panel-bd tight"><div class="tbl-wrap"><table class="tbl cf-fixos">
+          <thead><tr><th>Parâmetro</th><th>Valor em uso</th><th>Variável no .env</th></tr></thead>
+          <tbody>${(cfg.fixos||[]).map(f => `<tr><td>${esc(f.rotulo)}</td>
+            <td><b class="mono">${esc(String(f.valor))}</b></td><td><span class="au-alvo mono">${esc(f.variavel)}</span></td></tr>`).join('')
+            || `<tr><td colspan="3">${vazio('lock', 'Nenhum parâmetro fixo.')}</td></tr>`}</tbody></table></div>
+          <p class="fc-nota cf-nota">${ico('info',13)}<span>Mudá-los é no <span class="mono">.env</span> seguido de reinício — gravá-los aqui mostraria um número que o sistema não está usando. Toda alteração dos ajustáveis vai para a trilha de auditoria com o valor anterior e o novo.</span></p>
+        </div>
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-hd"><h3>Estatísticas</h3></div>
-      <div class="panel-bd">
-        <dl class="kv">
-          <dt>Câmeras</dt><dd class="mono">${fmtNum((info.estatisticas||{}).cameras||0)}</dd>
-          <dt>Registros biométricos</dt><dd class="mono">${fmtNum((info.estatisticas||{}).pessoas||0)}</dd>
-          <dt>Detecções</dt><dd class="mono">${fmtNum((info.estatisticas||{}).deteccoes||0)}</dd>
-          <dt>Alertas</dt><dd class="mono">${fmtNum((info.estatisticas||{}).alertas||0)}</dd>
-          <dt>Linhas de auditoria</dt><dd class="mono">${fmtNum((info.estatisticas||{}).auditoria||0)}</dd>
-          <dt>Usuários</dt><dd class="mono">${fmtNum((info.estatisticas||{}).usuarios||0)}</dd>
-        </dl>
-      </div>
-    </div>
-  </div>
 
-  <div class="panel">
-    <div class="panel-hd"><h3>Como ligar às câmeras reais</h3><span class="sub">o que muda ao sair da demonstração</span></div>
-    <div class="panel-bd">
-      <p class="hint" style="max-width:76ch;margin:0 0 13px">A imagem que você vê no mosaico é gerada no navegador. Para operar com equipamentos reais, cada bloco troca de origem sem alteração na interface:</p>
-      <div class="grid cols-3">
-        ${[
-          ['Vídeo ao vivo','As câmeras publicam RTSP; um gateway (MediaMTX) converte para WebRTC. Cada tile troca o &lt;canvas&gt; por um &lt;video&gt; apontado a <span class="mono">GET /stream/{codigo}</span>.','live'],
-          ['Reconhecimento facial','RetinaFace para detectar e ArcFace para o vetor 512-D. Instale <span class="mono">insightface</span> e a busca por imagem passa a funcionar.','face'],
-          ['Objetos e ações','YOLO v8 para objetos e análise de trajetórias para comportamento, com ByteTrack mantendo a identidade entre quadros.','box'],
-          ['Banco','Troque <span class="mono">DATABASE_URL</span> para PostgreSQL e a busca passa a usar índice HNSW do pgvector em vez de força bruta.','db'],
-          ['Barramento','Defina <span class="mono">REDIS_URL</span> e vários workers e instâncias da API passam a compartilhar o mesmo fluxo de eventos.','cog'],
-          ['Worker','<span class="mono">python -m worker.run --todas</span> lê o RTSP, roda os modelos e envia para <span class="mono">POST /deteccoes/ingest</span> — a mesma rota do simulador.','gauge']
-        ].map(([t,d,i]) => `<div class="id-card" style="min-width:0">
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span style="color:var(--acc)">${ico(i,15)}</span><b style="font-size:13px">${t}</b></div>
-          <p class="hint" style="margin:0">${d}</p></div>`).join('')}
-      </div>
-    </div>
+    <aside class="cf-lado">
+      <div class="panel"><div class="panel-hd"><h3>Motores de análise</h3></div><div class="panel-bd">
+        ${linha('Reconhecimento facial', mod.face ? '<span class="ob-sev" style="--sev:var(--green)"><i></i>InsightFace</span>' : '<span class="ob-sev" style="--sev:var(--amber)"><i></i>não instalado</span>')}
+        ${linha('Detecção de objetos', mod.yolo ? '<span class="ob-sev" style="--sev:var(--green)"><i></i>YOLO</span>' : '<span class="ob-sev" style="--sev:var(--amber)"><i></i>não instalado</span>')}
+        ${linha('Limiar global facial', `<span class="mono">${Math.round((c.limiar_facial||0)*100)}%</span>`)}
+        ${linha('Limiar global objeto', `<span class="mono">${Math.round((c.limiar_objeto||0)*100)}%</span>`)}
+        ${linha('Dimensão do vetor', `<span class="mono">${c.embedding_dim || 512}-D</span>`)}
+        ${linha('Dispositivo', `<span class="mono">${esc(c.device||'cpu')}</span>`)}
+        <p class="fc-nota cf-nota" title="Limiares baixos aumentam falsos positivos — e o custo de um falso positivo recai sobre uma pessoa inocente.">${ico('alert',13)}<span>O limiar fino é ajustado <b>por câmera</b>, na ficha de cada uma.</span></p>
+      </div></div>
+
+      <div class="panel"><div class="panel-hd"><h3>Infraestrutura</h3><span class="sp"></span>
+          <span class="chip ${saude.saudavel?'c-green':'c-red'}">${saude.saudavel?'Saudável':'Degradado'}</span></div><div class="panel-bd">
+        ${linha('Versão', `<span class="mono">AizonVMS ${esc(info.versao||'')}</span>`)}
+        ${linha('Modo', `<span class="mono">${esc(info.modo||'—')}</span>`)}
+        ${linha('Banco', `<span class="mono">${esc(saude.componentes.banco || '—')}</span>`)}
+        ${linha('Busca vetorial', `<span class="mono">${esc(info.busca_vetorial||'—')}</span>`)}
+        ${linha('Barramento', `<span class="mono">${esc(saude.componentes.eventos||'—')}</span>`)}
+        ${linha('Conexões ao vivo', `<span class="mono">${fmtNum(saude.websockets_ativos || 0)}</span>`)}
+        ${info.simulador ? linha('Simulador', `<span class="chip c-blue">Ativo · ${fmtNum(info.simulador_gerados||0)}</span>`) : ''}
+      </div></div>
+
+      <div class="panel"><div class="panel-hd"><h3>Dados armazenados</h3></div><div class="panel-bd cf-est">
+        ${[['cam','Câmeras', est.cameras], ['db','Registros biométricos', est.pessoas], ['box','Detecções', est.deteccoes],
+           ['bell','Alertas', est.alertas], ['log','Linhas de auditoria', est.auditoria], ['users','Usuários', est.usuarios]]
+          .map(([i, r, v]) => `<div><span class="cf-gico">${ico(i,13)}</span><em>${r}</em><b class="mono">${fmtNum(v || 0)}</b></div>`).join('')}
+      </div></div>
+
+      <div class="panel cf-lgpd"><div class="panel-bd">
+        <div class="cf-lgpd-hd">${ico('shield',15)}<b>LGPD · dado biométrico</b></div>
+        <p>Exige <b>base legal específica</b>, aviso às pessoas monitoradas e avaliação de impacto. Em ambiente de trabalho, depende ainda da norma interna e da legislação trabalhista.</p>
+        ${linha('Mascaramento de dado pessoal', esc((c.mascarar_para||[]).map(rotuloPerfil).join(', ') || 'nenhum perfil'))}
+      </div></div>
+    </aside>
   </div>`;
 
-  $$('[data-cfg][data-tipo="perfis"] [data-perfil]').forEach(ch => ch.onclick = () => {
-    const ligado = ch.classList.toggle('c-blue');
-    ch.classList.toggle('c-gray', !ligado);
-  });
-
-  $('#cfgSalvar').onclick = async () => {
+  /* O que mudou em relação ao valor gravado. Serve ao botão Salvar e ao
+     contador — salvar sem mudança nenhuma não tem por que ser possível. */
+  const coletar = () => {
     const valores = {};
-    (cfg.parametros||[]).forEach(p => {
+    params.forEach(p => {
       const campo = $(`[data-cfg="${p.chave}"]`);
       if(!campo) return;
+      let mudou = false;
       if(p.tipo === 'perfis'){
-        const escolhidos = $$('[data-perfil]', campo)
-          .filter(c => c.classList.contains('c-blue')).map(c => c.dataset.perfil);
+        const escolhidos = $$('[data-perfil]', campo).filter(x => x.classList.contains('on')).map(x => x.dataset.perfil);
         const atual = String(p.valor || '').split(',').map(x => x.trim()).filter(Boolean);
-        if(escolhidos.join(',') !== atual.join(',')) valores[p.chave] = escolhidos.join(',');
+        if(escolhidos.join(',') !== atual.join(',')){ valores[p.chave] = escolhidos.join(','); mudou = true; }
       }else{
         const bruto = $('input', campo).value.trim();
-        if(bruto !== '' && Number(bruto) !== Number(p.valor)) valores[p.chave] = Number(bruto);
+        if(bruto !== '' && Number(bruto) !== Number(p.valor)){ valores[p.chave] = Number(bruto); mudou = true; }
       }
+      campo.classList.toggle('mudou', mudou);
     });
+    return valores;
+  };
+  const atualizar = () => {
+    const n = Object.keys(coletar()).length;
+    const s = $('#cfgSalvar'); if(s) s.disabled = !n;
+    const d = $('#cfgDesfazer'); if(d) d.hidden = !n;
+    const pend = $('#cfgPend'); pend.hidden = !n;
+    pend.textContent = `${n} alteração(ões) não salva(s)`;
+  };
 
+  $$('[data-cfg][data-tipo="perfis"] [data-perfil]').forEach(ch => ch.onclick = () => {
+    if(!pode) return;
+    const on = ch.classList.toggle('on');
+    ch.setAttribute('aria-pressed', String(on));
+    atualizar();
+  });
+  $$('.cf-linha input').forEach(i => { i.disabled = !pode; i.oninput = atualizar; });
+
+  const desfazer = $('#cfgDesfazer');
+  if(desfazer) desfazer.onclick = () => irPara('settings');
+
+  const salvar = $('#cfgSalvar');
+  if(salvar) salvar.onclick = async () => {
+    const valores = coletar();
     if(!Object.keys(valores).length){ toast('Nada a salvar', 'Nenhum parâmetro foi alterado.', 'info'); return; }
-
-    const btn = $('#cfgSalvar'); btn.disabled = true;
+    salvar.disabled = true;
     try{
       const r = await API.salvarConfiguracao(valores);
-      toast('Configuração salva',
-        `${r.alterados.length} parâmetro(s) em vigor a partir de agora.`, 'ok');
+      toast('Configuração salva', `${r.alterados.length} parâmetro(s) em vigor a partir de agora.`, 'ok');
       irPara('settings');
-    }catch(e){ erroToast(e); }
-    finally{ btn.disabled = false; }
+    }catch(e){ erroToast(e); salvar.disabled = false; }
   };
 
   const be = $('#cfgExpurgo');
